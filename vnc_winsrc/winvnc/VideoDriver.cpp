@@ -24,6 +24,10 @@ char	vncVideoDriver::szDriverString[] = "Mirage Driver";
 char	vncVideoDriver::szDriverStringAlt[] = "DemoForge Mirage Driver";
 char	vncVideoDriver::szMiniportName[] = "dfmirage";
 
+#ifndef DM_POSITION
+#define DM_POSITION 0x00000020L
+#endif
+
 #define MINIPORT_REGISTRY_PATH	"SYSTEM\\CurrentControlSet\\Hardware Profiles\\Current\\System\\CurrentControlSet\\Services"
 
 BOOL IsWinNT();
