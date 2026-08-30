@@ -59,6 +59,6 @@ PRs are also welcome, and please send all PRs to the specific branch which you a
 This port maintains the original project formatting and licensing constraints. It is distributed under the standard GNU General Public License (GPLv2).
 
 ## Credits & Copyright
-* Original TightVNC Source: The core software and original code are Copyright © Constantin Kaplinsky and the TightVNC Team.
-* VNC Core Engine: Based on the original VNC software developed by AT&T Laboratories Cambridge.
-* Architecture Porting: This multi-architecture Windows compilation, project modernization, and platform-specific code adaptations were implemented by GenSayer.
+* **Original TightVNC Source:** The core software and original code are Copyright © **Constantin Kaplinsky** and the **TightVNC Team**.
+* **VNC Core Engine:** Based on the original VNC software developed by **AT&T Laboratories Cambridge**.
+* **Architecture Porting:** This multi-architecture Windows compilation, project modernization, and platform-specific code adaptations were implemented by GenSayer.
