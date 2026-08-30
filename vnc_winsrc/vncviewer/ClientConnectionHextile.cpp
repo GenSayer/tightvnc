@@ -105,7 +105,8 @@ void ClientConnection::HandleHextileEncoding##bpp(int rx, int ry, int rw, int rh
                 ReadExact( m_netbuf, nSubrects * (2 + (bpp / 8)));            \
                                                                               \
                 for (i = 0; i < nSubrects; i++) {                             \
-                    fgcolor = COLOR_FROM_PIXEL##bpp##_ADDRESS(ptr);           \
+                    /* Fix for MIPS NT 4: Force compiler to use unaligned-safe loads */ \
+                    fgcolor = COLOR_FROM_PIXEL##bpp##_ADDRESS((CARD8 __unaligned *)ptr); \
 					ptr += (bpp/8);                                           \
                     sx = *ptr >> 4;                                           \
                     sy = *ptr++ & 0x0f;                                       \
@@ -129,6 +130,7 @@ void ClientConnection::HandleHextileEncoding##bpp(int rx, int ry, int rw, int rh
     }                                                                         \
                                                                               \
 }
+
 
 DEFINE_HEXTILE(8)
 DEFINE_HEXTILE(16)

@@ -86,7 +86,9 @@ vncEncodeHexT::EncodeRect(BYTE *source, BYTE *dest, const RECT &rect, int offset
 	int encodedResult;
 
 	// Create the rectangle header
-	rfbFramebufferUpdateRectHeader *surh=(rfbFramebufferUpdateRectHeader *)dest;
+	// Fix for MIPS NT 4: Force compiler to treat destination pointer structure as unaligned
+	rfbFramebufferUpdateRectHeader __unaligned *surh=(rfbFramebufferUpdateRectHeader __unaligned *)dest;
+
 	surh->r.x = (CARD16) rect.left;
 	surh->r.y = (CARD16) rect.top;
 	surh->r.w = (CARD16) (rectW);
@@ -136,12 +138,13 @@ vncEncodeHexT::EncodeRect(BYTE *source, BYTE *dest, const RECT &rect, int offset
 			  dest[destoffset++] = ((char*)&(pix))[2],						\
 			  dest[destoffset++] = ((char*)&(pix))[3])
 
+// Fix for MIPS NT 4: Added __unaligned attributes to function signatures and array allocations
 #define DEFINE_SEND_HEXTILES(bpp)											\
 																			\
-static UINT subrectEncode##bpp(CARD##bpp *src, BYTE *dest,					\
+static UINT subrectEncode##bpp(CARD##bpp __unaligned *src, BYTE *dest,		\
 				int w, int h, CARD##bpp bg,									\
 			    CARD##bpp fg, BOOL mono);									\
-static void testColours##bpp(CARD##bpp *data, int size, BOOL *mono,			\
+static void testColours##bpp(CARD##bpp __unaligned *data, int size, BOOL *mono, \
 			     BOOL *solid, CARD##bpp *bg, CARD##bpp *fg);				\
 																			\
 																			\
@@ -158,7 +161,7 @@ vncEncodeHexT::EncodeHextiles##bpp(BYTE *source, BYTE *dest,				\
     CARD##bpp bg, fg, newBg, newFg;											\
     BOOL mono, solid;														\
     BOOL validBg = FALSE;													\
-    CARD##bpp clientPixelData[16*16*(bpp/8)];								\
+    CARD##bpp __unaligned clientPixelData[16*16];							\
     BOOL validFg = FALSE;													\
 																			\
 	destoffset = 0;															\
@@ -239,7 +242,7 @@ vncEncodeHexT::EncodeHextiles##bpp(BYTE *source, BYTE *dest,				\
 }																			\
 																			\
 static UINT																	\
-subrectEncode##bpp(CARD##bpp *src, BYTE *dest, int w, int h, CARD##bpp bg,	\
+subrectEncode##bpp(CARD##bpp __unaligned *src, BYTE *dest, int w, int h, CARD##bpp bg,	\
 		   CARD##bpp fg, BOOL mono)											\
 {																			\
     CARD##bpp cl;															\
@@ -247,8 +250,8 @@ subrectEncode##bpp(CARD##bpp *src, BYTE *dest, int w, int h, CARD##bpp bg,	\
     int i,j;																\
     int hx=0,hy,vx=0,vy;													\
     int hyflag;																\
-    CARD##bpp *seg;															\
-    CARD##bpp *line;														\
+    CARD##bpp __unaligned *seg;												\
+    CARD##bpp __unaligned *line;											\
     int hw,hh,vw,vh;														\
     int thex,they,thew,theh;												\
     int numsubs = 0;														\
@@ -358,7 +361,7 @@ subrectEncode##bpp(CARD##bpp *src, BYTE *dest, int w, int h, CARD##bpp bg,	\
  */																			\
 																			\
 static void																	\
-testColours##bpp(CARD##bpp *data, int size,									\
+testColours##bpp(CARD##bpp __unaligned *data, int size,						\
 				 BOOL *mono, BOOL *solid,									\
 				 CARD##bpp *bg, CARD##bpp *fg)								\
 {																			\

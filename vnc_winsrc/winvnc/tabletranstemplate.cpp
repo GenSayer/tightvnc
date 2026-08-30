@@ -37,10 +37,11 @@ rfbTranslateWithSingleTableINtoOUT (char *table, rfbPixelFormat *in,
 				    int bytesBetweenInputLines,
 				    int width, int height)
 {
-    IN_T *ip = (IN_T *)iptr;
-    OUT_T *op = (OUT_T *)optr;
+    // Fix for MIPS NT 4: Force compiler to treat data buffers as unaligned
+    IN_T __unaligned *ip = (IN_T __unaligned *)iptr;
+    OUT_T __unaligned *op = (OUT_T __unaligned *)optr;
     int ipextra = bytesBetweenInputLines / sizeof(IN_T) - width;
-    OUT_T *opLineEnd;
+    OUT_T __unaligned *opLineEnd;
     OUT_T *t = (OUT_T *)table;
 
     while (height > 0) {
@@ -68,10 +69,11 @@ rfbTranslateWithRGBTablesINtoOUT (char *table, rfbPixelFormat *in,
 				  int bytesBetweenInputLines,
 				  int width, int height)
 {
-    IN_T *ip = (IN_T *)iptr;
-    OUT_T *op = (OUT_T *)optr;
+    // Fix for MIPS NT 4: Force compiler to treat data buffers as unaligned
+    IN_T __unaligned *ip = (IN_T __unaligned *)iptr;
+    OUT_T __unaligned *op = (OUT_T __unaligned *)optr;
     int ipextra = bytesBetweenInputLines / sizeof(IN_T) - width;
-    OUT_T *opLineEnd;
+    OUT_T __unaligned *opLineEnd;
     OUT_T *redTable = (OUT_T *)table;
     OUT_T *greenTable = redTable + in->redMax + 1;
     OUT_T *blueTable = greenTable + in->greenMax + 1;
