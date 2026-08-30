@@ -110,11 +110,11 @@ ConnDialogThread::DlgProc(HWND hwnd, UINT uMsg,
 						  WPARAM wParam, LPARAM lParam)
 {
 	ConnDialogThread *_this =
-		(ConnDialogThread *)GetWindowLong(hwnd, GWL_USERDATA);
+		(ConnDialogThread *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
 
 	switch (uMsg) {
 	case WM_INITDIALOG:
-		SetWindowLong(hwnd, GWL_USERDATA, lParam);
+		SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 		_this = (ConnDialogThread *)lParam;
 		_this->m_hwnd = hwnd;
 		if (_this->m_vnchost != NULL) {

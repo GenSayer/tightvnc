@@ -186,7 +186,7 @@ vncProperties::Show(BOOL show, BOOL usersettings, BOOL passwordfocused)
 			// Do the dialog box
 			int result = DialogBoxParam(hAppInstance,
 										MAKEINTRESOURCE(IDD_PROPERTIES_PARENT), 
-										NULL, (DLGPROC)ParentDlgProc, (LONG)this);
+										NULL, (DLGPROC)ParentDlgProc, (LONG_PTR)this);
 			if (!m_returncode_valid)
 			    result = IDCANCEL;
 
@@ -226,7 +226,7 @@ vncProperties::ParentDlgProc(HWND hwnd,
 {
 	// We use the dialog-box's USERDATA to store a _this pointer
 	// This is set only once WM_INITDIALOG has been recieved, though!
-	vncProperties *_this = (vncProperties *) GetWindowLong(hwnd, GWL_USERDATA);
+	vncProperties *_this = (vncProperties *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 
 	switch (uMsg)
 	{
@@ -235,7 +235,7 @@ vncProperties::ParentDlgProc(HWND hwnd,
 		{
 			// Retrieve the Dialog box parameter and use it as a pointer
 			// to the calling vncProperties object
-			SetWindowLong(hwnd, GWL_USERDATA, lParam);
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 			vncProperties *_this = (vncProperties *) lParam;
 			_this->m_hDialog = hwnd;
 			_this->m_dlgvisible = TRUE;
@@ -263,31 +263,31 @@ vncProperties::ParentDlgProc(HWND hwnd,
 				MAKEINTRESOURCE(IDD_SHARED_DESKTOP_AREA),
 				hwnd,
 				(DLGPROC)_this->SharedDlgProc,
-				(LONG)_this);
+				(LONG_PTR)_this);
 
 			_this->m_hIncoming = CreateDialogParam(hAppInstance,
 				MAKEINTRESOURCE(IDD_INCOMING),
 				hwnd,
 				(DLGPROC)_this->IncomingDlgProc,
-				(LONG)_this);
+				(LONG_PTR)_this);
 
 			_this->m_hPoll = CreateDialogParam(hAppInstance, 
 				MAKEINTRESOURCE(IDD_UPDATE_HANDLING),
 				hwnd,
 				(DLGPROC)_this->PollDlgProc,
-				(LONG)_this);
+				(LONG_PTR)_this);
 
 			_this->m_hQuerySettings = CreateDialogParam(hAppInstance, 
 				MAKEINTRESOURCE(IDD_QUERY_SETTINGS),
 				hwnd,
 				(DLGPROC)_this->QuerySettingsDlgProc,
-				(LONG)_this);
+				(LONG_PTR)_this);
 
 			_this->m_hAdministration = CreateDialogParam(hAppInstance, 
 				MAKEINTRESOURCE(IDD_ADMINISTRATION),
 				hwnd,
 				(DLGPROC)_this->AdministrationDlgProc,
-				(LONG)_this);
+				(LONG_PTR)_this);
 
 			// Position child dialogs, to fit the Tab control's display area
 			RECT rc;
@@ -409,7 +409,7 @@ BOOL CALLBACK vncProperties::IncomingDlgProc(HWND hwnd, UINT uMsg,
 {
 	// We use the dialog-box's USERDATA to store a _this pointer
 	// This is set only once WM_INITDIALOG has been recieved, though!
-	vncProperties *_this = (vncProperties *) GetWindowLong(hwnd, GWL_USERDATA);
+	vncProperties *_this = (vncProperties *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 	
 	switch (uMsg)
 	{
@@ -417,7 +417,7 @@ BOOL CALLBACK vncProperties::IncomingDlgProc(HWND hwnd, UINT uMsg,
 		{
 			// Retrieve the Dialog box parameter and use it as a pointer
 			// to the calling vncProperties object
-			SetWindowLong(hwnd, GWL_USERDATA, lParam);
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 			vncProperties *_this = (vncProperties *) lParam;
 			_this->m_incConnCtrl = new IncomingConnectionsControls(hwnd, _this->m_server);
 			_this->m_inputhandcontr = new InputHandlingControls(hwnd, _this->m_server);
@@ -486,7 +486,7 @@ BOOL CALLBACK vncProperties::PollDlgProc(HWND hwnd, UINT uMsg,
 {
 	// We use the dialog-box's USERDATA to store a _this pointer
 	// This is set only once WM_INITDIALOG has been recieved, though!
-	vncProperties *_this = (vncProperties *) GetWindowLong(hwnd, GWL_USERDATA);
+	vncProperties *_this = (vncProperties *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 	
 	switch (uMsg)
 	{
@@ -494,7 +494,7 @@ BOOL CALLBACK vncProperties::PollDlgProc(HWND hwnd, UINT uMsg,
 		{
 			// Retrieve the Dialog box parameter and use it as a pointer
 			// to the calling vncProperties object
-			SetWindowLong(hwnd, GWL_USERDATA, lParam);
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 			vncProperties *_this = (vncProperties *) lParam;
 
 			_this->m_pollcontrols = new PollControls(hwnd, _this->m_server); 
@@ -532,7 +532,7 @@ BOOL CALLBACK vncProperties::SharedDlgProc(HWND hwnd, UINT uMsg,
 {
 	// We use the dialog-box's USERDATA to store a _this pointer
 	// This is set only once WM_INITDIALOG has been recieved, though!
-	vncProperties *_this = (vncProperties *) GetWindowLong(hwnd, GWL_USERDATA);
+	vncProperties *_this = (vncProperties *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 	
 	switch (uMsg)
 	{
@@ -540,7 +540,7 @@ BOOL CALLBACK vncProperties::SharedDlgProc(HWND hwnd, UINT uMsg,
 		{
 			// Retrieve the Dialog box parameter and use it as a pointer
 			// to the calling vncProperties object
-			SetWindowLong(hwnd, GWL_USERDATA, lParam);
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 			vncProperties *_this = (vncProperties *) lParam;
 			
 			_this->m_shareddtarea = new SharedDesktopArea(hwnd,
@@ -583,7 +583,7 @@ BOOL CALLBACK vncProperties::AdministrationDlgProc(HWND hwnd, UINT uMsg,
 {
 	// We use the dialog-box's USERDATA to store a _this pointer
 	// This is set only once WM_INITDIALOG has been recieved, though!
-	vncProperties *_this = (vncProperties *) GetWindowLong(hwnd, GWL_USERDATA);
+	vncProperties *_this = (vncProperties *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 	
 	switch (uMsg)
 	{
@@ -591,7 +591,7 @@ BOOL CALLBACK vncProperties::AdministrationDlgProc(HWND hwnd, UINT uMsg,
 		{
 			// Retrieve the Dialog box parameter and use it as a pointer
 			// to the calling vncProperties object
-			SetWindowLong(hwnd, GWL_USERDATA, lParam);
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 			vncProperties *_this = (vncProperties *) lParam;
 			_this->m_AdminControls = new AdministrationControls(hwnd, _this->m_server);
 			return 0;
@@ -626,7 +626,7 @@ BOOL CALLBACK vncProperties::QuerySettingsDlgProc(HWND hwnd, UINT uMsg,
 {
 	// We use the dialog-box's USERDATA to store a _this pointer
 	// This is set only once WM_INITDIALOG has been recieved, though!
-	vncProperties *_this = (vncProperties *) GetWindowLong(hwnd, GWL_USERDATA);
+	vncProperties *_this = (vncProperties *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 	
 	switch (uMsg)
 	{
@@ -634,7 +634,7 @@ BOOL CALLBACK vncProperties::QuerySettingsDlgProc(HWND hwnd, UINT uMsg,
 		{
 			// Retrieve the Dialog box parameter and use it as a pointer
 			// to the calling vncProperties object
-			SetWindowLong(hwnd, GWL_USERDATA, lParam);
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 			vncProperties *_this = (vncProperties *) lParam;
 			_this->m_QSControls = new QuerySettingsControls(hwnd, _this->m_server);
 			return 0;

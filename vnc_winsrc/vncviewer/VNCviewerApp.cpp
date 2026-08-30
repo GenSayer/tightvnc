@@ -28,6 +28,8 @@
 #include "VNCviewerApp.h"
 #include "Exception.h"
 
+const char* g_buildTime = "Built on " __DATE__ " at " __TIME__;
+
 // For WinCE Palm, you might want to use this for debugging, since it
 // seems impossible to give the command some arguments.
 // #define PALM_LOG 1

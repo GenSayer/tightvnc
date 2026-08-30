@@ -67,7 +67,7 @@ int LoginAuthDialog::DoDialog()
 {
 	return DialogBoxParam(pApp->m_instance,
 						  DIALOG_MAKEINTRESOURCE(IDD_LOGIN_AUTH_DIALOG), 
-						  NULL, (DLGPROC)DlgProc, (LONG)this);
+						  NULL, (DLGPROC)DlgProc, (LONG_PTR)this);
 }
 
 BOOL CALLBACK LoginAuthDialog::DlgProc(HWND hwnd, UINT uMsg,
@@ -77,11 +77,11 @@ BOOL CALLBACK LoginAuthDialog::DlgProc(HWND hwnd, UINT uMsg,
 	// WM_INITDIALOG, which we therafter store with the window and retrieve
 	// as follows:
 	LoginAuthDialog *_this =
-		(LoginAuthDialog *)GetWindowLong(hwnd, GWL_USERDATA);
+		(LoginAuthDialog *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
 
 	switch (uMsg) {
 	case WM_INITDIALOG:
-		SetWindowLong(hwnd, GWL_USERDATA, lParam);
+		SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 		_this = (LoginAuthDialog *)lParam;
 		if (_this->m_title[0] != '\0')
 			SetWindowText(hwnd, _this->m_title);
