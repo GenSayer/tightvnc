@@ -62,7 +62,7 @@ vncAbout::Show(BOOL show)
 				MAKEINTRESOURCE(IDD_ABOUT), 
 				NULL,
 				(DLGPROC) DialogProc,
-				(LONG) this);
+				(LONG_PTR) this);
 		}
 		else
 		{
@@ -80,7 +80,7 @@ vncAbout::DialogProc(HWND hwnd,
 {
 	// We use the dialog-box's USERDATA to store a _this pointer
 	// This is set only once WM_INITDIALOG has been recieved, though!
-	vncAbout *_this = (vncAbout *) GetWindowLong(hwnd, GWL_USERDATA);
+	vncAbout *_this = (vncAbout *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 
 	switch (uMsg)
 	{
@@ -89,7 +89,7 @@ vncAbout::DialogProc(HWND hwnd,
 		{
 			// Retrieve the Dialog box parameter and use it as a pointer
 			// to the calling vncProperties object
-			SetWindowLong(hwnd, GWL_USERDATA, lParam);
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 			_this = (vncAbout *) lParam;
 
 			// Set information about build time

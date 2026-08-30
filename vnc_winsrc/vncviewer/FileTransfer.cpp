@@ -70,7 +70,7 @@ FileTransfer::CreateFileTransferDialog()
 #endif
 	ShowWindow(m_hwndFileTransfer, SW_SHOW);
 	UpdateWindow(m_hwndFileTransfer);
-	SetWindowLong(m_hwndFileTransfer, GWL_USERDATA, (LONG) this);
+	SetWindowLongPtr(m_hwndFileTransfer, GWLP_USERDATA, (LONG_PTR) this);
 
 	m_hwndFTProgress = GetDlgItem(m_hwndFileTransfer, IDC_FTPROGRESS);
 	m_hwndFTClientList = GetDlgItem(m_hwndFileTransfer, IDC_FTCLIENTLIST);
@@ -111,7 +111,7 @@ FileTransfer::FileTransferDlgProc(HWND hwnd,
 								  WPARAM wParam, 
 								  LPARAM lParam)
 {
-	FileTransfer *_this = (FileTransfer *) GetWindowLong(hwnd, GWL_USERDATA);
+	FileTransfer *_this = (FileTransfer *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 	int i;
 	switch (uMsg)
 	{
@@ -794,12 +794,12 @@ FileTransfer::ShowClientItems(char *path)
 BOOL CALLBACK 
 FileTransfer::FTBrowseDlgProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-	FileTransfer *_this = (FileTransfer *) GetWindowLong(hwnd, GWL_USERDATA);
+	FileTransfer *_this = (FileTransfer *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 	switch (uMsg)
 	{
 	case WM_INITDIALOG:
 		{
-			SetWindowLong(hwnd, GWL_USERDATA, lParam);
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 			_this = (FileTransfer *) lParam;
 			CentreWindow(hwnd);
 			_this->m_hwndFTBrowse = hwnd;
@@ -906,7 +906,7 @@ void
 FileTransfer::CreateFTBrowseDialog(BOOL status)
 {
 	m_bServerBrowseRequest = status;
-	DialogBoxParam(m_pApp->m_instance, MAKEINTRESOURCE(IDD_FTBROWSE_DLG), m_hwndFileTransfer, (DLGPROC) FTBrowseDlgProc, (LONG) this);
+	DialogBoxParam(m_pApp->m_instance, MAKEINTRESOURCE(IDD_FTBROWSE_DLG), m_hwndFileTransfer, (DLGPROC) FTBrowseDlgProc, (LONG_PTR) this);
 }
 
 void 

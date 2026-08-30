@@ -65,9 +65,9 @@ void SharedDesktopArea::Init()
 	//
 
 	HWND bmp_hWnd = GetDlgItem(m_hwnd, IDC_BMPCURSOR);
-	m_OldBmpWndProc = GetWindowLong(bmp_hWnd, GWL_WNDPROC);
-	SetWindowLong(bmp_hWnd, GWL_WNDPROC, (LONG)BmpWndProc);
-	SetWindowLong(bmp_hWnd, GWL_USERDATA, (LONG)this);
+	m_OldBmpWndProc = GetWindowLongPtr(bmp_hWnd, GWLP_WNDPROC);
+	SetWindowLongPtr(bmp_hWnd, GWLP_WNDPROC, (LONG_PTR)BmpWndProc);
+	SetWindowLongPtr(bmp_hWnd, GWLP_USERDATA, (LONG_PTR)this);
 
 	//
 	// setup match window
@@ -205,7 +205,7 @@ LRESULT CALLBACK SharedDesktopArea::BmpWndProc(HWND hWnd, UINT message, WPARAM w
 {
 	HBITMAP hNewImage, hOldImage;
 	HCURSOR hNewCursor, hOldCursor;
-	SharedDesktopArea* pDialog = (SharedDesktopArea*) GetWindowLong(hWnd, GWL_USERDATA);
+	SharedDesktopArea* pDialog = (SharedDesktopArea*) GetWindowLongPtr(hWnd, GWLP_USERDATA);
 
 	switch (message) {
 

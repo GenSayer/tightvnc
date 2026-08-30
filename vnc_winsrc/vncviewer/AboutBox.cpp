@@ -28,6 +28,9 @@
 #include "stdhdrs.h"
 #include "vncviewer.h"
 
+const char* g_buildTime = "Built on " __DATE__ " at " __TIME__;
+
+
 // Process the About dialog.
 
 static LRESULT CALLBACK AboutDlgProc(HWND hwnd, UINT iMsg, 
