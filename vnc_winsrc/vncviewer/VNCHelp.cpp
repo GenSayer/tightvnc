@@ -27,7 +27,7 @@
 VNCHelp::VNCHelp()
 {
 	m_dwCookie = NULL;
-	HtmlHelp(NULL, NULL, HH_INITIALIZE, (DWORD)&m_dwCookie);
+	// HtmlHelp(NULL, NULL, HH_INITIALIZE, (DWORD)&m_dwCookie);
 }
 
 void VNCHelp::Popup(LPARAM lParam) 
@@ -84,20 +84,21 @@ void VNCHelp::Popup(LPARAM lParam)
 			break;
 		}
 
-		HtmlHelp((HWND)hlp->hItemHandle,
+		/* HtmlHelp((HWND)hlp->hItemHandle,
 				 NULL,
 				 HH_DISPLAY_TEXT_POPUP,
-				 (DWORD)&popup);
+				 (DWORD)&popup); */
 	}
 }
 
 BOOL VNCHelp::TranslateMsg(MSG *pmsg)
 {
-	return (HtmlHelp(NULL, NULL, HH_PRETRANSLATEMESSAGE, (DWORD)pmsg) != 0);
+	// return (HtmlHelp(NULL, NULL, HH_PRETRANSLATEMESSAGE, (DWORD)pmsg) != 0);
+	return NULL;
 }
 
 VNCHelp::~VNCHelp()
 {
-	HtmlHelp(NULL, NULL, HH_UNINITIALIZE, (DWORD)m_dwCookie);
+	// HtmlHelp(NULL, NULL, HH_UNINITIALIZE, (DWORD)m_dwCookie);
 }
 

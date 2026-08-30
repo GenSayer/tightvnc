@@ -30,7 +30,7 @@
 #include "vncviewer.h"
 #include "VNCOptions.h"
 #include "Exception.h"
-#include "Htmlhelp.h"
+// #include "Htmlhelp.h"
 #include "commctrl.h"
 #include "AboutBox.h"
 VNCOptions::VNCOptions()
@@ -613,7 +613,7 @@ int VNCOptions::DoDialog(bool running)
 {
 	m_running = running;
 	return DialogBoxParam(pApp->m_instance, DIALOG_MAKEINTRESOURCE(IDD_PARENT), 
-							NULL, (DLGPROC) DlgProc, (LONG) this); 	
+							NULL, (DLGPROC) DlgProc, (LONG_PTR) this); 	
 }
 
 BOOL VNCOptions::RaiseDialog()
@@ -637,14 +637,14 @@ BOOL CALLBACK VNCOptions::DlgProc(HWND hwndDlg, UINT uMsg,
 {
 	// We use the dialog-box's USERDATA to store a _this pointer
 	// This is set only once WM_INITDIALOG has been recieved, though!
-	VNCOptions *_this = (VNCOptions *) GetWindowLong(hwndDlg, GWL_USERDATA);
+	VNCOptions *_this = (VNCOptions *) GetWindowLongPtr(hwndDlg, GWLP_USERDATA);
 
 	switch (uMsg) {
 	case WM_INITDIALOG: 
 		{
 			// Retrieve the Dialog box parameter and use it as a pointer
 			// to the calling VNCOptions object
-			SetWindowLong(hwndDlg, GWL_USERDATA, lParam);
+			SetWindowLongPtr(hwndDlg, GWLP_USERDATA, lParam);
 			VNCOptions *_this = (VNCOptions *) lParam;
 			InitCommonControls();
 			CentreWindow(hwndDlg);
@@ -663,13 +663,13 @@ BOOL CALLBACK VNCOptions::DlgProc(HWND hwndDlg, UINT uMsg,
 				MAKEINTRESOURCE(IDD_OPTIONDIALOG),
 				hwndDlg,
 				(DLGPROC)_this->DlgProcConnOptions,
-				(LONG)_this);
+				(LONG_PTR)_this);
 
 			_this->m_hPageGeneral = CreateDialogParam(pApp->m_instance, 
 				MAKEINTRESOURCE(IDD_GENERAL_OPTION),
 				hwndDlg,
 				(DLGPROC)_this->DlgProcGlobalOptions,
-				(LONG)_this);
+				(LONG_PTR)_this);
 
 			// Position child dialogs, to fit the Tab control's display area
 			RECT rc;
@@ -764,13 +764,13 @@ BOOL CALLBACK VNCOptions::DlgProcConnOptions(HWND hwnd, UINT uMsg,
 	// dealing with. But we can get a pseudo-this from the parameter to 
 	// WM_INITDIALOG, which we therafter store with the window and retrieve
 	// as follows:
-	VNCOptions *_this = (VNCOptions *) GetWindowLong(hwnd, GWL_USERDATA);
+	VNCOptions *_this = (VNCOptions *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 	
 	switch (uMsg) {
 		
 	case WM_INITDIALOG: 
 		{
-			SetWindowLong(hwnd, GWL_USERDATA, lParam);
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 			VNCOptions *_this = (VNCOptions *) lParam;
 
 			// Initialise the controls
@@ -1125,13 +1125,13 @@ void VNCOptions::EnableJpeg(HWND hwnd, bool enable)
 BOOL CALLBACK VNCOptions::DlgProcGlobalOptions(HWND hwnd, UINT uMsg,
 											   WPARAM wParam, LPARAM lParam)
 {
-	VNCOptions *_this = (VNCOptions *) GetWindowLong(hwnd, GWL_USERDATA);
+	VNCOptions *_this = (VNCOptions *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 	
 	switch (uMsg) {
 		
 	case WM_INITDIALOG: 
 		{					
-			SetWindowLong(hwnd, GWL_USERDATA, lParam);
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 			VNCOptions *_this = (VNCOptions *) lParam;
 			// Initialise the controls
 	
@@ -1249,26 +1249,26 @@ BOOL CALLBACK VNCOptions::DlgProcGlobalOptions(HWND hwnd, UINT uMsg,
 
 				if (SendMessage(hDotCursor, BM_GETCHECK, 0, 0) == BST_CHECKED) {
 					pApp->m_options.m_localCursor = DOTCURSOR;
-					SetClassLong(_this->m_hWindow, GCL_HCURSOR,
-									(long)LoadCursor(pApp->m_instance, 
+					SetClassLongPtr(_this->m_hWindow, GCLP_HCURSOR,
+									(LONG_PTR)LoadCursor(pApp->m_instance, 
 									MAKEINTRESOURCE(IDC_DOTCURSOR)));
 				}
 				if (SendMessage(hSmallCursor, BM_GETCHECK, 0, 0) == BST_CHECKED) {
 					pApp->m_options.m_localCursor = SMALLCURSOR;
-					SetClassLong(_this->m_hWindow, GCL_HCURSOR,
-									(long)LoadCursor(pApp->m_instance, 
+					SetClassLongPtr(_this->m_hWindow, GCLP_HCURSOR,
+									(LONG_PTR)LoadCursor(pApp->m_instance, 
 									MAKEINTRESOURCE(IDC_SMALLDOT)));
 				}
 				if (SendMessage(hNoCursor, BM_GETCHECK, 0, 0) == BST_CHECKED) {
 					pApp->m_options.m_localCursor = NOCURSOR;
-					SetClassLong(_this->m_hWindow, GCL_HCURSOR,
-									(long)LoadCursor(pApp->m_instance, 
+					SetClassLongPtr(_this->m_hWindow, GCLP_HCURSOR,
+									(LONG_PTR)LoadCursor(pApp->m_instance, 
 									MAKEINTRESOURCE(IDC_NOCURSOR)));
 				}
 				if (SendMessage(hNormalCursor, BM_GETCHECK, 0, 0) == BST_CHECKED) {
 					pApp->m_options.m_localCursor = NORMALCURSOR;
-					SetClassLong(_this->m_hWindow, GCL_HCURSOR,
-									(long)LoadCursor(NULL,IDC_ARROW));
+					SetClassLongPtr(_this->m_hWindow, GCLP_HCURSOR,
+									(LONG_PTR)LoadCursor(NULL,IDC_ARROW));
 				}
 				
 				if (SendMessage(hChec, BM_GETCHECK, 0, 0) == 0) {

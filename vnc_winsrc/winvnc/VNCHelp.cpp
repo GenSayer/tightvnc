@@ -77,10 +77,10 @@ void VNCHelp::Popup(LPARAM lParam)
 			popup.idString = IDC_LIVESHARE;
 		}
 
-		HtmlHelp((HWND)hlp->hItemHandle,
+		/* HtmlHelp((HWND)hlp->hItemHandle,
 				 NULL,
 				 HH_DISPLAY_TEXT_POPUP,
-				 (DWORD)&popup);
+				 (DWORD)&popup); */
 	}
 }
 
