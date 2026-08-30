@@ -19,7 +19,7 @@ Because each legacy and modern architecture requires unique toolchains, compiler
 - ARM64 – Modern Windows on ARM devices.
 - ARM – ARM32 Windows configurations.
 - IA64 – Intel Itanium platform code and fixes.
-- AXP & AXP64 – DEC Alpha (32-bit and 64-bit) specialized environments.
+- AXP & AXP64 – Vintage DEC Alpha (32-bit and 64-bit) Windows NT/2000 adaptations.
 - PowerPC – Vintage Windows NT PowerPC adaptations.
 - MIPS – Vintage NT MIPS adaptations & compiler workarounds.
 
