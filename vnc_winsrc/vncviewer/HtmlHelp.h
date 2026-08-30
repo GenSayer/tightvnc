@@ -17,9 +17,11 @@
 extern "C" {
 #endif  // __cplusplus
 
+#if _MSC_VER < 1200
 // Defines for Win64
 #ifndef _WIN64
 #define DWORD_PTR DWORD
+#endif
 #endif
 
 // Commands to pass to HtmlHelp()
@@ -53,6 +55,7 @@ extern "C" {
 #define HH_SET_EXCLUSIVE_FILTER 0x0019  // set exclusive filtering method for untyped topics to be excluded from display
 #define HH_INITIALIZE            0x001C  // Initializes the help system.
 #define HH_UNINITIALIZE          0x001D  // Uninitializes the help system.
+#define HH_SET_QUERYSERVICE     0x001E  // Set the Host IQueryService interface
 #define HH_PRETRANSLATEMESSAGE  0x00fd  // Pumps messages. (NULL, NULL, MSG*). 
 #define HH_SET_GLOBAL_PROPERTY  0x00fc  // Set a global property. (NULL, NULL, HH_GPROP)
 

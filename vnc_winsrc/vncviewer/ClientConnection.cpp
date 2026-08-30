@@ -60,6 +60,14 @@ extern "C" {
 #define MAX_ENCODINGS 20
 #define VWR_WND_CLASS_NAME _T("VNCviewer")
 
+#ifndef GWLP_STYLE
+#define GWLP_STYLE (-16)
+#endif
+
+#ifndef GWLP_EXSTYLE
+#define GWLP_EXSTYLE (-20)
+#endif
+
 /*
  * Macro to compare pixel formats.
  */
@@ -392,8 +400,8 @@ void ClientConnection::CreateDisplay()
 			      NULL,                // Menu handle
 			      m_pApp->m_instance,
 			      NULL);
-	SetWindowLong(m_hwnd1, GWL_USERDATA, (LONG) this);
-	SetWindowLong(m_hwnd1, GWL_WNDPROC, (LONG)ClientConnection::WndProc1);
+	SetWindowLongPtr(m_hwnd1, GWLP_USERDATA, (LONG_PTR) this);
+	SetWindowLongPtr(m_hwnd1, GWLP_WNDPROC, (LONG_PTR)ClientConnection::WndProc1);
 	ShowWindow(m_hwnd1, SW_HIDE);
 
 	m_hwndscroll = CreateWindow("ScrollClass",
@@ -407,7 +415,7 @@ void ClientConnection::CreateDisplay()
 			      NULL,                // Menu handle
 			      m_pApp->m_instance,
 			      NULL);
-	SetWindowLong(m_hwndscroll, GWL_USERDATA, (LONG) this);
+	SetWindowLongPtr(m_hwndscroll, GWLP_USERDATA, (LONG_PTR) this);
 	ShowWindow(m_hwndscroll, SW_HIDE);
 	
 	// Create a memory DC which we'll use for drawing to
@@ -499,8 +507,8 @@ void ClientConnection::CreateDisplay()
 	hotkeys.SetWindow(m_hwnd1);
     ShowWindow(m_hwnd, SW_HIDE);
 		
-	SetWindowLong(m_hwnd, GWL_USERDATA, (LONG) this);
-	SetWindowLong(m_hwnd, GWL_WNDPROC, (LONG)ClientConnection::WndProc);
+	SetWindowLongPtr(m_hwnd, GWLP_USERDATA, (LONG_PTR) this);
+	SetWindowLongPtr(m_hwnd, GWLP_WNDPROC, (LONG_PTR)ClientConnection::WndProc);
 	
 	if(pApp->m_options.m_toolbar) {
 		CheckMenuItem(GetSystemMenu(m_hwnd1, FALSE),
@@ -1332,19 +1340,19 @@ void ClientConnection::SizeWindow(bool centered)
 	}	
 
 	AdjustWindowRectEx(&fullwinrect, 
-			   GetWindowLong(m_hwnd, GWL_STYLE ), 
-			   FALSE, GetWindowLong(m_hwnd, GWL_EXSTYLE));
+			   GetWindowLongPtr(m_hwnd, GWLP_STYLE ), 
+			   FALSE, GetWindowLongPtr(m_hwnd, GWLP_EXSTYLE));
 
 	m_fullwinwidth = fullwinrect.right - fullwinrect.left;
 	m_fullwinheight = fullwinrect.bottom - fullwinrect.top;
 
 	AdjustWindowRectEx(&fullwinrect, 
-			   GetWindowLong(m_hwndscroll, GWL_STYLE ) & ~WS_HSCROLL & 
+			   GetWindowLongPtr(m_hwndscroll, GWLP_STYLE ) & ~WS_HSCROLL & 
 			   ~WS_VSCROLL & ~WS_BORDER, 
-			   FALSE, GetWindowLong(m_hwndscroll, GWL_EXSTYLE));
+			   FALSE, GetWindowLongPtr(m_hwndscroll, GWLP_EXSTYLE));
 	AdjustWindowRectEx(&fullwinrect, 
-			   GetWindowLong(m_hwnd1, GWL_STYLE ), 
-			   FALSE, GetWindowLong(m_hwnd1, GWL_EXSTYLE));
+			   GetWindowLongPtr(m_hwnd1, GWLP_STYLE ), 
+			   FALSE, GetWindowLongPtr(m_hwnd1, GWLP_EXSTYLE));
 
 	if (GetMenuState(GetSystemMenu(m_hwnd1, FALSE),
 					 ID_TOOLBAR, MF_BYCOMMAND) == MF_CHECKED) {
@@ -1791,7 +1799,7 @@ bool ClientConnection::ScrollScreen(int dx, int dy)
 LRESULT CALLBACK ClientConnection::ScrollProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 {	// This is a static method, so we don't know which instantiation we're 
 	// dealing with.  But we've stored a 'pseudo-this' in the window data.
-	ClientConnection *_this = (ClientConnection *) GetWindowLong(hwnd, GWL_USERDATA);
+	ClientConnection *_this = (ClientConnection *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 		
 	switch (iMsg) {
 	case WM_HSCROLL:
@@ -1847,7 +1855,7 @@ LRESULT CALLBACK ClientConnection::WndProc1(HWND hwnd, UINT iMsg,
 	
 	// This is a static method, so we don't know which instantiation we're 
 	// dealing with.  But we've stored a 'pseudo-this' in the window data.
-	ClientConnection *_this = (ClientConnection *) GetWindowLong(hwnd, GWL_USERDATA);
+	ClientConnection *_this = (ClientConnection *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 		
 	switch (iMsg) {
 	
@@ -2096,7 +2104,7 @@ LRESULT CALLBACK ClientConnection::WndProc(HWND hwnd, UINT iMsg,
 {	
 	// This is a static method, so we don't know which instantiation we're 
 	// dealing with.  But we've stored a 'pseudo-this' in the window data.
-	ClientConnection *_this = (ClientConnection *) GetWindowLong(hwnd, GWL_USERDATA);
+	ClientConnection *_this = (ClientConnection *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 
 	switch (iMsg) {
 	case WM_REGIONUPDATED:
@@ -2237,7 +2245,7 @@ LRESULT CALLBACK ClientConnection::WndProc(HWND hwnd, UINT iMsg,
 				HWND foreground = GetForegroundWindow();
 				HWND hwndafter = NULL;
 				if ((foreground == NULL) || 
-					(GetWindowLong(foreground, GWL_EXSTYLE) & WS_EX_TOPMOST)) {
+					(GetWindowLongPtr(foreground, GWL_EXSTYLE) & WS_EX_TOPMOST)) {
 					hwndafter = HWND_NOTOPMOST;
 				} else {
 					hwndafter = GetNextWindow(foreground, GW_HWNDNEXT); 
