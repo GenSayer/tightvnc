@@ -26,11 +26,30 @@
 
 #define VC_EXTRALEAN
 
-// These two lines are needed to get the mouse wheel macros.
-#define WINVER 0x0400
-#define _WIN32_WINDOWS 0x0410
+
+/* #ifndef _WIN64
+  #define WINVER 0x0400
+  #define _WIN32_WINDOWS 0x0410
+#else
+  #define WINVER 0x0500
+  #define _WIN32_WINNT 0x500
+#endif */
+
+// Manually define the mouse scroll macros
+#ifndef WM_MOUSEWHEEL
+#define WM_MOUSEWHEEL 0x20A
+#endif
+
+#ifndef WHEEL_DELTA
+#define WHEEL_DELTA 120
+#endif
+
+#ifndef WHEEL_PAGESCROLL
+#define WHEEL_PAGESCROLL UINT_MAX
+#endif
 
 #include <winsock2.h>
+#include <windows.h>
 #include <stdio.h>
 #include <process.h>
 #include <assert.h>
