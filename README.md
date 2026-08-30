@@ -1,16 +1,5 @@
 # TightVNC 1.3.10 Port for All Windows Architectures
 This is a specialized, unofficial, comprehensive fork of TightVNC 1.3.10 built natively for virtually every Windows processor architecture to ever exist. This project extends the ultra-lightweight, classic 1.3.x branch to run smoothly on modern 64-bit platforms, efficient ARM hardware, and legacy retro-computing environments.
-**Note:** If you want to get the c
-
-## Supported Windows Architectures
-This project provides native binaries compiled explicitly for the following target environments:
-## Modern Platforms
-
-| Architecture | Platform Target | Common Use Cases / Operating Systems |
-|---|---|---|
-| x64 / amd64 | All 64-bit Windows versions | Mainstream desktops, laptops, and servers. |
-| ARM64 | Windows 10+ on ARM64 devices | Qualcomm Snapdragon-powered laptops and tablets. |
-| ARM32 | Windows RT 8.1 / Windows 10 ARM Build 15035 / ARM64 Windows versions with the ARM32 compatibility layer | Older ARM hardware and ARM32 boards. |
 
 ## Repository Branch Guide
 Because each legacy and modern architecture requires unique toolchains, compiler workarounds, and source code tweaks (see Notes for why I separated the branches), each platform has it's own dedicated development branch. To view the source code or compile for a specific platform, switch to its corresponding branch using the branch dropdown menu at the top of this repository:
@@ -25,6 +14,16 @@ Because each legacy and modern architecture requires unique toolchains, compiler
 
 > **Tip for Git Users:** You can clone and checkout a specific architecture branch immediately using your terminal, for example:
 > ``git clone -b ARM64 https://github.com/GenSayer/tightvnc.git``
+
+## Supported Windows Architectures
+This project provides native binaries compiled explicitly for the following target environments:
+## Modern Platforms
+
+| Architecture | Platform Target | Common Use Cases / Operating Systems |
+|---|---|---|
+| x64 / amd64 | All 64-bit Windows versions | Mainstream desktops, laptops, and servers. |
+| ARM64 | Windows 10+ on ARM64 devices | Qualcomm Snapdragon-powered laptops and tablets. |
+| ARM32 | Windows RT 8.1 / Windows 10 ARM Build 15035 / ARM64 Windows versions with the ARM32 compatibility layer | Older ARM hardware and ARM32 boards. |
 
 
 ## Legacy & Vintage NT Platforms
