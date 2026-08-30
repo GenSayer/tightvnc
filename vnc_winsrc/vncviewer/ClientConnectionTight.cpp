@@ -35,6 +35,10 @@
 #define TIGHT_MIN_TO_COMPRESS 12
 #define TIGHT_BUFFER_SIZE (2048 * 200)
 
+typedef int bool;
+#define false 0
+#define true 1
+
 void ClientConnection::ReadTightRect(rfbFramebufferUpdateRectHeader *pfburh)
 {
   if (m_myFormat.bitsPerPixel != 8 &&

@@ -1157,7 +1157,7 @@ vncClientThread::run(void *arg)
 							? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP;
 						m_server->SetMouseCounter(1, m_client->m_cursor_pos, false);
 					}
-
+					#define MOUSEEVENTF_WHEEL 0x0800
 					// Treat buttons 4 and 5 presses as mouse wheel events
 					DWORD wheel_movement = 0;
 					if ((msg.pe.buttonMask & rfbButton4Mask) != 0 &&
@@ -1238,11 +1238,13 @@ vncClientThread::run(void *arg)
 				vnclog.Print(LL_INTINFO, VNCLOG("FileListRequest message received\n"));
 
 				msg.flr.dirNameSize = Swap16IfLE(msg.flr.dirNameSize);
-				if (msg.flr.dirNameSize > 255) break;
+				if (msg.flr.dirNameSize > 250) break; // Reduced slightly to leave room for Windows wildcards
+				
 				char path[255 + 1];
 				m_socket->ReadExact(path, msg.flr.dirNameSize);
 				path[msg.flr.dirNameSize] = '\0';
 				ConvertPath(path);
+				
 				if (!vncService::tryImpersonate()) {
 					omni_mutex_lock l(m_client->m_sendUpdateLock);
 					rfbFileListDataMsg fld;
@@ -1254,6 +1256,7 @@ vncClientThread::run(void *arg)
 					m_socket->SendExact((char *)&fld, sz_rfbFileListDataMsg);
 					break;
 				}
+				
 				FileTransferItemInfo ftii;
 				if (strlen(path) == 0) {
 					TCHAR szDrivesList[256];
@@ -1280,21 +1283,33 @@ vncClientThread::run(void *arg)
 						i += strcspn(&szDrivesList[i], "\0") + 1;
 					}
 				} else {
-					strcat(path, "\\*");
+					// FIX: Check bounds before appending wildcard to completely avoid buffer overflow
+					if (strlen(path) + 2 < sizeof(path)) {
+						strcat(path, "\\*");
+					}
+					
 					HANDLE FLRhandle;
 					WIN32_FIND_DATA FindFileData;
 					UINT savedErrorMode = SetErrorMode(SEM_FAILCRITICALERRORS);
 					FLRhandle = FindFirstFile(path, &FindFileData);
 					DWORD LastError = GetLastError();
 					SetErrorMode(savedErrorMode);
+					
 					if (FLRhandle != INVALID_HANDLE_VALUE) {
 						do {
 							if (strcmp(FindFileData.cFileName, ".") != 0 &&
 								strcmp(FindFileData.cFileName, "..") != 0) {
+								
+								// FIX: Manual 64-bit unpacking compatible with legacy compiler math registers
 								LARGE_INTEGER li;
+								__int64 total_ticks;
 								li.LowPart = FindFileData.ftLastWriteTime.dwLowDateTime;
 								li.HighPart = FindFileData.ftLastWriteTime.dwHighDateTime;							
-								li.QuadPart = (li.QuadPart - 1164444736000000000) / 10000000;
+								
+								total_ticks = li.QuadPart;
+								total_ticks = (total_ticks - 1164444736000000000i64) / 10000000i64;
+								li.QuadPart = total_ticks;
+
 								if ((FindFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {	
 									ftii.Add(FindFileData.cFileName, -1, 0);
 								} else {
@@ -1321,6 +1336,8 @@ vncClientThread::run(void *arg)
 						}
 					}
 				}
+				
+				// Fix loop tracking variable scopes for early-spec compiler standard execution
 				int dsSize = ftii.GetNumEntries() * 8;
 				int msgLen = sz_rfbFileListDataMsg + dsSize + ftii.GetSummaryNamesLength() + ftii.GetNumEntries();
 				char *pAllMessage = new char [msgLen];
@@ -1328,18 +1345,32 @@ vncClientThread::run(void *arg)
 				FTSIZEDATA *pftsd = (FTSIZEDATA *) &pAllMessage[sz_rfbFileListDataMsg];
 				char *pFilenames = &pAllMessage[sz_rfbFileListDataMsg + dsSize];
 				pFLD->type = rfbFileListData;
-				pFLD->flags = msg.flr.flags&0xF0;
+				pFLD->flags = msg.flr.flags & 0xF0;
 				pFLD->numFiles = Swap16IfLE(ftii.GetNumEntries());
 				pFLD->dataSize = Swap16IfLE(ftii.GetSummaryNamesLength() + ftii.GetNumEntries());
 				pFLD->compressedSize = pFLD->dataSize;
-				for (int i = 0; i < ftii.GetNumEntries(); i++) {
-					pftsd[i].size = Swap32IfLE(ftii.GetSizeAt(i));
-					pftsd[i].data = Swap32IfLE(ftii.GetDataAt(i));
-					strcpy(pFilenames, ftii.GetNameAt(i));
+				
+				int loopIdx;
+				for (loopIdx = 0; loopIdx < ftii.GetNumEntries(); loopIdx++) {
+					// FIXED: Fetch the size into a signed integer to check for the -1 directory flag
+					long currentSize = (long)ftii.GetSizeAt(loopIdx);
+
+					if (currentSize == -1) {
+						// Explicitly bind the network-layer representation of a Directory flag
+						pftsd[loopIdx].size = Swap32IfLE(0xFFFFFFFF);
+					} else {
+						// Standard file sizing pipeline
+						pftsd[loopIdx].size = Swap32IfLE((DWORD)currentSize);
+					}
+
+					pftsd[loopIdx].data = Swap32IfLE(ftii.GetDataAt(loopIdx));
+					strcpy(pFilenames, ftii.GetNameAt(loopIdx));
 					pFilenames = pFilenames + strlen(pFilenames) + 1;
 				}
+				
 				omni_mutex_lock l(m_client->m_sendUpdateLock);
 				m_socket->SendExact(pAllMessage, msgLen);
+				delete[] pAllMessage;
 				vncService::undoImpersonate();
 			}
 			break;
@@ -2174,7 +2205,7 @@ vncClient::SendRectangles(rectlist &rects)
 
 		rects.pop_front();
 	}
-	rects.clear();
+	rects.erase(rects.begin(), rects.end());//rects.clear();
 
 	return TRUE;
 }
@@ -2387,16 +2418,39 @@ vncClient::UpdateLocalFormat()
 char * 
 vncClientThread::ConvertPath(char *path)
 {
-	int len = strlen(path);
-	if(len >= 255) return path;
-	if((path[0] == '/') && (len == 1)) {path[0] = '\0'; return path;}
-	for(int i = 0; i < (len - 1); i++) {
-		if(path[i+1] == '/') path[i+1] = '\\';
-		path[i] = path[i+1];
+	size_t len = strlen(path);
+	size_t i;
+	if (len == 0 || len >= 255) return path;
+
+	// Safe handling for root forward slashes
+	if (path[0] == '/' && len == 1) {
+		path[0] = '\0'; 
+		return path;
 	}
-	path[len-1] = '\0';
+
+	// 1. Transform all web/VNC forward slashes into canonical Windows backslashes
+	for (i = 0; i < len; i++) {
+		if (path[i] == '/') {
+			path[i] = '\\';
+		}
+	}
+
+	// 2. Safely strip a leading slash if it precedes a drive letter (e.g. "\C:" -> "C:")
+	// FIX: memmove must include the null terminator (len - 1 + 1 = len)
+	if (path[0] == '\\' && len >= 3 && path[2] == ':') {
+		memmove(path, path + 1, len); 
+		len--;
+	}
+
+	// 3. Ensure a raw root drive letter always has a trailing slash for Win32 (e.g. "C:" -> "C:\")
+	if (len == 2 && path[1] == ':') {
+		path[2] = '\\';
+		path[3] = '\0';
+	}
+
 	return path;
 }
+
 
 void 
 vncClient::SendFileUploadCancel(unsigned short reasonLen, char *reason)

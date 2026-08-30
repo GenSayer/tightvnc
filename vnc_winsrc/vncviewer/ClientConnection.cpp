@@ -56,6 +56,18 @@ extern "C" {
 #include "d3des.h"
 }
 
+#ifndef TBSTYLE_FLAT
+#define TBSTYLE_FLAT 0x800
+#endif
+
+#ifndef TB_SETINDENT
+#define TB_SETINDENT (WM_USER + 71)
+#endif
+
+#ifndef SD_BOTH
+#define SD_BOTH 2
+#endif
+
 #define INITIALNETBUFSIZE 4096
 #define MAX_ENCODINGS 20
 #define VWR_WND_CLASS_NAME _T("VNCviewer")
@@ -2116,6 +2128,7 @@ LRESULT CALLBACK ClientConnection::WndProc(HWND hwnd, UINT iMsg,
 			 _this->m_waitingOnEmulateTimer = false;
 		}
 		return 0; 
+	#define WM_MOUSEWHEEL 0x020A
 	case WM_LBUTTONDOWN:
 	case WM_LBUTTONUP:
 	case WM_MBUTTONDOWN:

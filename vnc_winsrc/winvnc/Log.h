@@ -20,6 +20,13 @@
 #include <stdio.h>
 #include <time.h>
 
+#ifndef _BOOLHACKDEFINED
+#define _BOOLHACKDEFINED
+typedef bool;
+#define false 0
+#define true 1
+#endif
+
 // Macros for sticking in the current file name
 #define VNCLOG(s)	(__FILE__ ":\t" s)
 

@@ -39,7 +39,7 @@
 #include "keysymdef.h"
 #include "vncService.h"
 
-#include <map>
+#include "map.h"
 
 // Mapping of X keysyms to windows VK codes.  Ordering here is the same as
 // keysymdef.h to make checking easier
@@ -61,10 +61,6 @@ static keymap_t keymap[] = {
   { XK_Pause,            VK_PAUSE, 0 },
   { XK_Escape,           VK_ESCAPE, 0 },
   { XK_Delete,           VK_DELETE, 1 },
-
-  // Japanese stuff - almost certainly wrong...
-  { XK_Kanji,            VK_KANJI, 0 },
-  { XK_Kana_Shift,       VK_KANA, 0 },
 
   // Cursor control & motion
 

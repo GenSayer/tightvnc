@@ -1,0 +1,7 @@
+# Microsoft Developer Studio Generated Dependency File, included by omnithread.mak
+
+.\nt.cpp : \
+	".\basetsd.h"\
+	".\nt.h"\
+	".\omnithread.h"\
+	

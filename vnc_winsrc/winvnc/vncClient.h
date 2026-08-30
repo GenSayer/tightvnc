@@ -41,9 +41,10 @@ typedef SHORT vncClientId;
 #if (!defined(_WINVNC_VNCCLIENT))
 #define _WINVNC_VNCCLIENT
 
-#include <list>
+//#include <list>
+#include <list.h>
 
-typedef std::list<vncClientId> vncClientList;
+typedef list<vncClientId> vncClientList;
 
 // Includes
 #include "stdhdrs.h"

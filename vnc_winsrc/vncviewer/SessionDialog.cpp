@@ -30,7 +30,7 @@
 #include "vncviewer.h"
 #include "SessionDialog.h"
 #include "Exception.h"
-#include "Htmlhelp.h"
+//#include "Htmlhelp.h"
 
 
 

@@ -63,7 +63,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 	}
 
 	MSG msg;
-	std::list<HWND>::iterator iter;
+	list<HWND>::iterator iter;
 
 	try {
 		while (GetMessage(&msg, NULL, 0, 0)) {

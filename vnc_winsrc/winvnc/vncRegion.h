@@ -36,7 +36,7 @@ class vncRegion;
 #pragma once
 
 #include "stdhdrs.h"
-#include <list>
+#include <list.h>
 #include "RectList.h"
 
 // Class definition

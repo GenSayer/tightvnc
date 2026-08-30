@@ -30,6 +30,13 @@
 #include "rfb.h"
 #include "vncServer.h"
 
+#ifndef _BOOLHACKDEFINED
+#define _BOOKHACKDEFINED
+typedef int bool;
+#define false 0
+#define true 1
+#endif
+
 class vncKeymap {
 public:
   static void keyEvent(CARD32 keysym, bool down, vncServer *server);

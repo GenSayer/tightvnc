@@ -24,6 +24,10 @@ char	vncVideoDriver::szDriverString[] = "Mirage Driver";
 char	vncVideoDriver::szDriverStringAlt[] = "DemoForge Mirage Driver";
 char	vncVideoDriver::szMiniportName[] = "dfmirage";
 
+#ifndef DM_POSITION
+#define DM_POSITION 0x00000020L
+#endif
+
 #define MINIPORT_REGISTRY_PATH	"SYSTEM\\CurrentControlSet\\Hardware Profiles\\Current\\System\\CurrentControlSet\\Services"
 
 BOOL IsWinNT();
@@ -414,6 +418,41 @@ BOOL vncVideoDriver::Activate_NT50(
 	}
 
 	DEVMODE devmode;
+		struct MODERN_DEVMODE {
+		BYTE  dmIgnoreOldFields[68]; // Pad past device name, specs, version layout
+		DWORD dmFields;
+		union {
+			struct {
+				LONG x;
+				LONG y;
+			} dmPosition;
+			DWORD dmDisplayOrientation;
+			DWORD dmDisplayFixedOutput;
+		};
+		// The remaining fields will continue sequentially...
+	};
+	MODERN_DEVMODE *pModernDM = (MODERN_DEVMODE*)&devmode;
+	
+	/* DEVMODE devmode;
+	
+	struct MODERN_DEVMODE {
+		char  dmDeviceName[32];
+		WORD  dmSpecVersion;
+		WORD  dmDriverVersion;
+		WORD  dmSize;
+		WORD  dmDriverExtra;
+		DWORD dmFields;
+		union {
+			struct {
+				LONG x;
+				LONG y;
+			} dmPosition;
+			DWORD dmDisplayOrientation;
+			DWORD dmDisplayFixedOutput;
+		};
+	};
+	MODERN_DEVMODE *pModernDM = (MODERN_DEVMODE*)&devmode; */
+	
 	FillMemory(&devmode, sizeof(DEVMODE), 0);
 	devmode.dmSize = sizeof(DEVMODE);
 	devmode.dmDriverExtra = 0;
@@ -421,11 +460,11 @@ BOOL vncVideoDriver::Activate_NT50(
 	devmode.dmFields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
 	if (prcltarget)
 	{
-// we always have to set position or
-// a stale position info in registry would come into effect.
+		// we always have to set position or
+		// a stale position info in registry would come into effect.
 		devmode.dmFields |= DM_POSITION;
-		devmode.dmPosition.x = prcltarget->left;
-		devmode.dmPosition.y = prcltarget->top;
+		pModernDM->dmPosition.x = prcltarget->left;
+		pModernDM->dmPosition.y = prcltarget->top;
 
 		devmode.dmPelsWidth = prcltarget->right - prcltarget->left;
 		devmode.dmPelsHeight = prcltarget->bottom - prcltarget->top;
@@ -434,7 +473,7 @@ BOOL vncVideoDriver::Activate_NT50(
 	devmode.dmDeviceName[0] = '\0';
 
     vnclog.Print(LL_INTINFO, VNCLOG("DevNum:%d\nName:%s\nString:%s\n\n"), devNum, &dd.DeviceName[0], &dd.DeviceString[0]);
-	vnclog.Print(LL_INTINFO, VNCLOG("Screen Top-Left Position: (%i, %i)\n"), devmode.dmPosition.x, devmode.dmPosition.y);
+	vnclog.Print(LL_INTINFO, VNCLOG("Screen Top-Left Position: (%i, %i)\n"), pModernDM->dmPosition.x, pModernDM->dmPosition.y);
 	vnclog.Print(LL_INTINFO, VNCLOG("Screen Dimensions: (%i, %i)\n"), devmode.dmPelsWidth, devmode.dmPelsHeight);
 	vnclog.Print(LL_INTINFO, VNCLOG("Screen Color depth: %i\n"), devmode.dmBitsPerPel);
 

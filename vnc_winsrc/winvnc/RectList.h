@@ -26,11 +26,12 @@
 
 // RectList header file
 
+#include <list.h>
 #include "stdhdrs.h"
-#include <list>
+//#include <list>
 
 // The rectlist class
-typedef std::list<RECT> rectlist; 
+typedef list<RECT> rectlist; 
 
 // Operators on RECTs.
 bool operator <(const RECT _X, const RECT _Y);

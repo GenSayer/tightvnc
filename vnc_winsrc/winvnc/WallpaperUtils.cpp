@@ -32,45 +32,9 @@ WallpaperUtils::WallpaperUtils()
 void
 WallpaperUtils::KillActiveDesktop()
 {
-  vnclog.Print(LL_INTERR, VNCLOG("KillActiveDesktop\n"));
-
-  // Contact Active Desktop if possible
-  HRESULT result;
-  IActiveDesktop* active_desktop = 0;
-  result = CoCreateInstance(CLSID_ActiveDesktop, NULL, CLSCTX_INPROC_SERVER,
-    IID_IActiveDesktop, (void**)&active_desktop);
-  if (result != S_OK) {
-    vnclog.Print(LL_INTERR, VNCLOG("unable to access Active Desktop object:%x\n"), result);
-    return;
-  }
-
-  // Get Active Desktop options
-  COMPONENTSOPT options;
-  options.dwSize = sizeof(options);
-  result = active_desktop->GetDesktopItemOptions(&options, 0);
-  if (result != S_OK) {
-    vnclog.Print(LL_INTERR, VNCLOG("unable to fetch Active Desktop options:%x\n"), result);
-    active_desktop->Release();
-    return;
-  }
-
-  // Disable if currently active
-  m_restore_ActiveDesktop = (options.fActiveDesktop != 0);
-  if (options.fActiveDesktop) {
-    vnclog.Print(LL_INTINFO, VNCLOG("attempting to disable Active Desktop\n"));
-    options.fActiveDesktop = FALSE;
-    result = active_desktop->SetDesktopItemOptions(&options, 0);
-    if (result != S_OK) {
-      vnclog.Print(LL_INTERR, VNCLOG("unable to disable Active Desktop:%x\n"), result);
-      active_desktop->Release();
-      return;
-    }
-  } else {
-    vnclog.Print(LL_INTINFO, VNCLOG("Active Desktop not enabled - ignoring\n"));
-  }
-
-  active_desktop->ApplyChanges(AD_APPLY_REFRESH);
-  active_desktop->Release();
+  
+  vnclog.Print(LL_INTINFO, VNCLOG("Active Desktop not supported in this build - ignoring\n"));
+  m_restore_ActiveDesktop = false;
 }
 
 void
@@ -91,41 +55,7 @@ WallpaperUtils::KillWallpaper()
 void
 WallpaperUtils::RestoreActiveDesktop()
 {
-  // Contact Active Desktop if possible
-  HRESULT result;
-  IActiveDesktop* active_desktop = 0;
-  result = CoCreateInstance(CLSID_ActiveDesktop, NULL, CLSCTX_INPROC_SERVER,
-    IID_IActiveDesktop, (void**)&active_desktop);
-  if (result != S_OK) {
-    vnclog.Print(LL_INTERR, VNCLOG("unable to access Active Desktop object:%x\n"), result);
-    return;
-  }
-
-  // Get Active Desktop options
-  COMPONENTSOPT options;
-  options.dwSize = sizeof(options);
-  result = active_desktop->GetDesktopItemOptions(&options, 0);
-  if (result != S_OK) {
-    vnclog.Print(LL_INTERR, VNCLOG("unable to fetch Active Desktop options:%x\n"), result);
-    active_desktop->Release();
-    return;
-  }
-
-  // Re-enable if previously disabled
-  if (m_restore_ActiveDesktop) {
-    m_restore_ActiveDesktop = false;
-    vnclog.Print(LL_INTINFO, VNCLOG("attempting to re-enable Active Desktop\n"));
-    options.fActiveDesktop = TRUE;
-    result = active_desktop->SetDesktopItemOptions(&options, 0);
-    if (result != S_OK) {
-      vnclog.Print(LL_INTERR, VNCLOG("unable to re-enable Active Desktop:%x\n"), result);
-      active_desktop->Release();
-      return;
-    }
-  }
-
-  active_desktop->ApplyChanges(AD_APPLY_REFRESH);
-  active_desktop->Release();
+ 	m_restore_ActiveDesktop = false;
 }
 
 void

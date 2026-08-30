@@ -26,6 +26,10 @@
 #if !defined(FILETRANSFERITEMINFO_H)
 #define FILETRANSFERITEMINFO_H
 
+typedef int bool;
+#define false 0
+#define true 1
+
 #define rfbMAX_PATH 255
 
 typedef struct tagFTITEMINFO

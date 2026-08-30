@@ -42,6 +42,8 @@ class vncServer;
 #if (!defined(_WINVNC_VNCSERVER))
 #define _WINVNC_VNCSERVER
 
+#include <list.h>
+
 // Custom
 #include "vncCORBAConnect.h"
 #include "vncSockConnect.h"
@@ -53,10 +55,10 @@ class vncServer;
 // Includes
 #include "stdhdrs.h"
 #include <omnithread.h>
-#include <list>
+//#include <list>
 
 // Define a datatype to handle lists of windows we wish to notify
-typedef std::list<HWND> vncNotifyList;
+typedef list<HWND> vncNotifyList;
 
 // Some important constants;
 const int MAX_CLIENTS = 128;

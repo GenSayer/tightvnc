@@ -24,6 +24,9 @@
 // whence you received this file, check http://www.uk.research.att.com/vnc or contact
 // the authors on vnc@uk.research.att.com for information on obtaining it.
 
+typedef int bool;
+#define false 0
+#define true 1
 
 #ifndef VNCOPTIONS_H__
 #define VNCOPTIONS_H__

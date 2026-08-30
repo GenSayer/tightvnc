@@ -31,6 +31,47 @@
 #include "ClientConnection.h"
 #include "FileTransferItemInfo.h"
 
+typedef int bool;
+#define false 0
+#define true 1
+
+#pragma pack(push, 8)
+
+// 1. NMHDR is already safely defined inside your windows.h/commctrl.h 
+// No manual declaration block needed here.
+
+// 2. Map local convenience aliases to the MSVC 4 SDK structure names
+// This bridges legacy naming variations smoothly.
+#ifndef TVITEM_DEFINED
+typedef TV_ITEM          TVITEM;
+typedef TV_ITEM*        LPTVITEM;
+#define TVITEM_DEFINED
+#endif
+
+#ifndef NMTREEVIEW_DEFINED
+typedef NM_TREEVIEW      NMTREEVIEW;
+typedef NM_TREEVIEW*     LPNMTREEVIEW;
+#define NMTREEVIEW_DEFINED
+#endif
+
+#ifndef LVITEM_DEFINED
+typedef LV_ITEM          LVITEM;
+typedef LV_ITEM*         LPLVITEM; 
+#define LVITEM_DEFINED
+#endif
+
+#ifndef NMLVDISPINFO_DEFINED
+// MSVC 4 SDK natively named this structure LV_DISPINFO instead of NMLVDISPINFO
+typedef LV_DISPINFO      NMLVDISPINFO;
+typedef LV_DISPINFO*     LPNMLVDISPINFO;
+#define NMLVDISPINFO_DEFINED
+#endif
+
+#pragma pack(pop)
+
+
+
+
 class ClientConnection;
 
 class FileTransfer  

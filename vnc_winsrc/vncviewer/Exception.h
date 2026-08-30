@@ -25,10 +25,16 @@
 // the authors on vnc@uk.research.att.com for information on obtaining it.
 
 
+
+
 #ifndef EXCEPTION_H__
 #define EXCEPTION_H__
 
 #pragma once
+
+typedef bool;
+#define false 0
+#define true 1
 
 // Exceptions used in VNCviewer
 

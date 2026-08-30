@@ -30,9 +30,26 @@
 #include "vncviewer.h"
 #include "VNCOptions.h"
 #include "Exception.h"
-#include "Htmlhelp.h"
+//#include "Htmlhelp.h"
 #include "commctrl.h"
 #include "AboutBox.h"
+
+#ifndef TCITEM
+#define TCITEM TC_ITEM
+#endif
+
+#ifndef LPTCITEM
+#define LPTCITEM LPTC_ITEM
+#endif
+
+#ifndef NMUPDOWN
+#define NMUPDOWN NM_UPDOWN
+#endif
+
+#ifndef LPNMUPDOWN
+#define LPNMUPDOWN LPNM_UPDOWN
+#endif
+
 VNCOptions::VNCOptions()
 {
 	for (int i = rfbEncodingRaw; i<= LASTENCODING; i++)

@@ -31,6 +31,52 @@
 
 #define MAXCHANGES_BUF 20000
 
+// ============================================================================
+// DISPLAY_DEVICE Fallback Definition for Windows NT 4 Toolchains
+// ============================================================================
+#ifndef DISPLAY_DEVICE_ATTACHED_TO_DESKTOP
+#define DISPLAY_DEVICE_ATTACHED_TO_DESKTOP 0x00000001
+#endif
+#ifndef DISPLAY_DEVICE_PRIMARY_DEVICE
+#define DISPLAY_DEVICE_PRIMARY_DEVICE      0x00000004
+#endif
+#ifndef DISPLAY_DEVICE_MIRRORING_DRIVER
+#define DISPLAY_DEVICE_MIRRORING_DRIVER    0x00000008
+#endif
+
+#ifndef _DISPLAY_DEVICE_STRUCTS_
+#define _DISPLAY_DEVICE_STRUCTS_
+typedef struct _DISPLAY_DEVICEA {
+    DWORD cb;
+    CHAR  DeviceName[32];
+    CHAR  DeviceString[128];
+    DWORD StateFlags;
+    CHAR  DeviceID[128];
+    CHAR  DeviceKey[128];
+} DISPLAY_DEVICEA, *PDISPLAY_DEVICEA, *LPDISPLAY_DEVICEA;
+
+typedef struct _DISPLAY_DEVICEW {
+    DWORD cb;
+    WCHAR DeviceName[32];
+    WCHAR DeviceString[128];
+    DWORD StateFlags;
+    WCHAR DeviceID[128];
+    WCHAR DeviceKey[128];
+} DISPLAY_DEVICEW, *PDISPLAY_DEVICEW, *LPDISPLAY_DEVICEW;
+
+#ifdef UNICODE
+typedef DISPLAY_DEVICEW DISPLAY_DEVICE;
+typedef PDISPLAY_DEVICEW PDISPLAY_DEVICE;
+typedef LPDISPLAY_DEVICEW LPDISPLAY_DEVICE;
+#else
+typedef DISPLAY_DEVICEA DISPLAY_DEVICE;
+typedef PDISPLAY_DEVICEA PDISPLAY_DEVICE;
+typedef LPDISPLAY_DEVICEA LPDISPLAY_DEVICE;
+#endif
+#endif // _DISPLAY_DEVICE_STRUCTS_
+// ============================================================================
+
+
 typedef enum
 {
 	dmf_dfo_IGNORE		= 0,

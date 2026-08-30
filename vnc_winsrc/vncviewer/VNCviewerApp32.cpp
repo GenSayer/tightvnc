@@ -205,7 +205,7 @@ bool VNCviewerApp32::ProcessDialogMessage(MSG *pmsg)
 {
 	if (!m_dialogs.empty()) {
 		omni_mutex_lock l(m_dialogsMutex);
-		std::list<HWND>::iterator iter;
+		list<HWND>::iterator iter;
 		for (iter = m_dialogs.begin(); iter != m_dialogs.end(); iter++) {
 			if (IsDialogMessage(*iter, pmsg))
 				return true;

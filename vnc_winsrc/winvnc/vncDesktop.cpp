@@ -42,10 +42,18 @@
 #include "WallpaperUtils.h"
 #include "TsSessions.h"
 
-#if (_MSC_VER>= 1300)
+/* #if (_MSC_VER>= 1300)
 #include <fstream>
 #else
 #include <fstream.h>
+#endif */
+
+#ifndef SM_CMONITORS
+#define SM_CMONITORS		80
+#define SM_XVIRTUALSCREEN	76
+#define SM_YVIRTUALSCREEN	77
+#define SM_CXVIRTUALSCREEN	78
+#define SM_CYVIRTUALSCREEN	79
 #endif
 
 // Constants

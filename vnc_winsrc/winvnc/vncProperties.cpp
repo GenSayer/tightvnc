@@ -41,6 +41,58 @@
 #include "vncPasswd.h"
 #include "commctrl.h"
 
+// ============================================================================
+// TCITEM Structure Mapping Fallback for Legacy Toolchains (CommCtrl)
+// ============================================================================
+//#include <commctrl.h>
+
+#ifndef TCITEMA
+typedef struct tagTCITEMA {
+    UINT mask;
+#if (_WIN32_IE >= 0x0300)
+    DWORD dwState;
+    DWORD dwStateMask;
+#else
+    UINT  dwState;     // Fallback padding if IE3 macro flags are unassigned
+    UINT  dwStateMask;
+#endif
+    LPSTR pszText;
+    int   cchTextMax;
+    int   iImage;
+    LPARAM lParam;
+} TCITEMA, *LPTCITEMA;
+#endif
+
+#ifndef TCITEMW
+typedef struct tagTCITEMW {
+    UINT mask;
+#if (_WIN32_IE >= 0x0300)
+    DWORD dwState;
+    DWORD dwStateMask;
+#else
+    UINT  dwState;
+    UINT  dwStateMask;
+#endif
+    LPWSTR pszText;
+    int    cchTextMax;
+    int    iImage;
+    LPARAM lParam;
+} TCITEMW, *LPTCITEMW;
+#endif
+
+// Re-map the generic structures if only the legacy names (TC_ITEM) exist
+#ifndef TCITEM
+#ifdef UNICODE
+typedef TCITEMW TCITEM;
+typedef LPTCITEMW LPTCITEM;
+#else
+typedef TCITEMA TCITEM;
+typedef LPTCITEMA LPTCITEM;
+#endif
+#endif
+// ============================================================================
+
+
 const char NO_PASSWORD_WARN [] = "WARNING : Running WinVNC without setting a password is "
 								"a dangerous security risk!\n"
 								"Until you set a password, WinVNC will not accept incoming connections.";

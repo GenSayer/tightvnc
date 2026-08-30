@@ -25,7 +25,7 @@
 
 #include "VNCviewerApp.h"
 #include "Daemon.h"
-#include <list>
+#include "list.h"
 
 class VNCviewerApp32 : public VNCviewerApp {
 public:
@@ -48,7 +48,7 @@ public:
 	bool ProcessDialogMessage(MSG *pmsg);
 private:
 	// List of open modeless dialogs
-	std::list<HWND> m_dialogs;
+	list<HWND> m_dialogs;
 	omni_mutex m_dialogsMutex;
 };
 

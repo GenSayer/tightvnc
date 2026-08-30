@@ -27,10 +27,16 @@
 // Disable warnings about truncated names caused by #include <map>
 #pragma warning(disable: 4786)
 
+#include "map.h"
+
 #include "stdhdrs.h"
 #include "rfb.h"
 
-#include <map>
+typedef int bool;
+#define false 0
+#define true 1
+
+//#include <map.h>
 
 class CapsContainer
 {

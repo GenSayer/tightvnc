@@ -38,6 +38,7 @@ extern const char* g_buildTime;
 // LOGGING SUPPORT
 
 #include "Log.h"
+#include <list.h>
 extern Log vnclog;
 
 // No logging at all

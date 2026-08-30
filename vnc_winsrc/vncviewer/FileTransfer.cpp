@@ -28,6 +28,83 @@
 #include "FileTransfer.h"
 #include "FileTransferItemInfo.h"
 
+#include <commctrl.h>
+
+// ============================================================================
+// 1. LISTVIEW EXTENDED STYLES & MESSAGES (IE 3+)
+// ============================================================================
+#ifndef LVM_SETEXTENDEDLISTVIEWSTYLE
+#define LVM_SETEXTENDEDLISTVIEWSTYLE (LVM_FIRST + 54)
+#endif
+
+#ifndef LVS_EX_FULLROWSELECT
+#define LVS_EX_FULLROWSELECT         0x00000020
+#endif
+
+// MSVC 4.1 Macro implementation for ListView_SetExtendedListViewStyleEx
+#ifndef ListView_SetExtendedListViewStyleEx
+#define ListView_SetExtendedListViewStyleEx(hwndLV, dwMask, dw) \
+        (DWORD)SNDMSG((hwndLV), LVM_SETEXTENDEDLISTVIEWSTYLE, (WPARAM)(dwMask), (LPARAM)(dw))
+#endif
+
+
+// ============================================================================
+// 2. ITEM ACTIVATION NOTIFICATIONS & STRUCTS (IE 4+)
+// ============================================================================
+#ifndef LVN_ITEMACTIVATE
+#define LVN_ITEMACTIVATE             (LVN_FIRST - 14)
+#endif
+
+// If NMITEMACTIVATE is completely missing, reconstruct the Win32 layout
+#ifndef LPNMITEMACTIVATE
+typedef struct tagNMITEMACTIVATE {
+    NMHDR  hdr;
+    int    iItem;
+    int    iSubItem;
+    UINT   uNewState;
+    UINT   uOldState;
+    UINT   uChanged;
+    POINT  ptAction;
+    LPARAM lParam;
+    UINT   uKeyFlags;
+} NMITEMACTIVATE, *LPNMITEMACTIVATE;
+#endif
+
+
+// ============================================================================
+// 3. TREEVIEW STRUCTURE DISAMBIGUATION
+// ============================================================================
+// NOTE: MSVC 4.1 DOES have TV_INSERTSTRUCT, but later SDKs renamed it to TVINSERTSTRUCT.
+// We map the missing modern name directly onto the legacy name structure.
+#ifndef TVINSERTSTRUCT
+#define TVINSERTSTRUCT TV_INSERTSTRUCT
+#endif
+#ifndef LPTVINSERTSTRUCT
+#define LPTVINSERTSTRUCT LPTV_INSERTSTRUCT
+#endif
+
+// --- ListView Column Order Flags ---
+#ifndef LVCF_ORDER
+#define LVCF_ORDER          0x0020  // Indicates that the iOrder field is valid
+#endif
+
+// --- MSVC 4.1 Safe LVCOLUMN Extension ---
+// MSVC 4.1 defines 'LV_COLUMN'. We define a modern 'LVCOLUMN' wrapper 
+// that appends the missing 'iOrder' tracking field.
+#ifndef LVCOLUMN
+typedef struct tagLVCOLUMNW_MSVC41 {
+    UINT mask;
+    int fmt;
+    int cx;
+    LPSTR pszText;
+    int cchTextMax;
+    int iSubItem;
+    int iOrder;     // Missing in MSVC 4.1 native header
+} LVCOLUMN;
+#endif
+
+
+
 const char FileTransfer::uploadText[] = ">>>";
 const char FileTransfer::downloadText[] = "<<<";
 const char FileTransfer::noactionText[] = "<--->";
@@ -291,6 +368,17 @@ FileTransfer::FileTransferDlgProc(HWND hwnd,
 				case LVN_GETDISPINFO:
 					_this->OnGetDispClientInfo((NMLVDISPINFO *) lParam); 
 					return TRUE;
+				// Add legacy NT4 double click interception here:
+				case NM_DBLCLK:
+					{
+						LPNMHDR lpnmh = (LPNMHDR)lParam;
+						// Find which item index was actually double clicked
+						int iItem = ListView_GetNextItem(_this->m_hwndFTClientList, -1, LVNI_FOCUSED);
+						if (iItem != -1) {
+							_this->ProcessListViewDBLCLK(_this->m_hwndFTClientList, _this->m_ClientPath, _this->m_ClientPathTmp, iItem);
+						}
+					}
+					return TRUE;
 				case LVN_ITEMACTIVATE:
 					LPNMITEMACTIVATE lpnmia = (LPNMITEMACTIVATE)lParam;
 					_this->ProcessListViewDBLCLK(_this->m_hwndFTClientList, _this->m_ClientPath, _this->m_ClientPathTmp, lpnmia->iItem);
@@ -307,6 +395,16 @@ FileTransfer::FileTransferDlgProc(HWND hwnd,
 					return TRUE;
 				case LVN_GETDISPINFO: 
 					_this->OnGetDispServerInfo((NMLVDISPINFO *) lParam); 
+					return TRUE;
+				// Add legacy NT4 double click interception here:
+				case NM_DBLCLK:
+					{
+						LPNMHDR lpnmh = (LPNMHDR)lParam;
+						int iItem = ListView_GetNextItem(_this->m_hwndFTServerList, -1, LVNI_FOCUSED);
+						if (iItem != -1) {
+							_this->ProcessListViewDBLCLK(_this->m_hwndFTServerList, _this->m_ServerPath, _this->m_ServerPathTmp, iItem);
+						}
+					}
 					return TRUE;
 				case LVN_ITEMACTIVATE:
 					LPNMITEMACTIVATE lpnmia = (LPNMITEMACTIVATE)lParam;
