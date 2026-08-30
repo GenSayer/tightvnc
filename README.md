@@ -1,7 +1,7 @@
 # TightVNC 1.3.10 Port for All non-x86 Windows Architectures
 This is a specialized, unofficial, comprehensive fork of TightVNC 1.3.10 built natively for virtually every Windows processor architecture to ever exist. This project extends the ultra-lightweight, classic 1.3.10 code to run smoothly on modern 64-bit platforms, ARM hardware, and legacy Windows retro-computing environments.
 
-> Looking for the official, untouched upstream TightVNC 1.3.10 source and binaries?
+> Looking for the official, untouched upstream x86 TightVNC 1.3.10 source and binaries?
 > You can grab them from the [Official TightVNC Archive](https://www.tightvnc.com/download-old.php).
 
 ## Repository Branch Guide
