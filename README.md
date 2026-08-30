@@ -54,7 +54,7 @@ This project provides native binaries compiled explicitly for the following targ
 I have every port separated into separate branches because that is how I originally started it and to track changes on each port. I do eventually intend on merging most of the branches, while more than likely keeping the x64 (haven't decided on that yet) and PPC/MIPS branches separated from the main branch, making it either an eventual total of 2 or 3 branches, and I may eventually come up with a name of this fork that isn't TightVNC.
 
 ### Toolchains used:
-* PowerPC/MIPS: MSVC 4.1 with the Windows NT 4.0 SDK and the ActiveX Software Development Kit for wininet.h for the OS architecture corresponding versions
+* PowerPC/MIPS: MSVC 4.1 with the Windows NT 4.0 SDK and the Microsoft Internet Explorer 3.01 Internet Client SDK for wininet.h for the OS architecture corresponding versions
 * AXP: Visual Studio 6.0 for DEC Alpha Platforms with the October 1999 Microsoft Platform SDK
 * AXP64: The AXP64 cross-compiler from the October 1999 Platform SDK, which is a very early version of the MSVC 7.0 compiler
 * IA64: MSVC 7.1 cross-compiler from the February 2003 Platform SDK
