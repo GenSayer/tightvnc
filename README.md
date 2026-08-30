@@ -1,6 +1,9 @@
 # TightVNC 1.3.10 Port for All Windows Architectures
 This is a specialized, unofficial, comprehensive fork of TightVNC 1.3.10 built natively for virtually every Windows processor architecture to ever exist. This project extends the ultra-lightweight, classic 1.3.10 code to run smoothly on modern 64-bit platforms, ARM hardware, and legacy Windows retro-computing environments.
 
+> Looking for the official, untouched upstream source?
+> If you require standard 32-bit legacy x86 setups natively supported by the original creators, you can grab them from the [Official TightVNC Archive](https://www.tightvnc.com/download-old.php).
+
 ## Repository Branch Guide
 Because each legacy and modern architecture requires unique toolchains, compiler workarounds, and source code tweaks (see Notes for why I separated the branches), each platform has it's own dedicated development branch. To view the source code or compile for a specific platform, switch to its corresponding branch using the branch dropdown menu at the top of this repository:
 - main – The default branch containing this README, overall status updates, and universal project documentation.
@@ -46,9 +49,6 @@ This project provides native binaries compiled explicitly for the following targ
 2. Select the directory matching your machine's system type (e.g., tightvnc-1.3.10_arm64.zip).
 3. Extract the archive folder.
 4. Launch WinVNC.exe to host a server or vncviewer.exe to connect to a remote session.
-
-> Looking for the official, untouched upstream source?
-> If you require standard 32-bit legacy x86 setups natively supported by the original creators, you can grab them from the [Official TightVNC Archive](https://www.tightvnc.com/download-old.php).
 
 ## Notes
 I have every port separated into separate branches because that is how I originally started it and to track changes on each port. I do eventually intend on merging most of the branches, while more than likely keeping the x64 (haven't decided on that yet) and PPC/MIPS branches separated from the main branch, making it either an eventual total of 2 or 3 branches, and I may eventually come up with a name of this fork that isn't TightVNC.
