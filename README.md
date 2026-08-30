@@ -58,8 +58,8 @@ I have every port separated into separate branches because that is how I origina
 * AXP: Visual Studio 6.0 for DEC Alpha Platforms with the October 1999 Microsoft Platform SDK
 * AXP64: The AXP64 cross-compiler from the October 1999 Platform SDK, which is a very early version of the MSVC 7.0 compiler
 * IA64: MSVC 7.1 cross-compiler from the February 2003 Platform SDK
-* AMD64: Visual Studio 2005
-* ARM: Visual Studio 2015
+* AMD64: Visual Studio 2005 to target as many 64-Bit Windows versions as possible
+* ARM: Visual Studio 2015 (I'm considering on moving to VS 2017 or 2022 for the ARM port)
 * ARM64: Visual Studio 2022
 * Future x86 builds when I make separate code changes from the official source code that affects x86 will be done in Visual Studio 6.0
 
