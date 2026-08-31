@@ -33,7 +33,7 @@ This project provides native binaries compiled explicitly for the following targ
 
 | Architecture | Platform Target | Common Use Cases / Operating Systems |
 |---|---|---|
-| AXP64 (Alpha64) | DEC Alpha 64-bit Windows NT | Pre-beta Windows 2000 64-bit builds for Alpha. |
+| AXP64 (Alpha64) | DEC Alpha 64-bit Windows NT | Pre-beta Windows Whistler 64-bit builds for Alpha. |
 | AXP (Alpha 32-bit) | DEC Alpha Windows NT Systems | Windows NT 3.51 / 4.0 / 2000 betas on Digital workstations. |
 | IA64 (Itanium) | Intel Itanium Systems | Windows XP 64-Bit Edition / Windows Server 2003/2008 (may be broken on the latter 2). |
 | PowerPC | IBM / Motorola / Mac & Wii Systems | Legacy Windows NT 3.51 / 4.0 PowerPC editions. |
