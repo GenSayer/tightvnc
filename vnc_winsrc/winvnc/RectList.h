@@ -26,7 +26,7 @@
 
 // RectList header file
 
-#include <list.h>
+#include "list.h"	// WIN32S: local minimal list<> (MSVC 4.1 STL cannot build these)
 #include "stdhdrs.h"
 //#include <list>
 

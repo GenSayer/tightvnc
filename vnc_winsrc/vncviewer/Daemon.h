@@ -31,6 +31,23 @@
 
 #include "stdhdrs.h"
 
+// ==========================================================================
+// WIN32S NOTE
+//
+// This header used to declare Shell_NotifyIcon itself:
+//
+//     BOOL __stdcall Shell_NotifyIcon(DWORD, PNOTIFYICONDATA);
+//
+// which put "Shell_NotifyIcon" in the EXE's import table.  Windows 3.1 has no
+// system tray and the Win32s SHELL32 does not export it, so the loader could
+// not start the process - the viewer died before WinMain with no diagnostic.
+//
+// NOTIFYICONDATA/NIM_*/NIF_* and the run-time-resolved wrapper
+// Win32sShellNotifyIcon() now live in Win32sApi.h, so there is exactly one
+// definition and no load-time dependency.
+// ==========================================================================
+#include "Win32sApi.h"
+
 class Daemon  
 {
 public:
@@ -38,16 +55,29 @@ public:
 	virtual ~Daemon();
 	static LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam);
 protected:
+	// Real handler; WndProc is a try/catch wrapper around it so that no
+	// exception is thrown across the USER32 dispatch frame.
+	static LRESULT WndProcImpl(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam);
+
 	void AddTrayIcon();
 	void CheckTrayIcon();
 	void RemoveTrayIcon();
 	bool SendTrayMsg(DWORD msg);
+
+	// Show the popup menu at the given screen position.  Used both from the
+	// tray icon (Win9x/NT) and from a click on the fallback window (Win32s).
+	void ShowPopupMenu(int x, int y);
+
 	SOCKET m_sock;
 	HWND m_hwnd;
 	HMENU m_hmenu;
 	UINT m_timer;
 	NOTIFYICONDATA m_nid;
 	char netbuf[1024];
+
+	// True when there is no system tray (Win32s / Windows 3.1) and the daemon
+	// window itself is shown as the user's only handle on listening mode.
+	bool m_noTray;
 };
 
 #endif // DAEMON_H__

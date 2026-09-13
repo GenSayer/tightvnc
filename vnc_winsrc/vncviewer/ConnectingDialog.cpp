@@ -19,153 +19,176 @@
 //
 // TightVNC distribution homepage on the Web: http://www.tightvnc.com/
 //
-// If the source code for the VNC system is not available from the place 
+// If the source code for the VNC system is not available from the place
 // whence you received this file, check http://www.uk.research.att.com/vnc or contact
 // the authors on vnc@uk.research.att.com for information on obtaining it.
 
 // ConnectingDialog
 
+// ==========================================================================
+// WIN32S SINGLE-THREADED REWRITE
+//
+// Was: a modal DialogBoxParam() running on its own omni_thread, with the
+// creating thread spinning in "while (!m_started) sleep(0, 50000000);" until
+// the dialog thread signalled that WM_INITDIALOG had run.
+//
+// On Win32s that design cannot work at all - there is no second thread, so
+// start_undetached() threw and, even if it had not, the spin loop would have
+// hung the single thread forever.
+//
+// Now: a *modeless* dialog created with CreateDialogParam() on the one and
+// only thread.  The connection code calls SetStatus() as it progresses; each
+// call updates the static text and then pumps the dialog's own messages so
+// the box paints and the Hide button works, without a nested modal loop and
+// without needing the caller to return to the main message loop first.
+// ==========================================================================
+
 #include "stdhdrs.h"
 #include "vncviewer.h"
 #include "ConnectingDialog.h"
+#include "Win32sApi.h"
 
-class ConnDialogThread : public omni_thread
-{
-public:
-	void Init(HINSTANCE hInst, const char *vnchost = NULL);
-	virtual ~ConnDialogThread();
-	virtual void *run_undetached(void *);
-	void SetStatus(const char *msg);
-	void Close();
-
-private:
-	static LRESULT CALLBACK DlgProc(HWND hwnd, UINT uMsg,
-									WPARAM wParam, LPARAM lParam);
-	HINSTANCE m_hInst;
-	char *m_vnchost;
-
-	// NOTE: These two fields change during thread execution.
-	bool m_started;
-	HWND m_hwnd;
-};
-
-void
-ConnDialogThread::Init(HINSTANCE hInst, const char *vnchost)
-{
-	m_hInst = hInst;
-	if (vnchost != NULL) {
-		m_vnchost = strdup(vnchost);
-	} else {
-		m_vnchost = NULL;
-	}
-
-	m_started = false;
-	m_hwnd = NULL;
-
-	// Start execution of the new thread
-	start_undetached();
-
-	// Wait for the dialog box to be displayed
-	while (!m_started)
-		sleep(0, 50000000);
-}
-
-ConnDialogThread::~ConnDialogThread()
-{
-	if (m_vnchost != NULL)
-		free(m_vnchost);
-}
-
-void *
-ConnDialogThread::run_undetached(void *)
-{
-	DialogBoxParam(m_hInst, MAKEINTRESOURCE(IDD_CONNECTING_DIALOG),
-				   NULL, (DLGPROC)DlgProc, (LPARAM)this);
-	return NULL;
-}
-
-void
-ConnDialogThread::SetStatus(const char *msg)
-{
-	if (m_hwnd != NULL) {
-		char buf[256];
-		sprintf(buf, "Status: %.240s.", msg);
-		SetDlgItemText(m_hwnd, IDC_STATUS_STATIC, buf);
-	}
-}
-
-void
-ConnDialogThread::Close()
-{
-	if (m_hwnd != NULL)
-		PostMessage(m_hwnd, WM_CLOSE, 0, 0);
-	try {
-		void *p;
-		join(&p);
-	} catch (omni_thread_invalid) {}
-}
-
-LRESULT CALLBACK
-ConnDialogThread::DlgProc(HWND hwnd, UINT uMsg,
-						  WPARAM wParam, LPARAM lParam)
-{
-	ConnDialogThread *_this =
-		(ConnDialogThread *)GetWindowLong(hwnd, GWL_USERDATA);
-
-	switch (uMsg) {
-	case WM_INITDIALOG:
-		SetWindowLong(hwnd, GWL_USERDATA, lParam);
-		_this = (ConnDialogThread *)lParam;
-		_this->m_hwnd = hwnd;
-		if (_this->m_vnchost != NULL) {
-			char buf[256];
-			if (_this->m_vnchost[0] != '\0') {
-				sprintf(buf, "Connecting to %.200s ...", _this->m_vnchost);
-			} else {
-				sprintf(buf, "Accepting reverse connection...");
-			}
-			SetDlgItemText(hwnd, IDC_CONNECTING_STATIC, buf);
-		}
-		SetForegroundWindow(hwnd);
-		_this->m_started = true;
-		return TRUE;
-
-	case WM_COMMAND:
-		switch (LOWORD(wParam)) {
-		case IDCLOSE:
-			_this->m_hwnd = NULL;
-			EndDialog(hwnd, IDCLOSE);
-			return TRUE;
-		}
-		break;
-
-	case WM_CLOSE:
-		_this->m_hwnd = NULL;
-		EndDialog(hwnd, IDCLOSE);
-		return TRUE;
-	}
-
-	return FALSE;
-}
-
-//
-// ConnectingDialog class implementation.
-//
+#ifndef IDCLOSE
+#define IDCLOSE             8
+#endif
 
 ConnectingDialog::ConnectingDialog(HINSTANCE hInst, const char *vnchost)
 {
-	m_thread = new ConnDialogThread;
-	m_thread->Init(hInst, vnchost);
+	m_hInst = hInst;
+	m_hwnd = NULL;
+
+	if (vnchost != NULL) {
+		strncpy(m_vnchost, vnchost, sizeof(m_vnchost) - 1);
+		m_vnchost[sizeof(m_vnchost) - 1] = '\0';
+		m_hostKnown = true;
+	} else {
+		m_vnchost[0] = '\0';
+		m_hostKnown = false;
+	}
+
+	// Modeless: returns immediately, no nested message loop, no thread.
+	//
+	// A failure here is not fatal - the connection sequence just proceeds
+	// without a progress box - so do not throw.  That matters because this is
+	// constructed from ClientConnection::Run() before the viewer window exists.
+	m_hwnd = CreateDialogParam(m_hInst,
+							   MAKEINTRESOURCE(IDD_CONNECTING_DIALOG),
+							   NULL, (DLGPROC)DlgProc, (LPARAM)this);
+	if (m_hwnd != NULL) {
+		CentreWindow(m_hwnd);
+		ShowWindow(m_hwnd, SW_SHOW);
+		UpdateWindow(m_hwnd);
+	} else {
+		vnclog.Print(2, _T("Could not create the Connecting dialog (%d)\n"),
+					 GetLastError());
+	}
 }
 
 ConnectingDialog::~ConnectingDialog()
 {
-	m_thread->Close();
+	Close();
+}
+
+void
+ConnectingDialog::Close()
+{
+	if (m_hwnd != NULL) {
+		HWND hwnd = m_hwnd;
+		m_hwnd = NULL;
+		// DestroyWindow, not EndDialog: this is a modeless dialog.
+		DestroyWindow(hwnd);
+	}
 }
 
 void
 ConnectingDialog::SetStatus(const char *msg)
 {
-	m_thread->SetStatus(msg);
+	if (m_hwnd == NULL)
+		return;
+
+	char buf[256];
+	// _snprintf is available in MSVC 4.1; keep the same 240-char clamp the
+	// original sprintf relied on.
+	_snprintf(buf, sizeof(buf) - 1, "Status: %.240s.", msg);
+	buf[sizeof(buf) - 1] = '\0';
+	SetDlgItemText(m_hwnd, IDC_STATUS_STATIC, buf);
+
+	// Give the dialog a chance to repaint and to see a click on "Hide".
+	// This is the single-threaded stand-in for the old separate UI thread.
+	Pump();
 }
 
+//
+// Pump only this dialog's messages.  Deliberately narrow: we must not
+// dispatch the viewer window's messages here, because we are called from
+// deep inside the connection sequence where the viewer window may not be
+// fully constructed yet.
+//
+void
+ConnectingDialog::Pump()
+{
+	if (m_hwnd == NULL)
+		return;
+
+	MSG msg;
+	while (PeekMessage(&msg, m_hwnd, 0, 0, PM_REMOVE)) {
+		if (!IsDialogMessage(m_hwnd, &msg)) {
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+		if (m_hwnd == NULL)		// user pressed Hide during dispatch
+			return;
+	}
+	UpdateWindow(m_hwnd);
+}
+
+LRESULT CALLBACK
+ConnectingDialog::DlgProc(HWND hwnd, UINT uMsg,
+						  WPARAM wParam, LPARAM lParam)
+{
+	ConnectingDialog *_this =
+		(ConnectingDialog *)GetWindowLong(hwnd, GWL_USERDATA);
+
+	switch (uMsg) {
+	case WM_INITDIALOG:
+		SetWindowLong(hwnd, GWL_USERDATA, lParam);
+		_this = (ConnectingDialog *)lParam;
+		if (_this == NULL)
+			return TRUE;
+		_this->m_hwnd = hwnd;
+		if (_this->m_hostKnown) {
+			char buf[256];
+			if (_this->m_vnchost[0] != '\0') {
+				_snprintf(buf, sizeof(buf) - 1,
+						  "Connecting to %.200s ...", _this->m_vnchost);
+			} else {
+				strcpy(buf, "Accepting reverse connection...");
+			}
+			buf[sizeof(buf) - 1] = '\0';
+			SetDlgItemText(hwnd, IDC_CONNECTING_STATIC, buf);
+		}
+		// Win32sSetForegroundWindow: SetForegroundWindow is Win95+ and must not
+		// be a load-time import (see Win32sApi.h).
+		Win32sSetForegroundWindow(hwnd);
+		return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDCLOSE:
+		case IDCANCEL:
+			if (_this != NULL)
+				_this->m_hwnd = NULL;
+			DestroyWindow(hwnd);
+			return TRUE;
+		}
+		break;
+
+	case WM_CLOSE:
+		if (_this != NULL)
+			_this->m_hwnd = NULL;
+		DestroyWindow(hwnd);
+		return TRUE;
+	}
+
+	return FALSE;
+}

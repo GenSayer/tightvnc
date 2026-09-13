@@ -32,9 +32,8 @@
 
 #pragma once
 
-typedef bool;
-#define false 0
-#define true 1
+// NOTE: bool/true/false come from win32s_fix.h, which is force-included via
+// /FI"win32s_fix.h".  Do not redefine them here - see the comment in that file.
 
 // Exceptions used in VNCviewer
 

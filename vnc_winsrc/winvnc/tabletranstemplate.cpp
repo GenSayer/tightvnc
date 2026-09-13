@@ -37,6 +37,9 @@ rfbTranslateWithSingleTableINtoOUT (char *table, rfbPixelFormat *in,
 				    int bytesBetweenInputLines,
 				    int width, int height)
 {
+    // (Was: __unaligned qualifiers, a MIPS NT 4 workaround.  Removed - the
+    // Win32s target is x86 only, where unaligned access is handled by the CPU,
+    // and MSVC 4.1 for x86 does not accept the keyword.)
     IN_T *ip = (IN_T *)iptr;
     OUT_T *op = (OUT_T *)optr;
     int ipextra = bytesBetweenInputLines / sizeof(IN_T) - width;
@@ -68,6 +71,9 @@ rfbTranslateWithRGBTablesINtoOUT (char *table, rfbPixelFormat *in,
 				  int bytesBetweenInputLines,
 				  int width, int height)
 {
+    // (Was: __unaligned qualifiers, a MIPS NT 4 workaround.  Removed - the
+    // Win32s target is x86 only, where unaligned access is handled by the CPU,
+    // and MSVC 4.1 for x86 does not accept the keyword.)
     IN_T *ip = (IN_T *)iptr;
     OUT_T *op = (OUT_T *)optr;
     int ipextra = bytesBetweenInputLines / sizeof(IN_T) - width;

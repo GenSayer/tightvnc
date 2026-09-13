@@ -291,7 +291,7 @@ vncEncodeCoRRE::EncodeSmallRect(BYTE *source, BYTE *dest, const RECT &rect)
 	const UINT rectW = rect.right - rect.left;
 	const UINT rectH = rect.bottom - rect.top;
 
-	// Create the rectangle header
+	// Create the rectangle header (Fix for MIPS NT 4)
 	rfbFramebufferUpdateRectHeader *surh=(rfbFramebufferUpdateRectHeader *)dest;
 	surh->r.x = (CARD16) rect.left;
 	surh->r.y = (CARD16) rect.top;
@@ -362,8 +362,9 @@ vncEncodeCoRRE::EncodeSmallRect(BYTE *source, BYTE *dest, const RECT &rect)
 	if (subrects < 0)
 		return vncEncoder::EncodeRect(source, dest, rect, offsetx, offsety);
 
-	// Send the RREHeader
+	// Send the RREHeader (Fix for MIPS NT 4)
 	rfbRREHeader *rreh=(rfbRREHeader *)(dest+sz_rfbFramebufferUpdateRectHeader);
+	rreh->nSubrects = Swap32IfLE(subrects);
 	rreh->nSubrects = Swap32IfLE(subrects);
 
 	// Update the statistics for this rectangle.
@@ -392,7 +393,7 @@ vncEncodeCoRRE::EncodeSmallRect(BYTE *source, BYTE *dest, const RECT &rect)
 #define DEFINE_SUBRECT_ENCODE(bpp)							\
 static int													\
 subrectEncode##bpp(											\
-	CARD##bpp *source,										\
+	CARD##bpp *source,							\
     CARD8 *dest,											\
 	int w,													\
 	int h,													\
@@ -404,15 +405,15 @@ subrectEncode##bpp(											\
     int i,j;												\
     int hx=0,hy,vx=0,vy;									\
     int hyflag;												\
-    CARD##bpp *seg;											\
-    CARD##bpp *line;										\
+    CARD##bpp *seg;								\
+    CARD##bpp *line;							\
     int hw,hh,vw,vh;										\
     int thex,they,thew,theh;								\
     int numsubs = 0;										\
     int newLen;												\
     CARD##bpp bg = (CARD##bpp)getBgColour((char*)source,w*h,bpp);	\
 															\
-    *((CARD##bpp*)dest) = bg;								\
+    *((CARD##bpp *)dest) = bg;					\
 															\
     rreAfterBufLen = (bpp/8);								\
 															\
@@ -464,7 +465,7 @@ subrectEncode##bpp(											\
 	    return -1;											\
 															\
 	  numsubs += 1;											\
-	  *((CARD##bpp*)(dest + rreAfterBufLen)) = cl;			\
+	  *((CARD##bpp *)(dest + rreAfterBufLen)) = cl; \
 	  rreAfterBufLen += (bpp/8);							\
 	  memcpy(&dest[rreAfterBufLen],&subrect,sz_rfbCoRRERectangle);		\
 	  rreAfterBufLen += sz_rfbCoRRERectangle;			    \

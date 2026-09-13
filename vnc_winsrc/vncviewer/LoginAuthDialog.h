@@ -46,6 +46,10 @@ private:
 	char m_title[256];
 	char *m_vnchost;
 	bool m_username_disabled;
+	// Set by DlgProc when the user cancels; DoDialog() converts it into a
+	// QuietException *after* the dialog loop has unwound.  Throwing from inside
+	// DlgProc (as the original code did) throws across a USER32 stack frame.
+	bool m_cancelled;
 };
 
 #endif // LOGINAUTHDIALOG_H__

@@ -23,6 +23,8 @@
 // whence you received this file, check http://www.uk.research.att.com/vnc or contact
 // the authors on vnc@uk.research.att.com for information on obtaining it.
 
+#define WINVER 0x030a
+
 #include "FileTransferItemInfo.h"
 #include "stdlib.h"
 #include "stdio.h"
@@ -55,6 +57,7 @@ CompareFTItemInfo(const void *F, const void *S)
 FileTransferItemInfo::FileTransferItemInfo()
 {
 	m_NumEntries = 0;
+	m_Capacity = 0;
 	m_pEntries = NULL;
 }
 
@@ -65,18 +68,41 @@ FileTransferItemInfo::~FileTransferItemInfo()
 
 void FileTransferItemInfo::Add(char *Name, char *Size, unsigned int Data)
 {
-	FTITEMINFO *pTemporary = new FTITEMINFO[m_NumEntries + 1];
-	if (m_NumEntries != 0) 
-		memcpy(pTemporary, m_pEntries, m_NumEntries * sizeof(FTITEMINFO));
-	strcpy(pTemporary[m_NumEntries].Name, Name);
-	strcpy(pTemporary[m_NumEntries].Size, Size);
-	pTemporary[m_NumEntries].Data = Data;
-	if (m_pEntries != NULL) {
-		delete [] m_pEntries;
-		m_pEntries = NULL;
+	// WIN32S NOTES
+	//
+	// 1. Bounds.  Name is char[rfbMAX_PATH] (255) and Size is char[16], and both
+	//    were filled with strcpy() from caller-supplied strings.  Size in
+	//    particular is filled from a server-supplied string in the file-list
+	//    reply, so an over-long field corrupted the next array element.
+	//
+	// 2. Reallocation cost.  This grows the array by ONE entry per call, copying
+	//    everything each time - O(n^2) allocations and copies.  Each FTITEMINFO
+	//    is 275 bytes, so listing a 400-file directory performs 400 allocations
+	//    totalling ~22 MB of copying.  On Win32s, where the heap is the shared
+	//    16-bit heap, that is slow enough to look like a hang and is a plausible
+	//    contributor to the file dialog appearing to do nothing.  Grow
+	//    geometrically instead.
+	if (Name == NULL || Size == NULL)
+		return;
+
+	if (m_NumEntries >= m_Capacity) {
+		int newCap = (m_Capacity < 32) ? 32 : (m_Capacity * 2);
+		FTITEMINFO *pTemporary = new FTITEMINFO[newCap];
+		if (pTemporary == NULL)
+			return;
+		if (m_NumEntries != 0 && m_pEntries != NULL)
+			memcpy(pTemporary, m_pEntries, m_NumEntries * sizeof(FTITEMINFO));
+		if (m_pEntries != NULL)
+			delete [] m_pEntries;
+		m_pEntries = pTemporary;
+		m_Capacity = newCap;
 	}
-	m_pEntries = pTemporary;
-	pTemporary = NULL;
+
+	strncpy(m_pEntries[m_NumEntries].Name, Name, rfbMAX_PATH - 1);
+	m_pEntries[m_NumEntries].Name[rfbMAX_PATH - 1] = '\0';
+	strncpy(m_pEntries[m_NumEntries].Size, Size, 15);
+	m_pEntries[m_NumEntries].Size[15] = '\0';
+	m_pEntries[m_NumEntries].Data = Data;
 	m_NumEntries++;
 }
 
@@ -87,30 +113,45 @@ void FileTransferItemInfo::Free()
 		m_pEntries = NULL;
 	}
 	m_NumEntries = 0;
+	m_Capacity = 0;
 }
 
 void FileTransferItemInfo::Sort()
 {
+	// qsort with a NULL base or a zero count is undefined; the old code called
+	// it unconditionally, and Sort() runs on an empty list whenever a directory
+	// listing produced no entries.
+	if (m_pEntries == NULL || m_NumEntries < 2)
+		return;
 	qsort(m_pEntries, m_NumEntries, sizeof(FTITEMINFO), CompareFTItemInfo);
 }
 
+// NOTE on all three accessors: the bound was "Number <= m_NumEntries", which
+// allows one element PAST the end of the array.  These are called from the
+// LVN_GETDISPINFO handler with an index supplied by the list view, so a stale
+// notification for a row that has since been removed read past the array - and
+// GetNameAt's result is handed straight to the control as a text pointer.
+static char s_ftEmptyString[] = "";
+
 char * FileTransferItemInfo::GetNameAt(int Number)
 {
-	if ((Number >= 0) && (Number <= m_NumEntries))
+	if ((m_pEntries != NULL) && (Number >= 0) && (Number < m_NumEntries))
 		return m_pEntries[Number].Name;
-	return NULL;
+	// Return an empty string rather than NULL: the list view dereferences the
+	// pszText it is given.
+	return s_ftEmptyString;
 }
 
 char * FileTransferItemInfo::GetSizeAt(int Number)
 {
-	if ((Number >= 0) && (Number <= m_NumEntries)) 
+	if ((m_pEntries != NULL) && (Number >= 0) && (Number < m_NumEntries))
 		return m_pEntries[Number].Size; 
-	return NULL;
+	return s_ftEmptyString;
 }
 
 unsigned int FileTransferItemInfo::GetDataAt(int Number)
 {
-	if ((Number >= 0) && (Number <= m_NumEntries)) 
+	if ((m_pEntries != NULL) && (Number >= 0) && (Number < m_NumEntries))
 		return m_pEntries[Number].Data;
 	return 0;
 }
@@ -127,7 +168,10 @@ int FileTransferItemInfo::GetIntSizeAt(int Number)
 
 bool FileTransferItemInfo::IsFile(int Number)
 {
-	if ((Number < 0) && (Number > m_NumEntries)) 
+	// Was "if ((Number < 0) && (Number > m_NumEntries)) return FALSE;" - an &&
+	// where an || was meant, so the test could never be true and the array was
+	// indexed with whatever came in.
+	if ((m_pEntries == NULL) || (Number < 0) || (Number >= m_NumEntries))
 		return FALSE;
     if (strcmp(m_pEntries[Number].Size, folderText) != 0) return TRUE;
 	return FALSE;
@@ -135,6 +179,8 @@ bool FileTransferItemInfo::IsFile(int Number)
 
 int FileTransferItemInfo::ConvertCharToInt(char *pStr)
 {
+	if (pStr == NULL)
+		return 0;
 	int strLen = strlen(pStr);
 	int res = 0, tenX = 1;
 	for (int i = (strLen - 1); i >= 0; i--) {

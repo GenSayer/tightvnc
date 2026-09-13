@@ -32,6 +32,7 @@
 
 #include "WinVNC.h"
 #include "vncAbout.h"
+#include "Win32sApi.h"	// WIN32S: SetForegroundWindow is Win95+
 
 // Constructor/destructor
 vncAbout::vncAbout()
@@ -67,7 +68,9 @@ vncAbout::Show(BOOL show)
 		else
 		{
 			// The dialog is already displayed, just raise it to foreground.
-			SetForegroundWindow(m_hDialog);
+			// WIN32S: resolved at run time; SetForegroundWindow is Win95+ and is
+			// not exported by the Win32s USER32.
+			Win32sSetForegroundWindow(m_hDialog);
 		}
 	}
 }
@@ -96,7 +99,7 @@ vncAbout::DialogProc(HWND hwnd,
 			SetDlgItemText(hwnd, IDC_BUILDTIME, g_buildTime);
 
 			// Show the dialog
-			SetForegroundWindow(hwnd);
+			Win32sSetForegroundWindow(hwnd);
 
 			_this->m_hDialog = hwnd;
 			_this->m_dlgvisible = TRUE;

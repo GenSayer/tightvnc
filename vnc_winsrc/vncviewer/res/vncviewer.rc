@@ -2,12 +2,108 @@
 //
 
 #ifndef WINVER
-#define WINVER 0x0400
+#define WINVER 0x030A
 #endif
 
 #ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0400
+#define _WIN32_WINNT 0x030A
 #endif
+
+// ==========================================================================
+// Win32s / MSVC 4.1 RESOURCE COMPATIBILITY
+//
+// Changes made for the Win32s port (see also res/vncviewer.rc.prewin32s):
+//
+//  * #include "winresrc.h" -> "windows.h".  winresrc.h did not exist until
+//    later SDKs; MSVC 4.1 RC has no such header.
+//  * #pragma code_page(1252) commented out: unknown pragma in MSVC 4.1 RC.
+//  * All DIALOGEX templates changed to DIALOG.  DIALOGEX emits a
+//    DLGTEMPLATEEX block, which only Win95/NT USER can parse - Win32s
+//    DialogBox* fails outright on it (and MSVC 4.1 RC does not emit it).
+//    This affected IDD_FTBROWSE_DLG, IDD_FILETRANSFER_DLG, IDD_SESSION_DLG
+//    and IDD_PARENT - note that IDD_SESSION_DLG and IDD_PARENT are the New
+//    Connection and Options dialogs, i.e. the first two dialogs the viewer
+//    ever shows.  A failed DialogBoxParam here returns -1 and the old code
+//    treated that as "user cancelled"/garbage, so this is a launch-path bug
+//    as well as a cosmetic one.
+//  * All EXSTYLE lines removed: EXSTYLE is only meaningful with DIALOGEX,
+//    and WS_EX_CONTEXTHELP / WS_EX_CONTROLPARENT are Win95+ anyway.
+//  * DS_CONTEXTHELP and DS_CENTER removed from STYLE lines (both Win95+).
+//    Centring is done in code by CentreWindow().
+//  * FONT "MS Shell Dlg" -> "MS Sans Serif".  "MS Shell Dlg" is a Win95
+//    font-mapper alias; on 3.1 it does not resolve and the dialog falls
+//    back to the System font, which is larger and clips control text.
+//
+// Deliberately NOT changed:
+//  * The msctls_trackbar32 / msctls_updown32 / msctls_progress32 /
+//    SysListView32 / SysTreeView32 / SysTabControl32 controls.  These need
+//    a COMCTL32 that Win32s does not ship; see the notes in the port
+//    documentation about the Options and File Transfer dialogs.  They are
+//    left in place so the resource still compiles and so the dialogs work
+//    unchanged on Win9x/NT.
+// ==========================================================================
+
+// ==========================================
+// Win32s Static Control Compatibility
+// ==========================================
+#ifndef IDCLOSE
+#define IDCLOSE         8            // Standard system close dialog button identifier
+#endif
+
+#ifndef ES_NUMBER
+#define ES_NUMBER       0x2000L      // Restricts edit box input to digits only
+#endif
+
+#ifndef SS_CENTERIMAGE
+#define SS_CENTERIMAGE  0x00000200L  // Centers images or text inside static boxes
+#endif
+
+#ifndef SS_NOTIFY
+#define SS_NOTIFY       0x00000100L  // Enables mouse click monitoring on static boxes
+#endif
+
+#ifndef SS_SUNKEN
+#define SS_SUNKEN       0x00001000L  // 3D recessed border visual style bit
+#endif
+
+#ifndef SS_BITMAP
+// SS_BITMAP is Win95+ (0x0000000E).  Windows 3.1 static controls cannot
+// display a bitmap resource by ID at all, so there is nothing to map it to.
+// 0x07 is SS_BLACKFRAME in 3.1, which at least draws a frame where the logo
+// would be instead of producing an unusable control.  The three affected
+// controls (IDC_STATIC_LOGO in the auth and about boxes, IDC_STATIC_PICTURE
+// in the session box) are purely decorative.
+#define SS_BITMAP 0x00000007L
+#endif
+
+#ifndef DS_CONTROL
+#define DS_CONTROL 0x00000400L // Standard Win95/NT nested subdialog control bit
+#endif
+
+#ifndef DS_CONTEXTHELP
+#define DS_CONTEXTHELP  0x00002000L  // Titlebar help button style bit
+#endif
+
+#ifndef BS_ICON
+#define BS_ICON         0x00000040L  // Graphical icon button style bit
+#endif
+
+#ifndef BS_BITMAP
+#define BS_BITMAP       0x00000080L  // Graphical bitmap button style bit
+#endif
+
+#ifndef DS_CENTER
+#define DS_CENTER       0x00000800L  // Automatic screen-centering style bit
+#endif
+
+#ifndef WS_EX_CONTROLPARENT
+#define WS_EX_CONTROLPARENT 0x00010000L // Allows recursive Tab navigation through children
+#endif
+
+#ifndef WS_EX_CONTEXTHELP
+#define WS_EX_CONTEXTHELP   0x00000400L // Adds help button to the window title bar
+#endif
+
 
 #include "resource.h"
 
@@ -16,7 +112,7 @@
 //
 // Generated from the TEXTINCLUDE 2 resource.
 //
-#include "winresrc.h"
+#include "windows.h"
 
 /////////////////////////////////////////////////////////////////////////////
 #undef APSTUDIO_READONLY_SYMBOLS
@@ -27,7 +123,7 @@
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
 #ifdef _WIN32
 LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
-#pragma code_page(1252)
+/* #pragma code_page(1252)  -- not supported by MSVC 4.1 RC */
 #endif //_WIN32
 
 /////////////////////////////////////////////////////////////////////////////
@@ -47,7 +143,7 @@ IDB_VNC32               BITMAP  DISCARDABLE     "tightvnc48.bmp"
 IDD_LOGIN_AUTH_DIALOG DIALOG DISCARDABLE  0, 0, 148, 82
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "TightVNC Authentication"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Sans Serif"
 BEGIN
     LTEXT           "VNC Host:",IDC_STATIC_HOST,7,8,36,10,SS_CENTERIMAGE | 
                     NOT WS_GROUP
@@ -64,7 +160,7 @@ END
 
 IDD_OPTIONDIALOG DIALOG DISCARDABLE  0, 0, 300, 179
 STYLE DS_CONTROL | WS_CHILD
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Sans Serif"
 BEGIN
     GROUPBOX        "Format and encodings",IDC_STATIC_FORMAT,4,4,123,130
     LTEXT           "Use encoding:",IDC_STATIC_ENCODING,12,15,49,10,
@@ -121,11 +217,10 @@ BEGIN
                     BS_AUTOCHECKBOX | WS_TABSTOP,145,160,145,10
 END
 
-IDD_FTBROWSE_DLG DIALOGEX 0, 0, 183, 196
+IDD_FTBROWSE_DLG DIALOG DISCARDABLE  0, 0, 183, 196
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-EXSTYLE WS_EX_CONTROLPARENT
 CAPTION "Choose Directory"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Sans Serif"
 BEGIN
     CONTROL         "Tree1",IDC_FTBROWSETREE,"SysTreeView32",TVS_HASBUTTONS | 
                     TVS_HASLINES | TVS_LINESATROOT | TVS_DISABLEDRAGDROP | 
@@ -135,11 +230,10 @@ BEGIN
     EDITTEXT        IDC_FTBROWSEEDIT,7,7,169,12,ES_READONLY | NOT WS_TABSTOP
 END
 
-IDD_FILETRANSFER_DLG DIALOGEX 0, 0, 416, 282
-STYLE DS_MODALFRAME | DS_CONTEXTHELP | WS_POPUP | WS_CAPTION | WS_SYSMENU
-EXSTYLE WS_EX_CONTEXTHELP
+IDD_FILETRANSFER_DLG DIALOG DISCARDABLE  0, 0, 416, 282
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "TightVNC File Transfers"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Sans Serif"
 BEGIN
     CTEXT           "Local Computer",IDC_LOCAL_COMP_LABEL,7,7,180,10,NOT 
                     WS_GROUP
@@ -171,11 +265,10 @@ BEGIN
     PUSHBUTTON      "&Close",IDC_EXIT,359,261,50,14
 END
 
-IDD_SESSION_DLG DIALOGEX 0, 0, 253, 85
+IDD_SESSION_DLG DIALOG DISCARDABLE  0, 0, 253, 85
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-EXSTYLE WS_EX_CONTEXTHELP
 CAPTION "New TightVNC Connection"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Sans Serif"
 BEGIN
     COMBOBOX        IDC_HOSTNAME_EDIT,51,7,109,66,CBS_DROPDOWN | 
                     CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP
@@ -198,7 +291,7 @@ END
 IDD_SERVINFO_DLG DIALOG DISCARDABLE  0, 0, 224, 170
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "RFB Server Information"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Sans Serif"
 BEGIN
     DEFPUSHBUTTON   "&OK",IDOK,87,149,50,14
     EDITTEXT        IDC_SERVINFO_EDIT,7,7,210,134,ES_MULTILINE | 
@@ -206,9 +299,9 @@ BEGIN
 END
 
 IDD_APP_ABOUT DIALOG DISCARDABLE  0, 0, 292, 126
-STYLE DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "About TightVNC Viewer"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Sans Serif"
 BEGIN
     DEFPUSHBUTTON   "&OK",IDOK,120,105,50,14
     CONTROL         106,IDC_STATIC_LOGO,"Static",SS_BITMAP | SS_NOTIFY | 
@@ -225,7 +318,7 @@ END
 
 IDD_GENERAL_OPTION DIALOG DISCARDABLE  0, 0, 300, 179
 STYLE DS_CONTROL | WS_CHILD
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Sans Serif"
 BEGIN
     GROUPBOX        "Interface options",IDC_STATIC_IOPTIONS,4,4,167,77
     CONTROL         "Show toolbars by default",IDC_CHECK_TOOLBAR,"Button",
@@ -270,7 +363,7 @@ END
 IDD_HELP DIALOG DISCARDABLE  0, 0, 295, 207
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "TightVNC Viewer Help"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Sans Serif"
 BEGIN
     DEFPUSHBUTTON   "&OK",IDOK,122,186,50,14
     EDITTEXT        IDC_EDIT_HELP,7,7,281,172,ES_MULTILINE | ES_AUTOVSCROLL | 
@@ -278,21 +371,23 @@ BEGIN
                     WS_VSCROLL | WS_HSCROLL
 END
 
-IDD_PARENT DIALOGEX 0, 0, 316, 225
-STYLE DS_MODALFRAME | DS_CONTEXTHELP | WS_POPUP | WS_CAPTION | WS_SYSMENU
-EXSTYLE WS_EX_CONTEXTHELP | WS_EX_CONTROLPARENT
+IDD_PARENT DIALOG DISCARDABLE  0, 0, 316, 225
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "TightVNC Viewer Options"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Sans Serif"
 BEGIN
     PUSHBUTTON      "&OK",IDOK,206,206,50,14
     PUSHBUTTON      "&Cancel",IDCANCEL,261,206,50,14
     CONTROL         "Tab1",IDC_TAB,"SysTabControl32",WS_TABSTOP,5,5,306,197
 END
 
+// This dialog is now created MODELESS (see ConnectingDialog.cpp), so it must
+// not have DS_MODALFRAME - a modeless dialog with a modal frame has no working
+// system menu and cannot be closed by the user on Windows 3.1.
 IDD_CONNECTING_DIALOG DIALOG DISCARDABLE  0, 0, 210, 61
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+STYLE WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE | DS_SETFONT
 CAPTION "TightVNC Connection"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Sans Serif"
 BEGIN
     CONTROL         "Connecting...",IDC_CONNECTING_STATIC,"Static",
                     SS_LEFTNOWORDWRAP,7,7,196,10
@@ -505,7 +600,7 @@ END
 
 2 TEXTINCLUDE DISCARDABLE 
 BEGIN
-    "#include ""winresrc.h""\r\n"
+    "#include ""windows.h""\r\n"
     "\0"
 END
 

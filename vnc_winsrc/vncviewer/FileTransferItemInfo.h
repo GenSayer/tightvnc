@@ -26,9 +26,7 @@
 #if !defined(FILETRANSFERITEMINFO_H)
 #define FILETRANSFERITEMINFO_H
 
-typedef int bool;
-#define false 0
-#define true 1
+// bool/true/false come from win32s_fix.h (force-included).  Do not redefine.
 
 #define rfbMAX_PATH 255
 
@@ -65,6 +63,9 @@ private:
 	int ConvertCharToInt(char *pStr);
 	FTITEMINFO * m_pEntries;
 	int m_NumEntries;
+	// Allocated capacity, so that Add() can grow geometrically instead of
+	// reallocating and copying the whole array on every single entry.
+	int m_Capacity;
 };
 
 #endif // !defined(FILETRANSFERITEMINFO_H)

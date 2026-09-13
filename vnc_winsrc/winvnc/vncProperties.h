@@ -124,6 +124,16 @@ protected:
 	LONG LoadInt(HKEY key, LPCSTR valname, LONG defval);
 	void SaveInt(HKEY key, LPCSTR valname, LONG val);
 
+	// WIN32S: set every per-user preference to its documented default.
+	//
+	// Was inline in Load().  Extracted because the INI settings path (Win32s
+	// cannot store named registry values - see IniSettings.h) needs the same
+	// defaults and returns from Load() before reaching the original block.
+	//
+	// MUST be called before LoadUserPrefs(), which passes the current value as
+	// each LoadInt() default.
+	void SetDefaultUserPrefs();
+
 	// Loading/saving all the user prefs
 	void LoadUserPrefs(HKEY appkey);
 	void SaveUserPrefs(HKEY appkey);

@@ -26,7 +26,11 @@
 HotKeys::HotKeys()
 {
 	m_hwnd = 0;
+	m_hAccel = NULL;
 
+	// NOTE: this constructor runs before WinMain (file-scope object).  It only
+	// calls CreateAcceleratorTable, which is safe on Win32s - but do not add
+	// anything here that needs the app object or a window.
 	const int MAX_ACCELS = 16;
 	ACCEL accel[MAX_ACCELS];
 	int i = 0;
@@ -64,17 +68,36 @@ HotKeys::HotKeys()
 	accel[i++].cmd = IDD_FILETRANSFER;
 
 	int numKeys = i;
-	assert(numKeys <= MAX_ACCELS);
+	// Was assert(): compiled out of a release build, and there is no reason for
+	// a bounds check to be debug-only when overrunning accel[] corrupts the
+	// stack of a pre-WinMain constructor.
+	if (numKeys > MAX_ACCELS)
+		numKeys = MAX_ACCELS;
 
 	m_hAccel = CreateAcceleratorTable((LPACCEL)accel, numKeys);
 }
 
 bool HotKeys::TranslateAccel(MSG *pmsg)
 {
+	// This object is a file-scope global ("HotKeys hotkeys;" in vncviewer.cpp),
+	// so it exists before any window does and outlives every connection.
+	// m_hwnd is 0 until SetWindow() is called from CreateDisplay, and it is
+	// never cleared when that window is destroyed - so both handles must be
+	// checked here.  TranslateAccelerator with a stale HWND is an
+	// invalid-window call on every message the viewer receives.
+	if (m_hwnd == 0 || m_hAccel == NULL || pmsg == NULL)
+		return false;
+	if (!IsWindow(m_hwnd)) {
+		m_hwnd = 0;
+		return false;
+	}
 	return (TranslateAccelerator(m_hwnd, m_hAccel, pmsg) != 0);
 }
 
 HotKeys::~HotKeys()
 {
-	DestroyAcceleratorTable(m_hAccel);
+	if (m_hAccel != NULL) {
+		DestroyAcceleratorTable(m_hAccel);
+		m_hAccel = NULL;
+	}
 }

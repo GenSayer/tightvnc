@@ -30,6 +30,11 @@
 #include "stdhdrs.h"
 #include "vncviewer.h"
 #include "ClientConnection.h"
+// ClientConnection.h does NOT include Exception.h (nor does anything it pulls
+// in), so any file that names WarningException/QuietException/ErrorException
+// must include it itself.  This file throws ErrorException on allocation
+// failure in ReadCursorShape().
+#include "Exception.h"
 
 void ClientConnection::ReadCursorShape(rfbFramebufferUpdateRectHeader *pfburh) {
 
@@ -57,8 +62,24 @@ void ClientConnection::ReadCursorShape(rfbFramebufferUpdateRectHeader *pfburh) {
 	}
 
 	// Read cursor pixel data.
+	//
+	// Bound the cursor size.  w and h are 16-bit server-supplied values, so
+	// w*h can be up to ~4 billion; "new COLORREF[w*h]" then either throws, or
+	// on MSVC 4.1 returns NULL, and the loops below write through it.  A cursor
+	// larger than 128x128 is not meaningful on any platform this build targets.
+	if (pfburh->r.w > 128 || pfburh->r.h > 128) {
+		vnclog.Print(0, _T("Refusing %dx%d cursor from server\n"),
+					 (int)pfburh->r.w, (int)pfburh->r.h);
+		int bytesToSkip = (pfburh->encoding == rfbEncodingXCursor) ?
+			(6 + 2 * bytesMaskData) : (bytesSourceData + bytesMaskData);
+		CheckBufferSize(bytesToSkip);
+		ReadExact(m_netbuf, bytesToSkip);
+		return;
+	}
 
 	rcSource = new COLORREF[pfburh->r.w * pfburh->r.h];
+	if (rcSource == NULL)
+		throw ErrorException("Out of memory reading cursor shape.");
 
 	if (pfburh->encoding == rfbEncodingXCursor) {
 		CARD8 xcolors[6];
@@ -109,6 +130,11 @@ void ClientConnection::ReadCursorShape(rfbFramebufferUpdateRectHeader *pfburh) {
 	ReadExact(m_netbuf, bytesMaskData);
 
 	rcMask = new bool[pfburh->r.w * pfburh->r.h];
+	if (rcMask == NULL) {
+		delete [] rcSource;
+		rcSource = NULL;
+		throw ErrorException("Out of memory reading cursor mask.");
+	}
 
 	int x, y, n, b;
 	int i = 0;
@@ -139,6 +165,25 @@ void ClientConnection::ReadCursorShape(rfbFramebufferUpdateRectHeader *pfburh) {
 		m_hSavedAreaDC = CreateCompatibleDC(m_hBitmapDC);
 		m_hSavedAreaBitmap =
 			CreateCompatibleBitmap(m_hBitmapDC, rcWidth, rcHeight);
+	}
+
+	// Neither result was checked.  On Win32s the DC pool and the GDI heap are
+	// both small, and every SoftCursorDraw/SaveArea call below BitBlts through
+	// these handles.
+	if (m_hSavedAreaDC == NULL || m_hSavedAreaBitmap == NULL) {
+		vnclog.Print(0, _T("Could not create cursor save area - disabling local cursor\n"));
+		if (m_hSavedAreaBitmap != NULL) {
+			DeleteObject(m_hSavedAreaBitmap);
+			m_hSavedAreaBitmap = NULL;
+		}
+		if (m_hSavedAreaDC != NULL) {
+			DeleteDC(m_hSavedAreaDC);
+			m_hSavedAreaDC = NULL;
+		}
+		delete [] rcSource; rcSource = NULL;
+		delete [] rcMask;   rcMask = NULL;
+		prevCursorSet = false;
+		return;
 	}
 
 	SoftCursorSaveArea();
@@ -258,11 +303,32 @@ void ClientConnection::SoftCursorFree() {
 	if (prevCursorSet) {
 		if (!rcCursorHidden)
 			SoftCursorRestoreArea();
-		DeleteObject(m_hSavedAreaBitmap);
-		DeleteDC(m_hSavedAreaDC);
-		delete[] rcSource;
-		delete[] rcMask;
+		// Clear each handle/pointer after releasing it.  The originals were
+		// left dangling, and SoftCursorFree() is called more than once in
+		// sequence on some paths (ReadCursorShape calls it at the top, and
+		// ReadNewFBSize/SendAppropriateFramebufferUpdateRequest call it too).
+		// prevCursorSet guarded that by luck; being explicit removes the
+		// double-delete risk entirely, which matters on Win32s where GDI
+		// handle reuse is immediate.
+		if (m_hSavedAreaBitmap != NULL) {
+			DeleteObject(m_hSavedAreaBitmap);
+			m_hSavedAreaBitmap = NULL;
+		}
+		if (m_hSavedAreaDC != NULL) {
+			DeleteDC(m_hSavedAreaDC);
+			m_hSavedAreaDC = NULL;
+		}
+		if (rcSource != NULL) {
+			delete[] rcSource;
+			rcSource = NULL;
+		}
+		if (rcMask != NULL) {
+			delete[] rcMask;
+			rcMask = NULL;
+		}
 		prevCursorSet = false;
+		rcCursorHidden = false;
+		rcLockSet = false;
 	}
 }
 
@@ -289,6 +355,14 @@ bool ClientConnection::SoftCursorInLockedArea() {
 
 void ClientConnection::SoftCursorSaveArea() {
 
+	// All three low-level helpers are reachable while the cursor state is
+	// half-built (ReadCursorShape calls SaveArea/Draw immediately after
+	// creating the DCs) and after it has been torn down.  The originals ran
+	// BitBlt / SETPIXEL through whatever the handles happened to be.
+	if (m_hBitmapDC == NULL || m_hBitmap == NULL ||
+		m_hSavedAreaDC == NULL || m_hSavedAreaBitmap == NULL)
+		return;
+
 	RECT r;
 	SoftCursorToScreen(&r, NULL);
 	int x = r.left;
@@ -312,6 +386,10 @@ void ClientConnection::SoftCursorSaveArea() {
 //
 
 void ClientConnection::SoftCursorRestoreArea() {
+
+	if (m_hBitmapDC == NULL || m_hBitmap == NULL ||
+		m_hSavedAreaDC == NULL || m_hSavedAreaBitmap == NULL)
+		return;
 
 	RECT r;
 	SoftCursorToScreen(&r, NULL);
@@ -339,33 +417,151 @@ void ClientConnection::SoftCursorRestoreArea() {
 
 void ClientConnection::SoftCursorDraw() {
 
-	int x, y, x0, y0;
-	int offset;
+	if (m_hBitmapDC == NULL || m_hBitmap == NULL ||
+		rcSource == NULL || rcMask == NULL)
+		return;
 
-	omni_mutex_lock l(m_bitmapdcMutex);
-	ObjectSelector b(m_hBitmapDC, m_hBitmap);
-	PaletteSelector p(m_hBitmapDC, m_hPalette);
-
-	SETUP_COLOR_SHORTCUTS;
-
-	for (y = 0; y < rcHeight; y++) {
-		y0 = rcCursorY - rcHotY + y;
-		if (y0 >= 0 && y0 < m_si.framebufferHeight) {
-			for (x = 0; x < rcWidth; x++) {
-				x0 = rcCursorX - rcHotX + x;
-				if (x0 >= 0 && x0 < m_si.framebufferWidth) {
-					offset = y * rcWidth + x;
-					if (rcMask[offset]) {
-						SETPIXEL(m_hBitmapDC, x0, y0, rcSource[offset]);
+ 	omni_mutex_lock l(m_bitmapdcMutex);
+ 	ObjectSelector b(m_hBitmapDC, m_hBitmap);
+ 	PaletteSelector p(m_hBitmapDC, m_hPalette);
+ 
+	// WIN32S: the old per-pixel SETPIXEL loop drew nothing - GetPixel
+	// readback returns the untouched background (DIAG: want 000000 got
+	// c8ccc8), so SetPixel is a silent no-op on these memory DCs, exactly
+	// like SetDIBitsToDevice was for the decoders.  Push the cursor with
+	// the proven CreateDIBitmap+BitBlt path instead, with a classic
+	// SRCAND/SRCPAINT masked blit for transparency:
+	//   mask  = WHITE where the background shows (rcMask off)
+	//   image = cursor COLORREF where rcMask is on, black elsewhere
+	// Both bitmaps are tiny (server shapes are capped at 128x128 in
+	// ReadCursorShape) and use only Win3.0-core calls.
+	{
+		int imgStride = ((rcWidth * 3) + 3) & ~3;
+		int maskStride = ((rcWidth + 31) / 32) * 4;
+		unsigned char *imgBits =
+			new unsigned char[imgStride * rcHeight];
+		unsigned char *maskBits =
+			new unsigned char[maskStride * rcHeight];
+		if (imgBits != NULL && maskBits != NULL) {
+			int my, mx;
+			memset(imgBits, 0, imgStride * rcHeight);
+			memset(maskBits, 0xFF, maskStride * rcHeight);
+			for (my = 0; my < rcHeight; my++) {
+				unsigned char *imgRow =
+					imgBits + (size_t)(rcHeight - 1 - my) * imgStride;
+				unsigned char *maskRow =
+					maskBits + (size_t)(rcHeight - 1 - my) * maskStride;
+				for (mx = 0; mx < rcWidth; mx++) {
+					int srcOff = my * rcWidth + mx;
+					if (rcMask[srcOff]) {
+						COLORREF c = rcSource[srcOff];
+						*imgRow++ = (unsigned char)((c >> 16) & 0xFF);
+						*imgRow++ = (unsigned char)((c >> 8) & 0xFF);
+						*imgRow++ = (unsigned char)(c & 0xFF);
+						maskRow[mx >> 3] &= ~(unsigned char)(0x80 >> (mx & 7));
+					} else {
+						imgRow += 3;
 					}
 				}
+			}
+ 
+			BITMAPINFOHEADER imgBih;
+			memset(&imgBih, 0, sizeof(imgBih));
+			imgBih.biSize = sizeof(BITMAPINFOHEADER);
+			imgBih.biWidth = rcWidth;
+			imgBih.biHeight = rcHeight;
+			imgBih.biPlanes = 1;
+			imgBih.biBitCount = 24;
+			imgBih.biCompression = BI_RGB;
+ 
+			struct {
+				BITMAPINFOHEADER h;
+				RGBQUAD pal[2];
+			} maskBi;
+			memset(&maskBi, 0, sizeof(maskBi));
+			maskBi.h.biSize = sizeof(BITMAPINFOHEADER);
+			maskBi.h.biWidth = rcWidth;
+			maskBi.h.biHeight = rcHeight;
+			maskBi.h.biPlanes = 1;
+			maskBi.h.biBitCount = 1;
+			maskBi.h.biCompression = BI_RGB;
+			maskBi.pal[0].rgbBlue = maskBi.pal[0].rgbGreen =
+				maskBi.pal[0].rgbRed = 0;
+			maskBi.pal[1].rgbBlue = maskBi.pal[1].rgbGreen =
+				maskBi.pal[1].rgbRed = 0xFF;
+ 
+			int dstX = rcCursorX - rcHotX;
+			int dstY = rcCursorY - rcHotY;
+			HBITMAP hImg = CreateDIBitmap(m_hBitmapDC, &imgBih, CBM_INIT,
+										  imgBits, (BITMAPINFO *)&imgBih,
+										  DIB_RGB_COLORS);
+			HBITMAP hMask = CreateDIBitmap(m_hBitmapDC, &maskBi.h, CBM_INIT,
+										   maskBits, (BITMAPINFO *)&maskBi,
+										   DIB_RGB_COLORS);
+			if (hImg != NULL && hMask != NULL) {
+				HDC sdc = CreateCompatibleDC(m_hBitmapDC);
+				if (sdc != NULL) {
+					HGDIOBJ old = SelectObject(sdc, hMask);
+					BitBlt(m_hBitmapDC, dstX, dstY, rcWidth, rcHeight,
+						   sdc, 0, 0, SRCAND);
+					SelectObject(sdc, hImg);
+					BitBlt(m_hBitmapDC, dstX, dstY, rcWidth, rcHeight,
+						   sdc, 0, 0, SRCPAINT);
+					SelectObject(sdc, old);
+					DeleteDC(sdc);
+				} else {
+					vnclog.Print(0, _T("Could not stage cursor draw\n"));
+				}
+			} else {
+				vnclog.Print(0, _T("Could not build cursor bitmaps\n"));
+			}
+			if (hImg != NULL)
+				DeleteObject(hImg);
+			if (hMask != NULL)
+				DeleteObject(hMask);
+		}
+		if (imgBits != NULL)
+			delete [] imgBits;
+		if (maskBits != NULL)
+			delete [] maskBits;
+	}
+
+	// TEMP-DIAG (invisible remote cursor): verify SETPIXEL actually lands on
+	// this memory DC.  Bounded to the first cursor drawn.  Reads back one
+	// masked pixel with GetPixel and compares against what was requested.
+	{
+		static int s_curDiag = 0;
+		if (s_curDiag < 2 && rcWidth > 0 && rcHeight > 0) {
+			s_curDiag++;
+			int probe = -1;
+			for (int pi = 0; pi < rcWidth * rcHeight; pi++) {
+				if (rcMask[pi]) {
+					probe = pi;
+					break;
+				}
+			}
+			if (probe >= 0) {
+				int px = rcCursorX - rcHotX + (probe % rcWidth);
+				int py = rcCursorY - rcHotY + (probe / rcWidth);
+				COLORREF want = rcSource[probe];
+				COLORREF got = GetPixel(m_hBitmapDC, px, py);
+				vnclog.Print(0, _T("DIAG cursor %d: %dx%d hot %d,%d at %d,%d fb %dx%d probe %d,%d want %06lx got %06lx\n"),
+							 s_curDiag, rcWidth, rcHeight, rcHotX, rcHotY,
+							 rcCursorX, rcCursorY,
+							 (int)m_si.framebufferWidth, (int)m_si.framebufferHeight,
+							 px, py,
+							 (unsigned long)(want & 0xFFFFFF),
+							 (unsigned long)(got & 0xFFFFFF));
+			} else {
+				vnclog.Print(0, _T("DIAG cursor %d: %dx%d fully transparent mask\n"),
+							 s_curDiag, rcWidth, rcHeight);
 			}
 		}
 	}
 
-	RECT r;
-	SoftCursorToScreen(&r, NULL);
-	InvalidateScreenRect(&r);
+ 	RECT r;
+ 	SoftCursorToScreen(&r, NULL);
+ 	InvalidateScreenRect(&r);
 }
 
 //

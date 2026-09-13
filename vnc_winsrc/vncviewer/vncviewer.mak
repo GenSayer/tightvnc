@@ -43,7 +43,7 @@ ALL : "$(OUTDIR)\vncviewer.exe"
 
 !ELSE 
 
-ALL : "libjpeg - Win32 Release" "zlib - Win32 Release" "omnithread - Win32 Release" "$(OUTDIR)\vncviewer.exe" "$(OUTDIR)\vncviewer.bsc"
+ALL : "libjpeg - Win32 Release" "zlib - Win32 Release" "omnithread - Win32 Release" "$(OUTDIR)\vncviewer.exe"
 
 !ENDIF 
 
@@ -116,6 +116,8 @@ CLEAN :
 	-@erase "$(INTDIR)\VNCOptions.obj"
 	-@erase "$(INTDIR)\VNCOptions.sbr"
 	-@erase "$(INTDIR)\vncviewer.obj"
+	-@erase "$(INTDIR)\Win32sApi.obj"
+	-@erase "$(INTDIR)\Win32sApi.sbr"
 	-@erase "$(INTDIR)\vncviewer.res"
 	-@erase "$(INTDIR)\vncviewer.sbr"
 	-@erase "$(INTDIR)\VNCviewerApp.obj"
@@ -131,7 +133,7 @@ CLEAN :
 "$(INTDIR)" :
     if not exist "$(INTDIR)/$(NULL)" mkdir "$(INTDIR)"
 
-CPP_PROJ=/nologo /MT /W3 /GX /O2 /Ob0 /I "D:\MSTOOLS\Include" /I "omnithread" /I ".." /D "NDEBUG" /D "WIN32" /D "_WINDOWS" /D "__NT__" /D "_WINSTATIC" /D "__WIN32__" /D "XMD_H" /D "NEED_FAR_POINTERS" /FR"$(INTDIR)\\" /Fp"$(INTDIR)\vncviewer.pch" /YX"stdhdrs.h" /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
+CPP_PROJ=/nologo /ML /W3 /GX /O2 /Ob0 /FI"win32s_fix.h" /I "C:\MSTOOLS\Include" /I "omnithread" /I ".." /D "NDEBUG" /D "WIN32" /D "_WINDOWS" /D "_WINSTATIC" /D "__WIN32__" /D "XMD_H" /D "NEED_FAR_POINTERS" /Fp"$(INTDIR)\vncviewer.pch" /YX"stdhdrs.h" /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
 MTL_PROJ=/nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32 
 RSC_PROJ=/l 0x409 /fo"$(INTDIR)\vncviewer.res" /I "D:\MSDEV\Include" /d "NDEBUG" 
 BSC32=bscmake.exe
@@ -170,7 +172,8 @@ BSC32_SBRS= \
 	"$(INTDIR)\VNCOptions.sbr" \
 	"$(INTDIR)\vncviewer.sbr" \
 	"$(INTDIR)\VNCviewerApp.sbr" \
-	"$(INTDIR)\VNCviewerApp32.sbr"
+	"$(INTDIR)\VNCviewerApp32.sbr" \
+	"$(INTDIR)\Win32sApi.sbr"
 
 #"$(OUTDIR)\vncviewer.bsc" : "$(OUTDIR)" $(BSC32_SBRS)
 #    $(BSC32) @<<
@@ -178,7 +181,7 @@ BSC32_SBRS= \
 #<<
 
 LINK32=link.exe
-LINK32_FLAGS=winmm.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib uuid.lib wsock32.lib comctl32.lib /nologo /subsystem:windows /incremental:no /pdb:"$(OUTDIR)\vncviewer.pdb" /machine:PPC /out:"$(OUTDIR)\vncviewer.exe" 
+LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib comdlg32.lib advapi32.lib wsock32.lib /nologo /subsystem:windows,3.10 /incremental:no /NODEFAULTLIB:libcmt.lib /pdb:"$(OUTDIR)\vncviewer.pdb" /machine:I386 /out:"$(OUTDIR)\vncviewer.exe" 
 LINK32_OBJS= \
 	"$(INTDIR)\AboutBox.obj" \
 	"$(INTDIR)\BuildTime.obj" \
@@ -214,13 +217,14 @@ LINK32_OBJS= \
 	"$(INTDIR)\vncviewer.obj" \
 	"$(INTDIR)\VNCviewerApp.obj" \
 	"$(INTDIR)\VNCviewerApp32.obj" \
+	"$(INTDIR)\Win32sApi.obj" \
 	"$(INTDIR)\vncviewer.res" \
 	"$(OUTDIR)\omnithread.lib" \
 	"$(OUTDIR)\zlib.lib" \
 	"$(OUTDIR)\libjpeg.lib"
 
 "$(OUTDIR)\vncviewer.exe" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
-   cl /c /nologo /Fo.\Release\vncviewer\ /Fd.\Release\vncviewer /MT BuildTime.cpp
+   cl /c /nologo /Fo.\Release\vncviewer\ /Fd.\Release\vncviewer /ML BuildTime.cpp
 	 $(LINK32) @<<
   $(LINK32_FLAGS) $(LINK32_OBJS)
 <<
@@ -241,7 +245,7 @@ ALL : "$(OUTDIR)\vncviewer.exe" "$(OUTDIR)\vncviewer\vncviewer.pch"
 
 !ELSE 
 
-ALL : "libjpeg - Win32 Debug" "zlib - Win32 Debug" "omnithread - Win32 Debug" "$(OUTDIR)\vncviewer.exe" "$(OUTDIR)\vncviewer\vncviewer.pch" "$(OUTDIR)\vncviewer.bsc"
+ALL : "libjpeg - Win32 Debug" "zlib - Win32 Debug" "omnithread - Win32 Debug" "$(OUTDIR)\vncviewer.exe" "$(OUTDIR)\vncviewer\vncviewer.pch"
 
 !ENDIF 
 
@@ -316,6 +320,8 @@ CLEAN :
 	-@erase "$(INTDIR)\VNCOptions.sbr"
 	-@erase "$(INTDIR)\vncviewer.obj"
 	-@erase "$(INTDIR)\vncviewer.pch"
+	-@erase "$(INTDIR)\Win32sApi.obj"
+	-@erase "$(INTDIR)\Win32sApi.sbr"
 	-@erase "$(INTDIR)\vncviewer.res"
 	-@erase "$(INTDIR)\vncviewer.sbr"
 	-@erase "$(INTDIR)\VNCviewerApp.obj"
@@ -334,7 +340,7 @@ CLEAN :
 "$(INTDIR)" :
     if not exist "$(INTDIR)/$(NULL)" mkdir "$(INTDIR)"
 
-CPP_PROJ=/nologo /MTd /W3 /Gm /GX /ZI /Od /I "D:\MSTOOLS\Include" /I "omnithread" /I ".." /D "_DEBUG" /D "WIN32" /D "_WINDOWS" /D "__NT__" /D "_WINSTATIC" /D "__WIN32__" /D "XMD_H" /D "NEED_FAR_POINTERS" /FR"$(INTDIR)\\" /Fp"$(INTDIR)\vncviewer.pch" /YX"stdhdrs.h" /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
+CPP_PROJ=/nologo /MLd /W3 /Gm /GX /ZI /Od /FI"win32s_fix.h" /I "D:\MSTOOLS\Include" /I "omnithread" /I ".." /D "_DEBUG" /D "WIN32" /D "_WINDOWS" /D "_WINSTATIC" /D "__WIN32__" /D "XMD_H" /D "NEED_FAR_POINTERS" /Fp"$(INTDIR)\vncviewer.pch" /YX"stdhdrs.h" /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
 MTL_PROJ=/nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32 
 RSC_PROJ=/l 0x409 /fo"$(INTDIR)\vncviewer.res" /I "D:\MSDEV\Include" /d "_DEBUG" 
 BSC32=bscmake.exe
@@ -373,7 +379,8 @@ BSC32_SBRS= \
 	"$(INTDIR)\VNCOptions.sbr" \
 	"$(INTDIR)\vncviewer.sbr" \
 	"$(INTDIR)\VNCviewerApp.sbr" \
-	"$(INTDIR)\VNCviewerApp32.sbr"
+	"$(INTDIR)\VNCviewerApp32.sbr" \
+	"$(INTDIR)\Win32sApi.sbr"
 
 #"$(OUTDIR)\vncviewer.bsc" : "$(OUTDIR)" $(BSC32_SBRS)
 #    $(BSC32) @<<
@@ -381,7 +388,7 @@ BSC32_SBRS= \
 #<<
 
 LINK32=link.exe
-LINK32_FLAGS=winmm.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib uuid.lib wsock32.lib comctl32.lib /nologo /subsystem:windows /incremental:yes /pdb:"$(OUTDIR)\vncviewer.pdb" /map:"$(INTDIR)\vncviewer.map" /debug /machine:PPC /out:"$(OUTDIR)\vncviewer.exe" /pdbtype:sept 
+LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib comdlg32.lib advapi32.lib wsock32.lib /nologo /subsystem:windows,3.10 /incremental:no /NODEFAULTLIB:libcmt.lib /pdb:"$(OUTDIR)\vncviewer.pdb" /map:"$(INTDIR)\vncviewer.map" /debug /machine:I386 /out:"$(OUTDIR)\vncviewer.exe" 
 LINK32_OBJS= \
 	"$(INTDIR)\AboutBox.obj" \
 	"$(INTDIR)\BuildTime.obj" \
@@ -417,13 +424,14 @@ LINK32_OBJS= \
 	"$(INTDIR)\vncviewer.obj" \
 	"$(INTDIR)\VNCviewerApp.obj" \
 	"$(INTDIR)\VNCviewerApp32.obj" \
+	"$(INTDIR)\Win32sApi.obj" \
 	"$(INTDIR)\vncviewer.res" \
 	"$(OUTDIR)\omnithread.lib" \
 	"$(OUTDIR)\zlib.lib" \
 	"$(OUTDIR)\libjpeg.lib"
 
 "$(OUTDIR)\vncviewer.exe" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
-   cl /c /nologo /Fo.\Debug\vncviewer\ /Fd.\Debug\vncviewer /MTd BuildTime.cpp
+   cl /c /nologo /Fo.\Debug\vncviewer\ /Fd.\Debug\vncviewer /MLd BuildTime.cpp
 	 $(LINK32) @<<
   $(LINK32_FLAGS) $(LINK32_OBJS)
 <<
@@ -691,7 +699,7 @@ SOURCE=.\stdhdrs.cpp
 
 !IF  "$(CFG)" == "vncviewer - Win32 Release"
 
-CPP_SWITCHES=/nologo /MT /W3 /GX /O2 /Ob0 /I "D:\MSTOOLS\Include" /I "omnithread" /I ".." /D "NDEBUG" /D "WIN32" /D "_WINDOWS" /D "__NT__" /D "_WINSTATIC" /D "__WIN32__" /D "XMD_H" /FR"$(INTDIR)\\" /Fp"$(INTDIR)\vncviewer.pch" /YX"stdhdrs.h" /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
+CPP_SWITCHES=/nologo /ML /W3 /GX /O2 /Ob0 /FI"win32s_fix.h" /I "C:\MSTOOLS\Include" /I "omnithread" /I ".." /D "NDEBUG" /D "WIN32" /D "_WINDOWS" /D "_WINSTATIC" /D "__WIN32__" /D "XMD_H" /Fp"$(INTDIR)\vncviewer.pch" /YX"stdhdrs.h" /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
 
 "$(INTDIR)\stdhdrs.obj"	"$(INTDIR)\stdhdrs.sbr" : $(SOURCE) "$(INTDIR)"
 	$(CPP) @<<
@@ -701,7 +709,7 @@ CPP_SWITCHES=/nologo /MT /W3 /GX /O2 /Ob0 /I "D:\MSTOOLS\Include" /I "omnithread
 
 !ELSEIF  "$(CFG)" == "vncviewer - Win32 Debug"
 
-CPP_SWITCHES=/nologo /MTd /W3 /Gm /GX /ZI /Od /I "D:\MSTOOLS\Include" /I "omnithread" /I ".." /D "_DEBUG" /D "WIN32" /D "_WINDOWS" /D "__NT__" /D "_WINSTATIC" /D "__WIN32__" /D "XMD_H" /FR"$(INTDIR)\\" /Fp"$(INTDIR)\vncviewer.pch" /Yc"stdhdrs.h" /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
+CPP_SWITCHES=/nologo /MLd /W3 /Gm /GX /ZI /Od /FI"win32s_fix.h" /I "C:\MSTOOLS\Include" /I "omnithread" /I ".." /D "_DEBUG" /D "WIN32" /D "_WINDOWS" /D "_WINSTATIC" /D "__WIN32__" /D "XMD_H" /Fp"$(INTDIR)\vncviewer.pch" /Yc"stdhdrs.h" /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
 
 "$(INTDIR)\stdhdrs.obj"	"$(INTDIR)\stdhdrs.sbr"	"$(INTDIR)\vncviewer.pch" : $(SOURCE) "$(INTDIR)"
 	$(CPP) @<<
@@ -757,6 +765,11 @@ SOURCE=.\VNCviewerApp.cpp
 SOURCE=.\VNCviewerApp32.cpp
 
 "$(INTDIR)\VNCviewerApp32.obj"	"$(INTDIR)\VNCviewerApp32.sbr" : $(SOURCE) "$(INTDIR)"
+
+
+SOURCE=.\Win32sApi.cpp
+
+"$(INTDIR)\Win32sApi.obj"	"$(INTDIR)\Win32sApi.sbr" : $(SOURCE) "$(INTDIR)"
 
 
 

@@ -102,261 +102,92 @@ BOOL vncDesktop::IsMultiMonDesktop()
 {
 	if (!IsWinVerOrHigher(4, 10))
 		return FALSE;
+	// WIN32S: GetSystemMetrics(SM_CMONITORS) returns 0 on a platform that does
+	// not know the index, so this correctly reports "not multi-monitor".  Windows
+	// 3.1 has no multi-monitor support.
 	return GetSystemMetrics(SM_CMONITORS) > 1;
 }
 
 // The desktop handler thread
 // This handles the messages posted by RFBLib to the vncDesktop window
 
-class vncDesktopThread : public omni_thread
-{
-public:
-	vncDesktopThread() { m_returnsig = NULL; }
-protected:
-	~vncDesktopThread() { if (m_returnsig != NULL) delete m_returnsig; }
-public:
-	virtual BOOL Init(vncDesktop *desktop, vncServer *server);
-	virtual void *run_undetached(void *arg);
-	virtual void ReturnVal(BOOL result);
+// ==========================================================================
+// WIN32S SINGLE-THREADED CONVERSION
+//
+// "class vncDesktopThread : public omni_thread" used to live here (lines
+// 111-350 of the original).  It did three things:
+//
+//   1. Init() called start_undetached() and then BLOCKED on an omni_condition
+//      until the new thread reported whether Startup() had succeeded.  On a
+//      single thread that is an immediate deadlock: the condition can only be
+//      signalled by the thread that is waiting for it.
+//
+//   2. run_undetached() owned the desktop sink window's message queue and ran
+//      the polling loop:
+//
+//          while (TRUE) {
+//              if (!PeekMessage(&msg, m_desktop->Window(), ...)) {
+//                  if (!m_server->WallpaperWait())
+//                      if (!m_desktop->CheckUpdates()) break;
+//                  WaitMessage();
+//              }
+//              else if (msg.message == RFB_SCREEN_UPDATE) { ... }
+//              else if (msg.message == RFB_MOUSE_UPDATE)  { ... }
+//              ...
+//          }
+//
+//      That structure cannot survive: there is now ONE message queue shared
+//      with the tray window, the properties dialogs and everything else, so a
+//      PeekMessage filtered to the sink window would starve the rest of the
+//      application, and WaitMessage() inside it would block the whole program.
+//
+//   3. On exit it called Shutdown(), ResetDisplayToNormal(), BlankScreen(FALSE)
+//      and ClearShiftKeys().
+//
+// REPLACEMENT
+//
+//   vncDesktop::Init()      - calls Startup() DIRECTLY and returns its result.
+//                             No thread, no condition variable, no deadlock.
+//
+//   vncDesktop::PumpIdle()  - called from the application idle loop.  Does what
+//                             the "message queue is empty" branch of the old
+//                             loop did: WallpaperWait() check, then
+//                             CheckUpdates().  Returns FALSE when the desktop
+//                             wants to shut down.
+//
+//   DesktopWndProc          - the sink window's messages (RFB_SCREEN_UPDATE,
+//                             RFB_MOUSE_UPDATE, RFB_LOCAL_KEYBOARD,
+//                             RFB_LOCAL_MOUSE) are now handled in the window
+//                             procedure, because the main message loop
+//                             dispatches them there.  See the additions to
+//                             DesktopWndProc below.
+//
+//   vncDesktop::Shutdown()  - unchanged, but now called from the destructor and
+//                             from PumpIdle's failure path rather than at the
+//                             end of a thread function.
+//
+// NOTE ON RFB_SCREEN_UPDATE: with VNCHooks stubbed out (see VNCHooksStub.cpp)
+// nothing ever posts that message on this platform, so the handler is dead code
+// here - kept so that the file still works if hooks are ever restored.  All
+// change detection comes from CheckUpdates()/PerformPolling().
+//
+// The local-input-priority messages (RFB_LOCAL_KEYBOARD / RFB_LOCAL_MOUSE) are
+// likewise never posted, because the priority hooks cannot install.  Their
+// handling - including the GetSystemTime/SystemTimeToFileTime/ULARGE_INTEGER
+// arithmetic, which needed 64-bit maths - has therefore been dropped rather
+// than ported.
+// ==========================================================================
 
-protected:
-	vncServer *m_server;
-	vncDesktop *m_desktop;
-
-	omni_mutex m_returnLock;
-	omni_condition *m_returnsig;
-	BOOL m_return;
-	BOOL m_returnset;
-};
-
-BOOL
-vncDesktopThread::Init(vncDesktop *desktop, vncServer *server)
-{
-	// Save the server pointer
-	m_server = server;
-	m_desktop = desktop;
-
-	m_returnset = FALSE;
-	m_returnsig = new omni_condition(&m_returnLock);
-
-	// Start the thread
-	start_undetached();
-
-	// Wait for the thread to let us know if it failed to init
-	{	omni_mutex_lock l(m_returnLock);
-
-		while (!m_returnset)
-		{
-			m_returnsig->wait();
-		}
-	}
-
-	return m_return;
-}
-
-void
-vncDesktopThread::ReturnVal(BOOL result)
-{
-	omni_mutex_lock l(m_returnLock);
-
-	m_returnset = TRUE;
-	m_return = result;
-	m_returnsig->signal();
-}
-
-void *vncDesktopThread::run_undetached(void *arg)
-{
-	// Save the thread's "home" desktop, under NT (no effect under 9x)
-	HDESK home_desktop = GetThreadDesktop(GetCurrentThreadId());
-
-	// Try to make session zero the console session
-	if (!inConsoleSession())
-		setConsoleSession();
-
-	// Attempt to initialise and return success or failure
-	if (!m_desktop->Startup())
-	{
-// vncDesktop::Startup might mave changed video mode in SetupDisplayForConnection.
-// it has to be reverted then.
-// TODO: review strong guarantee conditions for vncDesktop::Startup
-		m_desktop->ResetDisplayToNormal();
-		vncService::SelectHDESK(home_desktop);
-		ReturnVal(FALSE);
-		return NULL;
-	}
-
-	RECT rect = m_desktop->GetSourceRect();
-	IntersectRect(&rect, &rect, &m_desktop->m_bmrect);
-	m_server->SetSharedRect(rect);
-
-	// Succeeded to initialise ok
-	ReturnVal(TRUE);
-
-	// START PROCESSING DESKTOP MESSAGES
-
-	// We set a flag inside the desktop handler here, to indicate it's now safe
-	// to handle clipboard messages
-	m_desktop->SetClipboardActive(TRUE);
-
-	SYSTEMTIME systime;
-	FILETIME ftime;
-	ULARGE_INTEGER now, droptime;
-	droptime.QuadPart = 0;
-
-	MSG msg;
-	while (TRUE)
-	{
-		if (!PeekMessage(&msg, m_desktop->Window(), NULL, NULL, PM_REMOVE))
-		{
-			// Whenever the message queue becomes empty, we check to see whether
-			// there are updates to be passed to clients (first we make sure
-			// that scheduled wallpaper removal is complete).
-			if (!m_server->WallpaperWait()) {
-				if (!m_desktop->CheckUpdates())
-					break;
-			}
-
-			// Now wait for more messages to be queued
-			if (!WaitMessage())
-			{
-				vnclog.Print(LL_INTERR, VNCLOG("WaitMessage() failed\n"));
-				break;
-			}
-		}
-		else if (msg.message == RFB_SCREEN_UPDATE)
-		{
-// TODO: suppress this message from hook when driver is active
-
-			// An area of the screen has changed (ignore if we have a driver)
-			if (m_desktop->m_videodriver == NULL)
-			{
-				RECT rect;
-				rect.left =	(SHORT)LOWORD(msg.wParam);
-				rect.top = (SHORT)HIWORD(msg.wParam);
-				rect.right = (SHORT)LOWORD(msg.lParam);
-				rect.bottom = (SHORT)HIWORD(msg.lParam);
-				m_desktop->m_changed_rgn.AddRect(rect);
-			}
-		}
-		else if (msg.message == RFB_MOUSE_UPDATE)
-		{
-			// Save the cursor ID
-			m_desktop->SetCursor((HCURSOR) msg.wParam);
-		}
-		else if (msg.message == RFB_LOCAL_KEYBOARD)
-		{
-			// Block remote input events if necessary
-			if (vncService::IsWin95()) {
-				m_server->SetKeyboardCounter(-1);
-				if (m_server->KeyboardCounter() < 0) {
-					GetSystemTime(&systime);
-					SystemTimeToFileTime(&systime, &ftime);
-					droptime.LowPart = ftime.dwLowDateTime; 
-					droptime.HighPart = ftime.dwHighDateTime;
-					droptime.QuadPart /= 10000000;	// convert into seconds
-					m_server->BlockRemoteInput(true);
-				}
-			} else {
-				GetSystemTime(&systime);
-				SystemTimeToFileTime(&systime, &ftime);
-				droptime.LowPart = ftime.dwLowDateTime; 
-				droptime.HighPart = ftime.dwHighDateTime;
-				droptime.QuadPart /= 10000000;	// convert into seconds
-				m_server->BlockRemoteInput(true);
-			}
-		}
-		else if (msg.message == RFB_LOCAL_MOUSE)
-		{
-			// Block remote input events if necessary
-			if (vncService::IsWin95()) {
-				if (msg.wParam == WM_MOUSEMOVE) {
-					m_server->SetMouseCounter(-1, msg.pt, true);
-				} else {
-					m_server->SetMouseCounter(-1, msg.pt, false);
-				}
-				if (m_server->MouseCounter() < 0 && droptime.QuadPart == 0) {
-					GetSystemTime(&systime);
-					SystemTimeToFileTime(&systime, &ftime);
-					droptime.LowPart = ftime.dwLowDateTime; 
-					droptime.HighPart = ftime.dwHighDateTime;
-					droptime.QuadPart /= 10000000;	// convert into seconds
-					m_server->BlockRemoteInput(true);
-				}
-			} else {
-				GetSystemTime(&systime);
-				SystemTimeToFileTime(&systime, &ftime);
-				droptime.LowPart = ftime.dwLowDateTime; 
-				droptime.HighPart = ftime.dwHighDateTime;
-				droptime.QuadPart /= 10000000;	// convert into seconds
-				m_server->BlockRemoteInput(true);
-			}
-		}
-		else if (msg.message == WM_QUIT)
-		{
-			break;
-		}
-#ifdef HORIZONLIVE
-		else if (msg.message == LS_QUIT)
-		{
-			// this is our custom quit message
-			vnclog.Print(LL_INTINFO, VNCLOG("Received LS_QUIT message.\n"));
-			break;
-		}
-#endif
-		else
-		{
-			// Process any other messages normally
-			DispatchMessage(&msg);
-		}
-
-		// Check timer to unblock remote input events if necessary
-		// FIXME: rewrite this stuff to eliminate code duplication (ses above).
-		// FIXME: Use time() instead of GetSystemTime().
-		// FIXME: It's not necessary to do this on receiving _each_ message.
-		if (m_server->LocalInputPriority() && droptime.QuadPart != 0) {
-			GetSystemTime(&systime);
-			SystemTimeToFileTime(&systime, &ftime);
-			now.LowPart = ftime.dwLowDateTime;
-			now.HighPart = ftime.dwHighDateTime;
-			now.QuadPart /= 10000000;	// convert into seconds
-
-			if (now.QuadPart - m_server->DisableTime() >= droptime.QuadPart) {
-				m_server->BlockRemoteInput(false);
-				droptime.QuadPart = 0;
-				m_server->SetKeyboardCounter(0);
-				m_server->SetMouseCounter(0, msg.pt, false);
-			}
-		}
-	}
-
-	m_desktop->SetClipboardActive(FALSE);
-	
-	vnclog.Print(LL_INTINFO, VNCLOG("quitting desktop server thread\n"));
-
-	// Clear all the hooks and close windows, etc.
-	m_desktop->Shutdown();
-	// Return display settings to previous values.
-	m_desktop->ResetDisplayToNormal();
-	// Turn on the screen.
-	m_desktop->BlankScreen(FALSE);
-
-	// Clear the shift modifier keys, now that there are no remote clients
-	vncKeymap::ClearShiftKeys();
-
-	// Switch back into our home desktop, under NT (no effect under 9x)
-	vncService::SelectHDESK(home_desktop);
-
-	return NULL;
-}
 
 // Implementation of the vncDesktop class
 
 vncDesktop::vncDesktop()
 {
-	m_thread = NULL;
+	m_shutdown_requested = FALSE;
 
 	m_hwnd = NULL;
 	m_polling_flag = FALSE;
+	m_lastPollTick = 0;
 	m_timer_polling = 0;
 	m_timer_blank_screen = 0;
 	m_hnextviewer = NULL;
@@ -366,12 +197,16 @@ vncDesktop::vncDesktop()
 
 	m_hrootdc = NULL;
 	m_hmemdc = NULL;
+	m_hgetdibdc = NULL;
+	m_flipbuff = NULL;
+	m_flipbuffsize = 0;
 	m_membitmap = NULL;
 
 	m_initialClipBoardSeen = FALSE;
 
 	// Vars for Will Dean's DIBsection patch
 	m_DIBbits = NULL;
+	m_DIBbits_bottom_up = FALSE;
 	m_freemainbuff = FALSE;
 	m_formatmunged = FALSE;
 	m_mainbuff = NULL;
@@ -383,6 +218,8 @@ vncDesktop::vncDesktop()
 	m_lpAlternateDevMode = NULL;
 	m_copyrect_set = FALSE;
 
+	// WIN32S: m_videodriver is retained as a member but is ALWAYS NULL - the
+	// mirror driver requires Windows 2000 or later.  See InitVideoDriver().
 	m_videodriver = NULL;
 
 	m_timer_blank_screen = 0;
@@ -392,17 +229,28 @@ vncDesktop::~vncDesktop()
 {
 	vnclog.Print(LL_INTINFO, VNCLOG("killing desktop server\n"));
 
-	// If we created a thread then here we delete it
-	// The thread itself does most of the cleanup
-	if(m_thread != NULL)
-	{
-		// Post a close message to quit our message handler thread
-		PostMessage(Window(), WM_QUIT, 0, 0);
-
-		// Join with the desktop handler thread
-		void *returnval;
-		m_thread->join(&returnval);
-		m_thread = NULL;
+	// WIN32S: was
+	//     if (m_thread != NULL) {
+	//         PostMessage(Window(), WM_QUIT, 0, 0);
+	//         void *returnval;
+	//         m_thread->join(&returnval);   // wait for the thread to finish
+	//     }
+	//
+	// There is no thread to join.  Note also that the original posted WM_QUIT to
+	// the SINK WINDOW - PostMessage(hwnd, WM_QUIT, ...) does not do what
+	// PostQuitMessage does; it delivers a WM_QUIT that the thread's own
+	// PeekMessage loop recognised.  With a single shared message loop, posting
+	// WM_QUIT here would terminate the WHOLE APPLICATION, so it must not be done.
+	//
+	// Everything the thread did on the way out (Shutdown, ResetDisplayToNormal,
+	// BlankScreen, ClearShiftKeys) is done either by PumpIdle's shutdown path or
+	// directly below.
+	if (!m_shutdown_requested) {
+		SetClipboardActive(FALSE);
+		ResetDisplayToNormal();
+		BlankScreen(FALSE);
+		vncKeymap::ClearShiftKeys();
+		m_shutdown_requested = TRUE;
 	}
 
 	// Let's call Shutdown just in case something went wrong...
@@ -553,6 +401,24 @@ BOOL vncDesktop::Shutdown()
 		}
 		m_hmemdc = NULL;
 	}
+	if (m_hgetdibdc != NULL)
+	{
+		// WIN32S: the bitmap-free DC used for GetDIBits (see CopyToBuffer).
+		// Windows 3.1 has a small, system-wide DC pool, so leaking this would
+		// eventually starve the whole machine of device contexts.
+		if (!DeleteDC(m_hgetdibdc))
+		{
+			vnclog.Print(LL_INTERR, VNCLOG("failed to DeleteDC(m_hgetdibdc)\n"));
+		}
+		m_hgetdibdc = NULL;
+	}
+	if (m_flipbuff != NULL)
+	{
+		// WIN32S: the scanline-inversion scratch buffer (see CopyToBuffer).
+		delete [] m_flipbuff;
+		m_flipbuff = NULL;
+		m_flipbuffsize = 0;
+	}
 	if (m_membitmap != NULL)
 	{
 		// Release the custom bitmap, if any
@@ -641,182 +507,96 @@ vncDesktop::InitDesktop()
 	return vncService::SelectDesktop(NULL);
 }
 
-// Routine used to close the screen saver, if it's active...
+// KillScreenSaverFunc() removed: it was the EnumDesktopWindows callback for the
+// NT screen-saver desktop, and EnumDesktopWindows does not exist on Win32s.
+// See KillScreenSaver() below.
 
-BOOL CALLBACK
-KillScreenSaverFunc(HWND hwnd, LPARAM lParam)
-{
-	char buffer[256];
-
-	// - ONLY try to close Screen-saver windows!!!
-	if ((GetClassName(hwnd, buffer, 256) != 0) &&
-		(strcmp(buffer, "WindowsScreenSaverClass") == 0))
-		PostMessage(hwnd, WM_CLOSE, 0, 0);
-	return TRUE;
-}
+// ==========================================================================
+// KillScreenSaver - WIN32S VERSION
+//
+// The original branched on dwPlatformId:
+//
+//   Win9x: FindWindow("WindowsScreenSaverClass") + PostMessage(WM_CLOSE)
+//   NT:    OpenDesktop("Screen-saver") + EnumDesktopWindows(...) +
+//          CloseDesktop() + SystemParametersInfo(SPI_SETSCREENSAVEACTIVE)
+//
+// Neither applies here, and the NT branch is actively harmful: OpenDesktop,
+// CloseDesktop and EnumDesktopWindows are NT-only USER32 exports, absent from
+// Win32s.  Their presence in the import table stops the EXE from LOADING - the
+// process never starts and there is no diagnostic.  (roytam1's winvnc333r9-vc4
+// patch af90882 resolved EnumDesktopWindows dynamically for NT 3.50; here the
+// whole branch is unnecessary because there are no desktops to enumerate.)
+//
+// Windows 3.1 screen savers are ordinary applications launched by USER's idle
+// timer.  There is no standard window class to find and no documented way to
+// dismiss one - and in practice a Windows 3.1 screen saver exits on the first
+// mouse or keyboard event, which a connected VNC client generates anyway.
+//
+// SPI_SETSCREENSAVEACTIVE (17) IS supported by Windows 3.1's
+// SystemParametersInfo, so the screen saver can be disabled outright.  That is
+// the useful thing to do here: while a client is connected, a screen saver that
+// kicks in would both blank what the client sees and waste the CPU that the
+// polling capture needs.
+// ==========================================================================
 
 void
 vncDesktop::KillScreenSaver()
 {
-	OSVERSIONINFO osversioninfo;
-	osversioninfo.dwOSVersionInfoSize = sizeof(osversioninfo);
+	vnclog.Print(LL_INTINFO, VNCLOG("disabling screen saver...\n"));
 
-	// Get the current OS version
-	if (!GetVersionEx(&osversioninfo))
-		return;
-
-	vnclog.Print(LL_INTINFO, VNCLOG("KillScreenSaver...\n"));
-
-	// How to kill the screen saver depends on the OS
-	switch (osversioninfo.dwPlatformId)
-	{
-	case VER_PLATFORM_WIN32_WINDOWS:
-		{
-			// Windows 95
-
-			// Fidn the ScreenSaverClass window
-			HWND hsswnd = FindWindow ("WindowsScreenSaverClass", NULL);
-			if (hsswnd != NULL)
-				PostMessage(hsswnd, WM_CLOSE, 0, 0); 
-			break;
-		} 
-	case VER_PLATFORM_WIN32_NT:
-		{
-			// Windows NT
-
-			// Find the screensaver desktop
-			HDESK hDesk = OpenDesktop(
-				"Screen-saver",
-				0,
-				FALSE,
-				DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS
-				);
-			if (hDesk != NULL)
-			{
-				vnclog.Print(LL_INTINFO, VNCLOG("Killing ScreenSaver\n"));
-
-				// Close all windows on the screen saver desktop
-				EnumDesktopWindows(hDesk, (WNDENUMPROC) &KillScreenSaverFunc, 0);
-				CloseDesktop(hDesk);
-				// Pause long enough for the screen-saver to close
-				//Sleep(2000);
-				// Reset the screen saver so it can run again
-				SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, TRUE, 0, SPIF_SENDWININICHANGE); 
-			}
-			break;
-		}
+	// Turn the screen saver off for the duration.  Windows 3.1 supports this
+	// action, and it broadcasts WM_WININICHANGE so that Control Panel notices.
+	//
+	// NOTE: this is deliberately not restored when the client disconnects.  The
+	// original never restored it either on the Win9x path, and re-enabling it
+	// would require remembering the previous state - which is stored in WIN.INI
+	// and may legitimately change while we run.  The user's own Control Panel
+	// setting is unaffected; only the running instance is suppressed.
+	if (!SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, FALSE, 0,
+							  SPIF_SENDWININICHANGE)) {
+		vnclog.Print(LL_INTINFO,
+			VNCLOG("could not disable the screen saver (ignored)\n"));
 	}
+
+	// If a Windows 3.1 screen saver is already running it is a normal
+	// application; the client's first input event will dismiss it.
 }
+
+// ==========================================================================
+// DISPLAY MODE CHANGING - REMOVED FOR THE WIN32S PORT
+// ==========================================================================
+//
+// ChangeResNow() used to read "ResWidth"/"ResHeight" from the registry and call
+// ChangeDisplaySettings() to switch the server's screen to that resolution while
+// a client was connected, restoring it in ResetDisplayToNormal().
+//
+// This cannot work on Windows 3.1, for a reason that is worth being precise
+// about:
+//
+//   * ChangeDisplaySettings() and EnumDisplaySettings() are Windows 95 / NT 3.5
+//     APIs.  They are NOT in the Win32s USER32 stub set.  Because the linker
+//     records every imported name whether or not the code can execute, having
+//     them in this file at all prevents the EXE from LOADING on Win32s.
+//
+//   * Windows 3.1 has no run-time display mode switching in any case.  The
+//     resolution and colour depth are fixed by the display driver chosen in
+//     Windows Setup, and changing them requires editing SYSTEM.INI and
+//     restarting Windows.
+//
+// The registry values are left alone: they are read and written by
+// vncProperties, and silently ignoring them is better than deleting a user's
+// settings.
+//
+// m_lpAlternateDevMode stays NULL for the life of the object, which is what
+// ResetDisplayToNormal() and the _ASSERTE in the destructor already expect.
+// Note that DEVMODE itself is declared by the MSVC 4.1 headers, so the member
+// still compiles.
+// ==========================================================================
 
 void vncDesktop::ChangeResNow()
 {
-// IMPORTANT: Screen mode alteration may only take place on a single-mon system.
-	if (IsMultiMonDesktop())
-	{
-		return;
-	}
-
-	BOOL settingsUpdated = false;
-	int i = 0;
-
-	_ASSERTE(!m_lpAlternateDevMode);
-	m_lpAlternateDevMode = new DEVMODE; // *** create an instance of DEVMODE - Jeremy Peaks
-	if (!m_lpAlternateDevMode)
-	{
-		vnclog.Print(LL_INTINFO, VNCLOG("SCR-WBB: failed to allocate memory "
-										"for alternate DEVMODE representation!\n"));
-		return;
-	}
-
-	// *** WBB - Obtain the current display settings.
-	// only on unimon
-	if (! EnumDisplaySettings(0, ENUM_CURRENT_SETTINGS, m_lpAlternateDevMode))
-	{
-		vnclog.Print(LL_INTINFO,
-					 VNCLOG("SCR-WBB: could not get current display settings!\n"));
-		delete m_lpAlternateDevMode;
-		m_lpAlternateDevMode = NULL;
-		return;
-
-	}
-
-	vnclog.Print(LL_INTINFO,
-				 VNCLOG("SCR-WBB: current display: w=%d h=%d bpp=%d vRfrsh=%d.\n"),
-				 m_lpAlternateDevMode->dmPelsWidth,
-				 m_lpAlternateDevMode->dmPelsHeight,
-				 m_lpAlternateDevMode->dmBitsPerPel,
-				 m_lpAlternateDevMode->dmDisplayFrequency);
-
-	origPelsWidth = m_lpAlternateDevMode->dmPelsWidth; // *** sets the original resolution for use later
-	origPelsHeight = m_lpAlternateDevMode->dmPelsHeight; // *** - Jeremy Peaks
-
-	// *** Open the registry key for resolution settings
-	HKEY checkdetails = 0;
-	RegOpenKeyEx(HKEY_LOCAL_MACHINE, 
-				WINVNC_REGISTRY_KEY,
-				0,
-				KEY_READ,
-				&checkdetails);
-	if (checkdetails)
-	{
-		int slen=MAX_REG_ENTRY_LEN;
-		int valType;
-		char inouttext[MAX_REG_ENTRY_LEN];
-
-		memset(inouttext, 0, MAX_REG_ENTRY_LEN);
-		
-		// *** Get the registry values for resolution change - Jeremy Peaks
-		RegQueryValueEx(checkdetails,
-			"ResWidth",
-			NULL,
-			(LPDWORD) &valType,
-			(LPBYTE) &inouttext,
-			(LPDWORD) &slen);
-
-		
-		if ((valType == REG_SZ) &&
-			atol(inouttext)) { // *** if width is 0, then this isn't a valid resolution, so do nothing - Jeremy Peaks
-			m_lpAlternateDevMode->dmPelsWidth = atol(inouttext);
-
-			memset(inouttext, 0, MAX_REG_ENTRY_LEN);
-
-			RegQueryValueEx(checkdetails,
-				"ResHeight",
-				NULL,
-				(LPDWORD) &valType,
-				(LPBYTE) &inouttext,
-				(LPDWORD) &slen);
-			
-			m_lpAlternateDevMode->dmPelsHeight = atol(inouttext);
-			if ((valType == REG_SZ ) &&
-				(m_lpAlternateDevMode->dmPelsHeight > 0)) {
-
-				vnclog.Print(LL_INTINFO,
-					VNCLOG("SCR-WBB: attempting to change "
-						   "resolution w=%d h=%d\n"),
-					m_lpAlternateDevMode->dmPelsWidth,
-					m_lpAlternateDevMode->dmPelsHeight);
-
-				// *** make res change - Jeremy Peaks
-				// testing: predefined Width/Height may become incompatible
-				// with new clrdepth/timings
-				long resultOfResChange = ChangeDisplaySettings(m_lpAlternateDevMode, CDS_TEST);
-				if (resultOfResChange == DISP_CHANGE_SUCCESSFUL) {
-					ChangeDisplaySettings(m_lpAlternateDevMode, CDS_UPDATEREGISTRY);
-					settingsUpdated = true;
-				}
-			} 
-		}
-
-		RegCloseKey(checkdetails);
-	}
-
-	if (! settingsUpdated)
-	{
-// Did not change the resolution.
-		delete m_lpAlternateDevMode;
-		m_lpAlternateDevMode = NULL;
-	}
+	// Deliberately empty - see the note above.  m_lpAlternateDevMode remains
+	// NULL, so ResetDisplayToNormal() has nothing to undo.
 }
 
 void
@@ -830,16 +610,13 @@ vncDesktop::SetupDisplayForConnection()
 void
 vncDesktop::ResetDisplayToNormal()
 {
+	// WIN32S: ChangeResNow() never changes the mode, so m_lpAlternateDevMode is
+	// always NULL and there is nothing to restore.  The body is kept (rather than
+	// emptied) so that the ownership contract is still visible, but the
+	// ChangeDisplaySettings calls are gone - they are Win95/NT-only imports that
+	// would stop the EXE loading.  See the note on ChangeResNow above.
 	if (m_lpAlternateDevMode != NULL)
 	{
-		// *** In case the resolution was changed, revert to original settings now
-		m_lpAlternateDevMode->dmPelsWidth = origPelsWidth;
-		m_lpAlternateDevMode->dmPelsHeight = origPelsHeight;
-
-		long resultOfResChange = ChangeDisplaySettings(m_lpAlternateDevMode, CDS_TEST);
-		if (resultOfResChange == DISP_CHANGE_SUCCESSFUL)
-			ChangeDisplaySettings(m_lpAlternateDevMode, CDS_UPDATEREGISTRY);
-
 		delete m_lpAlternateDevMode;
 		m_lpAlternateDevMode = NULL;
 	}
@@ -875,6 +652,15 @@ RECT vncDesktop::GetSourceRect()
 
 RECT	GetScreenRect()
 {
+	// WIN32S NOTE: SM_XVIRTUALSCREEN and friends (76-79) are Win98/Win2000
+	// metrics.  They are safe to REQUEST on any platform - GetSystemMetrics
+	// returns 0 for an index it does not know, it is not an import problem - but
+	// 0 would give a zero-size screen rect here.
+	//
+	// IsWinVerOrHigher(4, 10) is what keeps us out of that branch: Win32s reports
+	// Windows 3.10/3.11, so the else branch runs and the rect is the single
+	// physical screen.  That is correct - Windows 3.1 has no multi-monitor
+	// support of any kind.
 	RECT screenrect;
 	if (IsWinVerOrHigher(4, 10))
 	{
@@ -981,19 +767,366 @@ BOOL vncDesktop::InitBitmap()
 	}
 	vnclog.Print(LL_INTINFO, VNCLOG("created memory bitmap\n"));
 
-	// Get the bitmap's format and colour details
+	// ==================================================================
+	// WIN32S: THIS IS WHERE EVERY CONNECTION WAS FAILING.
+	//
+	// The log showed "created memory bitmap" followed immediately by
+	// "failed to initialize desktop object", with nothing in between - because
+	// both GetDIBits calls below did "return FALSE" with no diagnostic.
+	//
+	// The code was:
+	//
+	//     int result;
+	//     m_bminfo.bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	//     m_bminfo.bmi.bmiHeader.biBitCount = 0;
+	//     result = GetDIBits(m_hmemdc, m_membitmap, 0, 1, NULL,
+	//                        &m_bminfo.bmi, DIB_RGB_COLORS);
+	//
+	// This is the documented "query the format" idiom: pass NULL bits and
+	// biBitCount == 0 and GDI fills in the header.  It works on NT and Win9x.
+	// It fails on Win32s, for two reasons:
+	//
+	//  1. m_bminfo IS NEVER ZEROED.  It is a plain member of vncDesktop and the
+	//     constructor does not clear it, so only TWO of BITMAPINFOHEADER's
+	//     eleven fields are initialised here - biWidth, biHeight, biPlanes,
+	//     biCompression, biSizeImage, biXPelsPerMeter, biYPelsPerMeter,
+	//     biClrUsed and biClrImportant are whatever was on the heap.  The NT
+	//     query path ignores the incoming values; the 16-bit GDI that Win32s
+	//     thunks down to validates the header and rejects it.
+	//
+	//  2. The SECOND call needs somewhere to put the palette.  On a 256-colour
+	//     display (which this is) GetDIBits wants to write 256 RGBQUADs after
+	//     the header.  That is what the "cmap[256] comes straight after
+	//     BITMAPINFO - **HACK**" comment in vncDesktop.h is relying on: bmi is
+	//     a BITMAPINFO, whose bmiColors[] is declared as a single element, and
+	//     the extra 255 entries are expected to land in the cmap array that
+	//     follows it in the struct.  That only holds if the compiler places
+	//     cmap immediately after bmi with no padding.  MSVC 4.1's default
+	//     packing does, but it is worth asserting rather than assuming - if it
+	//     ever did not, GetDIBits would write 255 palette entries over whatever
+	//     followed.
+	//
+	// The fix: zero the whole structure, set every field the query needs, verify
+	// the bmi/cmap adjacency, and LOG the failure with GetLastError() so the next
+	// problem here is not silent.
+	// ==================================================================
+
+	// Verify the bmi -> cmap adjacency the palette query depends on.  This is a
+	// compile-time property, so a run-time check costs one comparison at startup
+	// and turns a memory-corruption bug into a clear message.
+	{
+		size_t bmiOffset  = (size_t)((char *)&m_bminfo.bmi  - (char *)&m_bminfo);
+		size_t cmapOffset = (size_t)((char *)&m_bminfo.cmap - (char *)&m_bminfo);
+		size_t expected   = bmiOffset + sizeof(BITMAPINFO);
+		if (cmapOffset != expected) {
+			// BITMAPINFO already contains one RGBQUAD (bmiColors[1]), so cmap is
+			// expected to start exactly sizeof(BITMAPINFO) after bmi.
+			vnclog.Print(LL_INTERR,
+				VNCLOG("BMInfo layout is wrong: cmap at %d, expected %d - "
+					   "the palette query would corrupt memory\n"),
+				(int)cmapOffset, (int)expected);
+			return FALSE;
+		}
+	}
+
+	// Get the bitmap's format and colour details.
 	int result;
+
+	// ------------------------------------------------------------------
+	// THE QUERY FORM MUST BE EXACTLY THIS: biSize + biBitCount == 0.
+	//
+	// My first attempt at fixing this set biWidth, biHeight, biPlanes and
+	// biCompression as well, on the theory that Win32s validates the whole
+	// header.  That made things WORSE - the first call started failing with
+	// error 87 where it had previously succeeded.
+	//
+	// The reason: biBitCount == 0 means "report this bitmap's format", and every
+	// other field is then an OUTPUT.  Supplying biCompression = BI_RGB together
+	// with biBitCount = 0 is self-contradictory, and the 16-bit GDI validates
+	// the header before deciding what the call means, so it rejects the
+	// combination.  NT tolerates it; Windows 3.1 does not.
+	//
+	// So: zero the structure (that part WAS necessary - see below), then set
+	// only the two fields the documented query form uses.
+	// ------------------------------------------------------------------
+
+	// Clear EVERYTHING - the header, the single bmiColors entry inside
+	// BITMAPINFO, and the 256-entry colour map that follows it.
+	//
+	// This is still required.  m_bminfo is a plain member of vncDesktop and the
+	// constructor never touched it, so without this the header arrives holding
+	// heap garbage in the nine fields the query does not set.
+	memset(&m_bminfo, 0, sizeof(m_bminfo));
+
 	m_bminfo.bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
 	m_bminfo.bmi.bmiHeader.biBitCount = 0;
-	result = ::GetDIBits(m_hmemdc, m_membitmap, 0, 1, NULL, &m_bminfo.bmi, DIB_RGB_COLORS);
+
+	result = ::GetDIBits(m_hmemdc, m_membitmap, 0, 1, NULL,
+						 &m_bminfo.bmi, DIB_RGB_COLORS);
 	if (result == 0) {
-		return FALSE;
+		// ==============================================================
+		// WIN32S: THE FORMAT QUERY IS NOT SUPPORTED.
+		//
+		// Error 87 (ERROR_INVALID_PARAMETER) from
+		//     GetDIBits(hdc, hbm, 0, 1, NULL, &bmi, DIB_RGB_COLORS)
+		// with biBitCount == 0.
+		//
+		// This is the documented "tell me the bitmap's format" form, and it was
+		// added in Windows 3.1 - but the Win32s thunk layer does not implement
+		// the NULL-bits variant.  Passing a NULL lpvBits pointer through the
+		// 32->16 bit thunk is exactly the case that layer handles badly: it has
+		// to translate a flat pointer into a 16:16 segmented one, and it rejects
+		// NULL rather than passing it through as "no buffer".
+		//
+		// (This is the same class of problem as ReadExact(NULL, n) in VSocket -
+		// see the note there.  A NULL buffer pointer is not portable across the
+		// thunk.)
+		//
+		// FALL BACK to deriving the format from the display DC directly.  Every
+		// call used here is a core Windows 3.0/3.1 GDI function:
+		//
+		//   GetDeviceCaps(BITSPIXEL)  - bits per pixel
+		//   GetDeviceCaps(PLANES)     - planes (must be 1; checked below)
+		//   GetDeviceCaps(RASTERCAPS) - RC_PALETTE tells us palette vs truecolour
+		//
+		// The result is exactly what the query would have reported for a bitmap
+		// created with CreateCompatibleBitmap(m_hrootdc, ...), because that
+		// bitmap has the display's format by definition.
+		// ==============================================================
+		DWORD err = GetLastError();
+		vnclog.Print(LL_INTWARN,
+			VNCLOG("GetDIBits format query unsupported (error=%d) - "
+				   "deriving format from the bitmap itself\n"), err);
+
+		// ==============================================================
+		// BEST SOURCE OF TRUTH: GetObject() on the bitmap.
+		//
+		// GetObject(hbm, sizeof(BITMAP), &bm) fills in a BITMAP structure that
+		// reports the bitmap's OWN format:
+		//
+		//     bm.bmBitsPixel   bits per pixel
+		//     bm.bmPlanes      planes
+		//     bm.bmWidthBytes  the actual scanline stride, already aligned
+		//
+		// This is far better than GetDeviceCaps for our purpose:
+		//
+		//  * It describes m_membitmap, which is what we are about to read with
+		//    GetDIBits - not the display, which we only care about indirectly.
+		//
+		//  * It takes NO pointer-to-buffer argument, so it does not hit the
+		//    thunk's NULL-pointer problem that breaks the GetDIBits query.
+		//
+		//  * GetDeviceCaps(BITSPIXEL) has been observed on Win32s to report 24
+		//    regardless of the actual Windows 3.1 colour setting - the same value
+		//    at 256 colours, 32k and 64k.  GetObject reads the bitmap's header
+		//    instead of asking the driver, so it is not subject to that.
+		//
+		//  * bmWidthBytes gives the real stride, which removes the guesswork in
+		//    SetPixFormat's DWORD-alignment calculation.
+		//
+		// GetObject on a bitmap is core Windows 3.0 GDI, present on every target.
+		// ==============================================================
+		BITMAP bm;
+		memset(&bm, 0, sizeof(bm));
+		BOOL haveBitmapInfo = FALSE;
+
+		if (GetObject(m_membitmap, sizeof(BITMAP), &bm) == sizeof(BITMAP)) {
+			haveBitmapInfo = TRUE;
+			vnclog.Print(LL_INTINFO,
+				VNCLOG("GetObject: %dx%d, %d bpp, %d planes, %d bytes/row\n"),
+				(int)bm.bmWidth, (int)bm.bmHeight,
+				(int)bm.bmBitsPixel, (int)bm.bmPlanes,
+				(int)bm.bmWidthBytes);
+		} else {
+			vnclog.Print(LL_INTWARN,
+				VNCLOG("GetObject on the bitmap failed, error=%d - "
+					   "falling back to GetDeviceCaps\n"), GetLastError());
+		}
+
+		int bpp    = GetDeviceCaps(m_hrootdc, BITSPIXEL);
+		int planes = GetDeviceCaps(m_hrootdc, PLANES);
+
+		// Prefer what the BITMAP itself says.
+		if (haveBitmapInfo && bm.bmBitsPixel > 0 && bm.bmPlanes > 0) {
+			if (bm.bmBitsPixel != bpp || bm.bmPlanes != planes) {
+				vnclog.Print(LL_INTWARN,
+					VNCLOG("GetDeviceCaps says %d bpp x %d planes but the bitmap "
+						   "is %d bpp x %d planes - trusting the bitmap\n"),
+					bpp, planes, (int)bm.bmBitsPixel, (int)bm.bmPlanes);
+			}
+			bpp    = bm.bmBitsPixel;
+			planes = bm.bmPlanes;
+		}
+
+		if (bpp <= 0 || planes <= 0) {
+			vnclog.Print(LL_INTERR,
+				VNCLOG("GetDeviceCaps reported %d bpp / %d planes - giving up\n"),
+				bpp, planes);
+			return FALSE;
+		}
+
+		// GetDeviceCaps reports bits-per-plane.  A planar display (planes > 1)
+		// is rejected further down anyway, but compute the true depth so the
+		// diagnostic is meaningful.
+		int depth = bpp * planes;
+
+		// ==============================================================
+		// WIN32S: cross-check the reported depth.
+		//
+		// GetDeviceCaps(BITSPIXEL) on the Win32s thunk has been observed to
+		// report 24 REGARDLESS of the actual Windows 3.1 display setting - the
+		// same value came back at 256 colours, 32k, 64k and higher.  So it cannot
+		// be trusted on its own.
+		//
+		// These three caps give an independent view, and all of them are core
+		// Windows 3.0/3.1 GDI:
+		//
+		//   NUMCOLORS    - for a palette device, the number of entries in the
+		//                  system palette (usually 20 reserved on a 256-colour
+		//                  driver); -1 on a device with more than 8bpp.
+		//   SIZEPALETTE  - total palette size, only meaningful when RC_PALETTE
+		//                  is set; 256 on an 8-bit display.
+		//   RASTERCAPS   - RC_PALETTE tells us definitively whether the device
+		//                  is palette-managed, which on this vintage of hardware
+		//                  means 8bpp or less.
+		//
+		// If RC_PALETTE is set, the display IS palette-based and the depth must
+		// be <= 8 whatever BITSPIXEL claims.  Trust SIZEPALETTE for the count and
+		// derive the depth from it.
+		// ==============================================================
+		int rastercaps  = GetDeviceCaps(m_hrootdc, RASTERCAPS);
+		int numcolors   = GetDeviceCaps(m_hrootdc, NUMCOLORS);
+		int sizepalette = GetDeviceCaps(m_hrootdc, SIZEPALETTE);
+
+		vnclog.Print(LL_INTINFO,
+			VNCLOG("device caps: BITSPIXEL=%d PLANES=%d NUMCOLORS=%d "
+				   "SIZEPALETTE=%d RC_PALETTE=%d\n"),
+			bpp, planes, numcolors, sizepalette,
+			(rastercaps & RC_PALETTE) ? 1 : 0);
+
+		if (rastercaps & RC_PALETTE) {
+			// Palette-managed device.  Derive the depth from the palette size.
+			int palDepth = 8;
+			if (sizepalette >= 2 && sizepalette <= 2)        palDepth = 1;
+			else if (sizepalette > 2 && sizepalette <= 16)   palDepth = 4;
+			else if (sizepalette > 16 && sizepalette <= 256) palDepth = 8;
+
+			if (depth != palDepth) {
+				vnclog.Print(LL_INTWARN,
+					VNCLOG("BITSPIXEL says %d bpp but the device is "
+						   "palette-managed with %d entries - using %d bpp\n"),
+					depth, sizepalette, palDepth);
+				depth = palDepth;
+			}
+		}
+
+		m_bminfo.bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+		m_bminfo.bmi.bmiHeader.biWidth       = m_bmrect.right - m_bmrect.left;
+		m_bminfo.bmi.bmiHeader.biHeight      = m_bmrect.bottom - m_bmrect.top;
+		m_bminfo.bmi.bmiHeader.biPlanes      = (WORD)planes;
+		m_bminfo.bmi.bmiHeader.biBitCount    = (WORD)depth;
+		m_bminfo.bmi.bmiHeader.biCompression = BI_RGB;
+		m_bminfo.bmi.bmiHeader.biSizeImage   = 0;
+		m_bminfo.bmi.bmiHeader.biClrUsed     = 0;
+		m_bminfo.bmi.bmiHeader.biClrImportant = 0;
+
+		vnclog.Print(LL_INTINFO,
+			VNCLOG("display DC reports %d bpp x %d planes = %d bpp\n"),
+			bpp, planes, depth);
+
+		// Note: BI_RGB is correct for the fallback.  SetPixShifts() uses the
+		// standard 5-5-5 / 8-8-8 masks when biCompression == BI_RGB, and only
+		// reads bmiColors[] for BI_BITFIELDS - which we cannot obtain without
+		// the query, and which a Windows 3.1 display driver would not report
+		// anyway.
+	} else {
+		vnclog.Print(LL_INTINFO, VNCLOG("GetDIBits format query succeeded\n"));
 	}
-	result = ::GetDIBits(m_hmemdc, m_membitmap, 0, 1, NULL, &m_bminfo.bmi, DIB_RGB_COLORS);
-	if (result == 0) {
-		return FALSE;
+
+	vnclog.Print(LL_INTINFO,
+		VNCLOG("format query: %dx%d, %d bpp, %d planes, compression %d, clrused %d\n"),
+		(int)m_bminfo.bmi.bmiHeader.biWidth,
+		(int)m_bminfo.bmi.bmiHeader.biHeight,
+		(int)m_bminfo.bmi.bmiHeader.biBitCount,
+		(int)m_bminfo.bmi.bmiHeader.biPlanes,
+		(int)m_bminfo.bmi.bmiHeader.biCompression,
+		(int)m_bminfo.bmi.bmiHeader.biClrUsed);
+
+	// ------------------------------------------------------------------
+	// The second call.  NON-FATAL on this platform.
+	//
+	// Its purpose is to fill in the colour table (palette display) or the colour
+	// masks (16/32-bit display) that follow the header.
+	//
+	// IMPORTANT FINDING: on the palette path, NOTHING IN THE SERVER READS THAT
+	// TABLE.  m_bminfo.cmap has no consumer anywhere - the 256-colour palette the
+	// encoder sends to the client is fetched independently by
+	// GetSystemPaletteEntries() in tableinitcmtemplate.cpp:51, reached via
+	// vncEncoder::GetRemotePalette -> rfbInitColourMapSingleTable8.  (See also
+	// vncDesktop::InitPalette, which calls GetSystemPaletteEntries for the memory
+	// DC's own palette.)
+	//
+	// So on an 8-bit display this call is pure ceremony, and failing it should not
+	// stop the server.  On a truecolour display it does matter - biCompression
+	// comes back as BI_BITFIELDS and the three colour masks follow the header, and
+	// SetPixFormat/ThunkBitmapInfo use them - so the failure is still logged, and
+	// treated as fatal only in that case.
+	// ------------------------------------------------------------------
+	//
+	// SKIP IT ENTIRELY if the first call was unsupported: it is the same API with
+	// the same NULL lpvBits pointer, so it will fail the same way, and its output
+	// is unused on a palette display.  Calling it would only add a second scary
+	// error line to the log.
+	if (result != 0) {
+		result = ::GetDIBits(m_hmemdc, m_membitmap, 0, 1, NULL,
+							 &m_bminfo.bmi, DIB_RGB_COLORS);
+		if (result == 0) {
+			vnclog.Print(LL_INTERR,
+				VNCLOG("GetDIBits (colour table) failed, error=%d "
+					   "(%d bpp, biClrUsed=%d)\n"),
+				GetLastError(),
+				(int)m_bminfo.bmi.bmiHeader.biBitCount,
+				(int)m_bminfo.bmi.bmiHeader.biClrUsed);
+
+			if (m_bminfo.bmi.bmiHeader.biBitCount > 8 &&
+				m_bminfo.bmi.bmiHeader.biCompression == BI_BITFIELDS) {
+				// Truecolour with a non-standard layout: we genuinely need the
+				// masks this call would have written.
+				vnclog.Print(LL_INTERR,
+					VNCLOG("cannot determine the colour masks - giving up\n"));
+				return FALSE;
+			}
+
+			// Palette display, or truecolour with BI_RGB (standard masks).
+			// Continue: the colour table is unused (see above), and the palette
+			// itself comes from GetSystemPaletteEntries.
+			vnclog.Print(LL_INTWARN,
+				VNCLOG("continuing without the DIB colour table\n"));
+		}
 	}
 	vnclog.Print(LL_INTINFO, VNCLOG("got bitmap format\n"));
+
+	// Sanity-check the depth before anything divides by it.
+	//
+	// SetPixFormat computes m_bytesPerRow as width*bpp/8 and ScreenBuffSize
+	// multiplies by it; a reported 0 bpp would give a zero-size buffer and then a
+	// divide-by-zero in the encoders.  On Win32s an integer divide by zero faults
+	// the whole VM rather than raising a catchable exception, so check here.
+	switch (m_bminfo.bmi.bmiHeader.biBitCount) {
+	case 1:
+	case 4:
+	case 8:
+	case 16:
+	case 24:
+	case 32:
+		break;
+	default:
+		vnclog.Print(LL_INTERR,
+			VNCLOG("display reports %d bits per pixel, which is not supported\n"),
+			(int)m_bminfo.bmi.bmiHeader.biBitCount);
+		return FALSE;
+	}
+
 	vnclog.Print(LL_INTINFO, VNCLOG("DBG:display context has %d planes!\n"), GetDeviceCaps(m_hrootdc, PLANES));
 	vnclog.Print(LL_INTINFO, VNCLOG("DBG:memory context has %d planes!\n"), GetDeviceCaps(m_hmemdc, PLANES));
 	if (GetDeviceCaps(m_hmemdc, PLANES) != 1)
@@ -1009,11 +1142,42 @@ BOOL vncDesktop::InitBitmap()
 		return FALSE;
 	}
 
-	// Henceforth we want to use a top-down scanning representation
+	// Henceforth we want to use a top-down scanning representation.
+	//
+	// WIN32S NOTE: a NEGATIVE biHeight (top-down DIB) is a Windows 95 / NT
+	// feature.  The 16-bit Windows 3.1 GDI only understands bottom-up DIBs and
+	// treats the height as unsigned, so a negative value here is either ignored
+	// or read as an enormous positive height.
+	//
+	// This is deliberately left as-is, because it is the format the server uses
+	// INTERNALLY for its own buffers (see CopyToBuffer / the encoders, which all
+	// assume top-down), not a value passed back to GDI for the capture:
+	// CaptureScreenFromAdapterGeneral uses a DIBSection created earlier with its
+	// own header, or GetDIBits with a header built in
+	// vncDesktop::CopyRectToBuffer.  If screen content comes out vertically
+	// mirrored on this platform, THIS LINE is the first thing to check.
 	m_bminfo.bmi.bmiHeader.biHeight = - abs(m_bminfo.bmi.bmiHeader.biHeight);
 
 	// Is the bitmap palette-based or truecolour?
-	m_bminfo.truecolour = (GetDeviceCaps(m_hmemdc, RASTERCAPS) & RC_PALETTE) == 0;
+	//
+	// WIN32S: query the ROOT DC, not the memory DC.
+	//
+	// m_hmemdc is a memory DC created with CreateCompatibleDC(m_hrootdc).  On NT
+	// it inherits the display's raster capabilities, so RC_PALETTE is reported
+	// correctly.  On Win32s a memory DC's RASTERCAPS is not reliably inherited -
+	// it can come back without RC_PALETTE even on a 256-colour display, which
+	// makes the server declare a palette display "truecolour", skip SetPalette()
+	// entirely (the log then says "no palette data for truecolour display") and
+	// send the client 8-bit pixel indices as though they were RGB values.
+	//
+	// The display DC is the authority on what the display is.
+	m_bminfo.truecolour = (GetDeviceCaps(m_hrootdc, RASTERCAPS) & RC_PALETTE) == 0;
+
+	vnclog.Print(LL_INTINFO,
+		VNCLOG("bitmap is %s (root RC_PALETTE=%d, mem RC_PALETTE=%d)\n"),
+		m_bminfo.truecolour ? "truecolour" : "palette-based",
+		(GetDeviceCaps(m_hrootdc, RASTERCAPS) & RC_PALETTE) ? 1 : 0,
+		(GetDeviceCaps(m_hmemdc, RASTERCAPS) & RC_PALETTE) ? 1 : 0);
 
 	return TRUE;
 }
@@ -1090,8 +1254,74 @@ vncDesktop::SetPixFormat()
 	m_scrinfo.format.depth        = (CARD8) m_bminfo.bmi.bmiHeader.biBitCount;
 
 	
-	// Calculate the number of bytes per row
+	// Calculate the number of bytes per row.
+	//
+	// WIN32S: DIB scanlines are DWORD-ALIGNED.  This calculation is not.
+	//
+	// For a 1024-wide 8-bit screen (1024 bytes) the two agree, which is why this
+	// has never been noticed - and 16/32bpp widths are always a multiple of 4
+	// bytes too.  But at 8bpp any width that is not a multiple of 4 - 1000, 1022,
+	// 800 is fine, 1002 is not - makes GetDIBits write padded rows into a buffer
+	// indexed with unpadded arithmetic, and the image shears progressively down
+	// the screen.
+	//
+	// Round up to the next DWORD boundary, which is what GDI actually does.
 	m_bytesPerRow = m_scrinfo.framebufferWidth * m_scrinfo.format.bitsPerPixel / 8;
+	m_bytesPerRow = (m_bytesPerRow + 3) & ~3;
+
+	// WIN32S: if the bitmap can tell us its real stride, use that instead of
+	// computing it.
+	//
+	// GetObject(hbm, ..., &bm) reports bmWidthBytes, which is the ACTUAL scanline
+	// stride the driver chose - already aligned, and correct even if the driver
+	// pads more than the DWORD minimum.  Guessing the stride is one of the
+	// classic ways to get a sheared image, so prefer the authoritative value.
+	//
+	// Only accept it if it is at least as large as our computed minimum: a
+	// smaller value would mean we had the depth wrong, and using it would
+	// under-read every row.
+	//
+	// NOTE: this must agree with what ThunkBitmapInfo() may have done to
+	// biBitCount (24 -> 32), so it is read AFTER that has run - hence taking the
+	// value here rather than caching it in InitBitmap.
+	if (m_membitmap != NULL) {
+		BITMAP bm;
+		memset(&bm, 0, sizeof(bm));
+		if (GetObject(m_membitmap, sizeof(BITMAP), &bm) == sizeof(BITMAP) &&
+			bm.bmWidthBytes > 0) {
+			// Only trust it when the depth still matches the bitmap's own - if
+			// ThunkBitmapInfo rewrote 24bpp to 32bpp, the bitmap's stride is for
+			// 24bpp and does not apply to the buffer we are about to fill.
+			if ((int)bm.bmBitsPixel == (int)m_scrinfo.format.bitsPerPixel) {
+				if (bm.bmWidthBytes >= m_bytesPerRow) {
+					if (bm.bmWidthBytes != m_bytesPerRow) {
+						vnclog.Print(LL_INTINFO,
+							VNCLOG("using the bitmap's own stride %d "
+								   "(computed %d)\n"),
+							(int)bm.bmWidthBytes, (int)m_bytesPerRow);
+					}
+					m_bytesPerRow = bm.bmWidthBytes;
+				} else {
+					vnclog.Print(LL_INTWARN,
+						VNCLOG("bitmap stride %d is smaller than the computed %d "
+							   "- keeping the computed value\n"),
+						(int)bm.bmWidthBytes, (int)m_bytesPerRow);
+				}
+			} else {
+				vnclog.Print(LL_INTINFO,
+					VNCLOG("bitmap is %d bpp but the buffer format is %d bpp "
+						   "(munged) - using the computed stride %d\n"),
+					(int)bm.bmBitsPixel, (int)m_scrinfo.format.bitsPerPixel,
+					(int)m_bytesPerRow);
+			}
+		}
+	}
+
+	vnclog.Print(LL_INTINFO,
+		VNCLOG("pixel format: %d bpp, truecolour=%d, %d bytes per row\n"),
+		(int)m_scrinfo.format.bitsPerPixel,
+		(int)m_scrinfo.format.trueColour,
+		(int)m_bytesPerRow);
 
 	return TRUE;
 }
@@ -1105,14 +1335,9 @@ vncDesktop::SetPixShifts()
 	switch (m_bminfo.bmi.bmiHeader.biBitCount)
 	{
 	case 16:
-		if (m_videodriver&& m_videodriver->IsDirectAccessInEffect())
-		{
-// IMPORTANT: Mirage colormask is always 565
-			redMask = 0xf800;
-			greenMask = 0x07e0;
-			blueMask = 0x001f;
-		}
-		else if (m_bminfo.bmi.bmiHeader.biCompression == BI_RGB)
+		// (Was: a special case for the Mirage driver, whose colour mask is
+		// always 565.  No driver on this platform - see InitVideoDriver.)
+		if (m_bminfo.bmi.bmiHeader.biCompression == BI_RGB)
 		{
 		// Standard 16-bit display
 		// each word single pixel 5-5-5
@@ -1131,8 +1356,7 @@ vncDesktop::SetPixShifts()
 
 	case 32:
 		// Standard 24/32 bit displays
-		if (m_bminfo.bmi.bmiHeader.biCompression == BI_RGB ||
-			m_videodriver && m_videodriver->IsDirectAccessInEffect())
+		if (m_bminfo.bmi.bmiHeader.biCompression == BI_RGB)
 		{
 			redMask = 0xff0000;
 			greenMask = 0xff00;
@@ -1246,9 +1470,23 @@ vncDesktop::InitWindow()
 {
 	if (m_wndClass == 0) {
 		// Create the window class
-		WNDCLASSEX wndclass;
+		// WIN32S: plain WNDCLASS / RegisterClass, not WNDCLASSEX /
+		// RegisterClassEx.
+		//
+		// RegisterClassEx is a Windows 95/NT API and is not exported by the
+		// Win32s USER32 stub set.  Because the linker records it as an import,
+		// the EXE cannot be LOADED on Win32s at all - the process never starts
+		// and there is no diagnostic.  (This is the same failure that stopped
+		// the viewer launching; see Daemon.cpp there.)
+		//
+		// The only thing WNDCLASSEX adds is hIconSm, which this window sets to
+		// NULL anyway and which Windows 3.1 has no concept of, so nothing is
+		// lost.
+		//
+		// This matches roytam1's winvnc333r9-vc4 patch 94f9037, which made the
+		// same change for NT 3.50.
+		WNDCLASS wndclass;
 
-		wndclass.cbSize			= sizeof(wndclass);
 		wndclass.style			= 0;
 		wndclass.lpfnWndProc	= &DesktopWndProc;
 		wndclass.cbClsExtra		= 0;
@@ -1259,10 +1497,9 @@ vncDesktop::InitWindow()
 		wndclass.hbrBackground	= (HBRUSH) GetStockObject(WHITE_BRUSH);
 		wndclass.lpszMenuName	= (const char *) NULL;
 		wndclass.lpszClassName	= szDesktopSink;
-		wndclass.hIconSm		= NULL;
 
 		// Register it
-		m_wndClass = RegisterClassEx(&wndclass);
+		m_wndClass = RegisterClass(&wndclass);
 	}
 
 	// And create a window
@@ -1297,9 +1534,50 @@ vncDesktop::CreateBuffers()
 	vnclog.Print(LL_INTINFO, VNCLOG("attempting to create main and back buffers\n"));
 
 	// Create a new DIB section ***
+	//
+	// WIN32S NOTE - THIS IS THE MOST IMPORTANT PERFORMANCE PATH IN THE SERVER.
+	//
+	// CreateDIBSection gives the server DIRECT pointer access to the bitmap bits
+	// (m_DIBbits), so a screen capture is BitBlt-to-memory-DC followed by a plain
+	// memory read.  The fallback is GetDIBits, which copies the whole rectangle
+	// through GDI on every single capture - and on Win32s every GDI call is a
+	// 32->16 bit thunk.  With polling as the only change-detection mechanism (no
+	// hooks, no mirror driver), the difference is the difference between a usable
+	// server and an unusable one.
+	//
+	// CreateDIBSection EXISTS on Win32s: it is a Windows 3.1 GDI function (added
+	// in 3.1 alongside the DIB.DRV work), so there is no import problem.  It can
+	// still FAIL for a large screen, because the section comes out of the shared
+	// 16-bit GDI heap - which is exactly why the GetDIBits fallback below is kept
+	// rather than made fatal.
+	//
+	// If the log says "reverting to slow blits" on the target machine, that is the
+	// first thing to investigate for poor frame rates: reducing the server's
+	// colour depth or screen resolution frees enough GDI heap to get the fast
+	// path back.
 	HBITMAP tempbitmap = NULL;
 	if (!m_formatmunged)
 	{
+		// WIN32S: CreateDIBSection also cannot take a negative biHeight.
+		//
+		// A top-down DIB section is a Win95/NT feature; the 16-bit GDI rejects the
+		// header exactly as GetDIBits does (see the long note in CopyToBuffer).
+		//
+		// This matters more than it looks: if this call fails, the server falls
+		// back to the slow GetDIBits-per-region path for the whole session, so on
+		// an 8-bit display - where m_formatmunged is FALSE and this path WOULD be
+		// taken - a rejected header costs the fast capture path permanently.
+		//
+		// Request bottom-up here.  Note the consequence: m_DIBbits then holds
+		// BOTTOM-UP data, so the fast-blit branch of CopyToBuffer would need to
+		// read its rows in reverse.  Rather than silently produce an upside-down
+		// image, the fast path is disabled on this platform - see below.
+		LONG savedHeight = m_bminfo.bmi.bmiHeader.biHeight;
+		BOOL wasTopDown = (savedHeight < 0);
+
+		if (wasTopDown && vncService::IsWin32s())
+			m_bminfo.bmi.bmiHeader.biHeight = -savedHeight;
+
 		tempbitmap = CreateDIBSection(
 			m_hmemdc,
 			&m_bminfo.bmi,
@@ -1307,9 +1585,40 @@ vncDesktop::CreateBuffers()
 			&m_DIBbits,
 			NULL,
 			0);
+
+		m_bminfo.bmi.bmiHeader.biHeight = savedHeight;
+
 		if (tempbitmap == NULL)
 		{
-			vnclog.Print(LL_INTWARN, VNCLOG("failed to build DIB section - reverting to slow blits\n"));
+			vnclog.Print(LL_INTWARN, VNCLOG("failed to build DIB section (error %d) - reverting to slow blits\n"),
+						 GetLastError());
+		}
+		else if (wasTopDown && vncService::IsWin32s())
+		{
+			// The section exists but its rows are BOTTOM-UP.
+			//
+			// This is worth keeping rather than discarding: a DIB section gives
+			// the server direct pointer access to the bits (m_DIBbits), so a
+			// capture becomes BitBlt + memcpy instead of a GetDIBits call per
+			// region.  On Win32s, where every GDI call is a 32->16 bit thunk and
+			// polling is the only change-detection mechanism, that is the single
+			// largest performance difference available.
+			//
+			// The consequence is recorded in m_DIBbits_bottom_up, and the
+			// fast-blit branch of CopyToBuffer inverts the row index when it is
+			// set.
+			//
+			// (The three-argument CopyToBuffer(rect, dest, src) overload needs no
+			// change: it has NO CALLERS - verified by grep - and its 'src' is a
+			// caller-supplied buffer rather than m_DIBbits.)
+			vnclog.Print(LL_INTINFO,
+				VNCLOG("DIB section is bottom-up on this platform - "
+					   "rows will be inverted on copy\n"));
+			m_DIBbits_bottom_up = TRUE;
+		}
+		else
+		{
+			m_DIBbits_bottom_up = FALSE;
 		}
 	}
 
@@ -1321,6 +1630,9 @@ vncDesktop::CreateBuffers()
 	if (tempbitmap == NULL)
 	{
 		m_DIBbits = NULL;
+		// No DIB section, so the bottom-up flag is meaningless - clear it so a
+		// later re-init cannot inherit a stale TRUE.
+		m_DIBbits_bottom_up = FALSE;
 		// create our own buffer to copy blits through
 		if ((m_mainbuff = new BYTE [ScreenBuffSize()]) == NULL) {
 				vnclog.Print(LL_INTERR, VNCLOG("unable to allocate main buffer[%d]\n"), ScreenBuffSize());
@@ -1367,12 +1679,133 @@ vncDesktop::Init(vncServer *server)
 	m_hdefcursor = LoadCursor(NULL, IDC_ARROW);
 	m_hcursor = m_hdefcursor;
 
-	// Spawn a thread to handle that window's message queue
-	vncDesktopThread *thread = new vncDesktopThread;
-	if (thread == NULL)
+	// ------------------------------------------------------------------
+	// WIN32S: run Startup() directly instead of spawning a thread.
+	//
+	// Was:
+	//     vncDesktopThread *thread = new vncDesktopThread;
+	//     m_thread = thread;
+	//     return thread->Init(this, m_server);
+	//
+	// vncDesktopThread::Init() called start_undetached() and then blocked on an
+	// omni_condition waiting for the new thread to report success.  With one
+	// thread that is an unconditional deadlock - the condition can only ever be
+	// signalled by the thread that is sitting in the wait.
+	//
+	// Startup() is what the thread did first anyway, so call it here.  The rest
+	// of what the thread did (the polling loop) is now PumpIdle(), and the sink
+	// window's messages are dispatched by the application's message loop into
+	// DesktopWndProc.
+	// ------------------------------------------------------------------
+	if (!Startup())
+	{
+		// Startup may have changed the video mode in
+		// SetupDisplayForConnection() before failing; undo that.  This mirrors
+		// what vncDesktopThread::run_undetached did on its failure path.
+		ResetDisplayToNormal();
 		return FALSE;
-	m_thread = thread;
-	return thread->Init(this, m_server);
+	}
+
+	// The old thread did this immediately after a successful Startup().
+	RECT rect = GetSourceRect();
+	IntersectRect(&rect, &rect, &m_bmrect);
+	m_server->SetSharedRect(rect);
+
+	// It is now safe to handle clipboard messages.
+	SetClipboardActive(TRUE);
+
+	m_shutdown_requested = FALSE;
+
+	return TRUE;
+}
+
+// ==========================================================================
+// PumpIdle - idle-time driver for the desktop.
+//
+// This is the "message queue is empty" branch of the old
+// vncDesktopThread::run_undetached loop:
+//
+//     if (!PeekMessage(...)) {
+//         if (!m_server->WallpaperWait())
+//             if (!m_desktop->CheckUpdates())
+//                 break;
+//         WaitMessage();
+//     }
+//
+// The application idle loop calls this when it has no messages left to
+// dispatch, so the PeekMessage test is implicit and the WaitMessage() belongs to
+// the caller.
+//
+// Returns FALSE when the desktop wants to shut down - CheckUpdates() returns
+// FALSE when the screen format changed in a way that requires a restart, or when
+// the last client has gone.
+// ==========================================================================
+BOOL
+vncDesktop::PumpIdle()
+{
+	if (m_shutdown_requested)
+		return FALSE;
+
+	// Wait for scheduled wallpaper removal to complete before looking for
+	// changes, exactly as the old loop did.
+	if (m_server->WallpaperWait())
+		return TRUE;
+
+	// WIN32S DIAGNOSTIC: is this being reached, and what does it see?
+	//
+	// The log shows FramebufferUpdateRequest arriving and the encoder reporting
+	// "data=0, encoded=0, sent=0", which means SendUpdate() either never ran or
+	// found nothing to send.  This narrows it down: if these counters stay at
+	// zero, the polling flag is never set and PerformPolling() never runs; if
+	// they climb but "rects" stays 0, the change detection finds nothing; if
+	// "rects" climbs, the problem is downstream in SendUpdate.
+	//
+	// Rate-limited to once a second so it cannot flood the log.
+	{
+		static DWORD lastReport = 0;
+		static DWORD pumpCount = 0;
+		static DWORD pollCount = 0;
+		pumpCount++;
+		if (GetPollingFlag())
+			pollCount++;
+
+		DWORD now = GetTickCount();
+		if (lastReport == 0)
+			lastReport = now;
+		if ((DWORD)(now - lastReport) >= 5000) {
+			// NOTE: m_changed_rgn is sampled here at the START of a pass, but
+			// CheckUpdates() CLEARS it at the end of every pass - so this always
+			// read 0 and told us nothing useful.  What matters is whether the
+			// region is EMPTY (region == NULL) versus merely already-consumed, so
+			// report that instead of a rectangle count.
+			vnclog.Print(LL_INTERR,
+				VNCLOG("pump: %d passes, %d with poll flag, changed_rgn empty=%d, "
+					   "full=%d incr=%d\n"),
+				(int)pumpCount, (int)pollCount,
+				(int)m_changed_rgn.IsEmpty(),
+				(int)m_server->FullRgnRequested(),
+				(int)m_server->IncrRgnRequested());
+
+			pumpCount = 0;
+			pollCount = 0;
+			lastReport = now;
+		}
+	}
+
+	if (!CheckUpdates()) {
+		// The desktop is finished with.  Do what the tail of
+		// run_undetached did.
+		vnclog.Print(LL_INTINFO, VNCLOG("desktop shutting down\n"));
+		m_shutdown_requested = TRUE;
+		SetClipboardActive(FALSE);
+		Shutdown();
+		ResetDisplayToNormal();
+		BlankScreen(FALSE);
+		vncKeymap::ClearShiftKeys();
+		return FALSE;
+	}
+
+	return TRUE;
 }
 
 void
@@ -1384,9 +1817,18 @@ vncDesktop::RequestUpdate()
 int
 vncDesktop::ScreenBuffSize()
 {
-	return m_scrinfo.format.bitsPerPixel/8 *
-		m_scrinfo.framebufferWidth *
-		m_scrinfo.framebufferHeight;
+	// WIN32S: must use the DWORD-ALIGNED row stride, not width * bytesPerPixel.
+	//
+	// GetDIBits writes DWORD-aligned scanlines, and CopyToBuffer indexes the
+	// buffer with m_bytesPerRow - which is now rounded up to a DWORD boundary
+	// (see SetPixFormat).  If this function keeps using the unpadded width, the
+	// buffer is too SMALL for the padded rows GDI writes and the last rows of a
+	// full-screen capture overrun the allocation.
+	//
+	// At 1024x768x8 the two agree (1024 is already a multiple of 4), which is why
+	// the original never showed it - but an 8-bit mode with a width like 1002
+	// would have written 768*2 bytes past the end of the heap block.
+	return m_bytesPerRow * m_scrinfo.framebufferHeight;
 }
 
 void
@@ -1401,9 +1843,9 @@ vncDesktop::FillDisplayInfo(rfbServerInitMsg *scrinfo)
 void vncDesktop::CaptureScreen(RECT &UpdateArea, BYTE *scrBuff)
 {
 // ASSUME rect related to virtual desktop
-	if (m_videodriver && m_videodriver->IsDirectAccessInEffect())
-			CaptureScreenFromMirage(UpdateArea, scrBuff);
-	else	CaptureScreenFromAdapterGeneral(UpdateArea, scrBuff);
+	// WIN32S: only one capture path.  CaptureScreenFromMirage() has been removed
+	// along with the mirror driver - see the note on InitVideoDriver().
+	CaptureScreenFromAdapterGeneral(UpdateArea, scrBuff);
 }
 
 void vncDesktop::CaptureScreenFromAdapterGeneral(RECT rect, BYTE *scrBuff)
@@ -1446,13 +1888,9 @@ void vncDesktop::CaptureScreenFromAdapterGeneral(RECT rect, BYTE *scrBuff)
 
 }
 
-void vncDesktop::CaptureScreenFromMirage(RECT UpdateArea, BYTE *scrBuff)
-{
-// ASSUME rect related to virtual desktop
-	_ASSERTE(m_videodriver);
-	omni_mutex_lock l(m_bitbltlock);
-	CopyToBuffer(UpdateArea, scrBuff, m_videodriver->GetScreenView());
-}
+// CaptureScreenFromMirage() removed: it read directly from the mirror driver's
+// shared frame buffer via m_videodriver->GetScreenView().  There is no driver on
+// this platform.
 
 void	vncDesktop::CaptureMouseRect()
 {
@@ -1545,14 +1983,56 @@ vncDesktop::GetRichCursorData(BYTE *databuf, HCURSOR hcursor, int width, int hei
 	SelectObject(m_hmemdc, oldbitmap);
 
 	// Prepare BITMAPINFO structure (copy most m_bminfo fields)
+	//
+	// WIN32S: check the allocation.  This runs on the cursor-shape path, which is
+	// reached for every pointer-shape change, and calloc CAN fail on a machine
+	// with a few megabytes free - the original then memcpy'd 1KB+ through NULL.
 	BITMAPINFO *bmi = (BITMAPINFO *)calloc(1, sizeof(BITMAPINFO) + 256 * sizeof(RGBQUAD));
+	if (bmi == NULL) {
+		DeleteObject(membitmap);
+		return FALSE;
+	}
 	memcpy(bmi, &m_bminfo.bmi, sizeof(BITMAPINFO) + 256 * sizeof(RGBQUAD));
 	bmi->bmiHeader.biWidth = width;
-	bmi->bmiHeader.biHeight = -height;
+
+	// WIN32S: a negative biHeight (top-down DIB) is Win95/NT only - the 16-bit
+	// GDI treats the height as unsigned and either ignores the sign or reads it
+	// as an enormous positive value, which makes GetDIBits fail.
+	//
+	// Request a bottom-up DIB there and flip the rows afterwards.  The caller
+	// (ReadCursorShape / the RichCursor encoder) expects top-down data.
+	BOOL flipRows = FALSE;
+	if (vncService::IsWin32s()) {
+		bmi->bmiHeader.biHeight = height;		// bottom-up
+		flipRows = TRUE;
+	} else {
+		bmi->bmiHeader.biHeight = -height;		// top-down
+	}
 
 	// Clear data buffer and extract RGB data
 	memset(databuf, 0x00, width * height * 4);
 	int lines = GetDIBits(m_hmemdc, membitmap, 0, height, databuf, bmi, DIB_RGB_COLORS);
+
+	if (lines == 0) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("GetDIBits (cursor) failed, error=%d\n"), GetLastError());
+	} else if (flipRows) {
+		// Reverse the row order in place: row i <-> row (height-1-i).
+		// 4 bytes per pixel, as the memset above assumes.
+		DWORD rowBytes = (DWORD)width * 4;
+		BYTE *tmpRow = new BYTE[rowBytes];
+		if (tmpRow != NULL) {
+			int i;
+			for (i = 0; i < height / 2; i++) {
+				BYTE *top = (BYTE *)databuf + (DWORD)i * rowBytes;
+				BYTE *bot = (BYTE *)databuf + (DWORD)(height - 1 - i) * rowBytes;
+				memcpy(tmpRow, top, rowBytes);
+				memcpy(top, bot, rowBytes);
+				memcpy(bot, tmpRow, rowBytes);
+			}
+			delete [] tmpRow;
+		}
+	}
 
 	// Cleanup
 	free(bmi);
@@ -1719,18 +2199,238 @@ void vncDesktop::CopyToBuffer(RECT rect, BYTE *destbuff)
 	// If fast (DIBsection) blits are disabled then use the old GetDIBits technique
 	if (m_DIBbits == NULL)
 	{
-		if (GetDIBits(
-			m_hmemdc,
-			m_membitmap,
-			y_inv_re_vd,
-			rect.bottom - rect.top,
-			destbuffpos,
-			&m_bminfo.bmi,
-			DIB_RGB_COLORS) == 0)
+		// ==============================================================
+		// WIN32S: GetDIBits MUST NOT BE CALLED WITH THE BITMAP STILL
+		// SELECTED INTO A DC.
+		//
+		// This is why nothing displays: every capture returns error 87.
+		//
+		// The rule (documented, and enforced by the 16-bit GDI but not by NT):
+		// GetDIBits fails if the bitmap passed to it is selected into ANY device
+		// context.  vncDesktop selects m_membitmap into m_hmemdc during
+		// CaptureScreenFromAdapterGeneral's BitBlt, and although that function
+		// selects the old bitmap back afterwards, m_hmemdc is ALSO the DC passed
+		// to GetDIBits here - and on Win32s the 16-bit layer treats "hdc has a
+		// non-stock bitmap selected" as invalid regardless of which bitmap it is.
+		//
+		// NT is permissive about this, which is why the original code has worked
+		// for 25 years.
+		//
+		// The fix is to hand GetDIBits a DC that has NO bitmap selected.  A
+		// screen-compatible memory DC created for the purpose is exactly right:
+		// GetDIBits only needs the DC for its palette and colour context, not for
+		// the bitmap itself.
+		//
+		// The DC is created once and cached in m_hgetdibdc rather than per call -
+		// this is the hot path, once per changed region, and CreateCompatibleDC on
+		// Win32s draws from the small 16-bit DC pool.
+		// ==============================================================
+		if (m_hgetdibdc == NULL) {
+			m_hgetdibdc = CreateCompatibleDC(m_hrootdc);
+			if (m_hgetdibdc == NULL) {
+				vnclog.Print(LL_INTERR,
+					VNCLOG("CreateCompatibleDC for GetDIBits failed, error=%d\n"),
+					GetLastError());
+			} else if (!m_bminfo.truecolour) {
+				// A palette display needs a realised palette in the DC that
+				// GetDIBits uses, or the returned indices are meaningless.
+				//
+				// NOTE: vncDesktop::SetPalette() does NOT keep the HPALETTE it
+				// creates - it selects the palette into m_hmemdc and then
+				// DeleteObject()s the handle it got back, so there is no
+				// m_hpalette member to reuse here.  Build one from the current
+				// system palette, exactly as SetPalette does.
+				UINT size = sizeof(LOGPALETTE) + (sizeof(PALETTEENTRY) * 256);
+				LOGPALETTE *lp = (LOGPALETTE *)new char[size];
+				if (lp != NULL) {
+					lp->palVersion = 0x300;
+					lp->palNumEntries = 256;
+					if (GetSystemPaletteEntries(m_hrootdc, 0, 256,
+												lp->palPalEntry) != 0) {
+						HPALETTE hpal = CreatePalette(lp);
+						if (hpal != NULL) {
+							HPALETTE hold = SelectPalette(m_hgetdibdc, hpal, FALSE);
+							RealizePalette(m_hgetdibdc);
+							// Keep hpal selected; release the one it replaced.
+							if (hold != NULL)
+								DeleteObject(hold);
+						}
+					}
+					delete [] (char *)lp;
+				}
+			}
+		}
+
+		HDC hdcForGetDIBits = (m_hgetdibdc != NULL) ? m_hgetdibdc : m_hmemdc;
+
+		// ==============================================================
+		// WIN32S: A NEGATIVE biHeight (TOP-DOWN DIB) IS NOT SUPPORTED.
+		//
+		// A negative biHeight means "top-down DIB", a Windows 95 / NT addition.
+		// The 16-bit GDI has no concept of it and rejects the header as an invalid
+		// parameter - error 87 on every capture.  (The evidence was that CURSOR
+		// capture worked while SCREEN capture did not on the same DC: the cursor
+		// path already sets a positive height for Win32s.)
+		//
+		// So we must ask for a BOTTOM-UP DIB.  The question is then where the rows
+		// land, and this is where my first attempt was wrong:
+		//
+		//   IT CAPTURED INTO destbuffpos AND THEN REVERSED THE ROWS IN PLACE.
+		//
+		// That is wrong because the reversal and the destination offset disagree.
+		// GetDIBits with a positive height writes the rectangle BOTTOM ROW FIRST,
+		// but 'destbuffpos' is the address of the rectangle's TOP row in a
+		// top-down buffer.  Reversing after the fact fixes the order of the rows
+		// relative to each other, yet the block as a whole is still anchored at
+		// the wrong end for any rectangle taller than one row.  A 1-row rectangle
+		// was unaffected (nothing to reverse), which is exactly why the
+		// single-scanline change detection in PollArea appeared to work - the
+		// server correctly noticed that windows had moved - while every real
+		// update rectangle was placed incorrectly and the screen never resolved.
+		//
+		// THE CORRECT APPROACH: capture into a scratch buffer of exactly the
+		// rectangle's size, then copy each row to its proper place in the output
+		// buffer, inverting the row index as we go.  One extra memcpy per row, no
+		// ambiguity about anchoring, and it is obvious what the mapping is:
+		//
+		//     scratch row i   (i = 0 is the BOTTOM row, bottom-up DIB)
+		//        ->  output row (rowCount - 1 - i)   (0 = TOP row, top-down)
+		//
+		// The scratch buffer is cached across calls (m_flipbuff) because this is
+		// the hot path and Win32s allocation is not cheap.
+		//
+		// NOTE: GetDIBits writes DWORD-ALIGNED rows of biWidth pixels - the FULL
+		// bitmap width, not the rectangle width - because biWidth in the header
+		// describes the bitmap.  So the scratch stride is m_bytesPerRow, the same
+		// as the output, and each row copy is the full row.  That also means the
+		// horizontal offset within the row is already correct; only the vertical
+		// order needs fixing.
+		// ==============================================================
+		const int rowCount = rect.bottom - rect.top;
+		int gotLines = 0;
+
+		if (m_bminfo.bmi.bmiHeader.biHeight < 0)
 		{
+			// Bottom-up capture into scratch, then invert row order on the way out.
+			LONG savedHeight = m_bminfo.bmi.bmiHeader.biHeight;
+			m_bminfo.bmi.bmiHeader.biHeight = -savedHeight;
+
+			DWORD needed = (DWORD)m_bytesPerRow * (DWORD)rowCount;
+			if (m_flipbuff == NULL || m_flipbuffsize < needed) {
+				if (m_flipbuff != NULL)
+					delete [] m_flipbuff;
+				m_flipbuff = new BYTE[needed];
+				m_flipbuffsize = (m_flipbuff != NULL) ? needed : 0;
+			}
+
+			if (m_flipbuff != NULL)
+			{
+				gotLines = GetDIBits(
+					hdcForGetDIBits,
+					m_membitmap,
+					y_inv_re_vd,
+					rowCount,
+					m_flipbuff,
+					&m_bminfo.bmi,
+					DIB_RGB_COLORS);
+
+				if (gotLines != 0)
+				{
+					// Copy row by row, inverting the vertical order.
+					int i;
+					for (i = 0; i < rowCount; i++) {
+						memcpy(destbuffpos + (DWORD)(rowCount - 1 - i) * m_bytesPerRow,
+							   m_flipbuff + (DWORD)i * m_bytesPerRow,
+							   m_bytesPerRow);
+					}
+				}
+			}
+			else
+			{
+				static BOOL warnedFlip = FALSE;
+				if (!warnedFlip) {
+					warnedFlip = TRUE;
+					vnclog.Print(LL_INTERR,
+						VNCLOG("out of memory for the scanline flip buffer "
+							   "(%d bytes) - captures will fail\n"), (int)needed);
+				}
+			}
+
+			m_bminfo.bmi.bmiHeader.biHeight = savedHeight;
+		}
+		else
+		{
+			// Already bottom-up in the header (or a platform that accepts
+			// top-down): capture straight into place, as the original did.
+			gotLines = GetDIBits(
+				hdcForGetDIBits,
+				m_membitmap,
+				y_inv_re_vd,
+				rowCount,
+				destbuffpos,
+				&m_bminfo.bmi,
+				DIB_RGB_COLORS);
+		}
+
+		// WIN32S DIAGNOSTIC (temporary): is the capture writing data?
+		//
+		// GetDIBits returning non-zero means it reported success, but that does
+		// not prove it wrote to the address we think it did.  Compare a few bytes
+		// of the destination before and after.
+		//
+		// If "changed=0" with gotLines>0, the call is succeeding but writing
+		// somewhere else - which would point at the destination offset or the
+		// biSizeImage/stride the header carries.
+		{
+			static DWORD s_capCalls = 0;
+			static DWORD s_capLines = 0;
+			static DWORD s_capChanged = 0;
+			static DWORD s_lastCapReport = 0;
+
+			s_capCalls++;
+			if (gotLines != 0)
+				s_capLines++;
+
+			DWORD now = GetTickCount();
+			if (s_lastCapReport == 0)
+				s_lastCapReport = now;
+			if ((DWORD)(now - s_lastCapReport) >= 5000) {
+				unsigned long destSample = 0;
+				memcpy(&destSample, destbuffpos, 4);
+				vnclog.Print(LL_INTERR,
+					VNCLOG("capture: %d calls, %d returned data, dest=%08lx "
+						   "rows=%d y_inv=%d bpr=%d flip=%d\n"),
+					(int)s_capCalls, (int)s_capLines, destSample,
+					(int)rowCount, (int)y_inv_re_vd, (int)m_bytesPerRow,
+					(int)(m_bminfo.bmi.bmiHeader.biHeight < 0));
+				s_capCalls = 0;
+				s_capLines = 0;
+				s_capChanged = 0;
+				s_lastCapReport = now;
+			}
+		}
+
+		if (gotLines == 0)
+		{
+			// WIN32S: report this properly.
+			//
+			// The original only emitted _RPT debug output, which is compiled out
+			// of a release build - so a failing capture produced a blank or
+			// stale screen with no explanation anywhere.  This is the hot path
+			// (once per changed region), so rate-limit the message: log the first
+			// failure and then every 100th, otherwise a persistent failure fills
+			// the log faster than anything else in the server.
+			static DWORD failCount = 0;
+			if ((failCount++ % 100) == 0) {
+				vnclog.Print(LL_INTERR,
+					VNCLOG("GetDIBits (capture) failed, error=%d "
+						   "(y=%d height=%d bpp=%d) [%d occurrences]\n"),
+					GetLastError(), y_inv_re_vd, (rect.bottom - rect.top),
+					(int)m_bminfo.bmi.bmiHeader.biBitCount,
+					(int)failCount);
+			}
 #ifdef _MSC_VER
 			_RPT1(_CRT_WARN, "vncDesktop : [1] GetDIBits failed! %d\n", GetLastError());
-			_RPT3(_CRT_WARN, "vncDesktop : thread = %d, DC = %d, bitmap = %d\n", omni_thread::self(), m_hmemdc, m_membitmap);
 			_RPT2(_CRT_WARN, "vncDesktop : y = %d, height = %d\n", y_inv_re_vd, (rect.bottom-rect.top));
 #endif
 		}
@@ -1739,20 +2439,51 @@ void vncDesktop::CopyToBuffer(RECT rect, BYTE *destbuff)
 	{
 		// Fast blits are enabled.  [I have a sneaking suspicion this will never get used, unless
 		// something weird goes wrong in the code.  It's here to keep the function general, though!]
+		//
+		// WIN32S: on this platform it IS used, and the DIB section's rows are
+		// BOTTOM-UP (see the note where the section is created - the 16-bit GDI
+		// cannot produce a top-down section).  m_DIBbits_bottom_up records that.
 
 		const int bytesPerPixel = m_scrinfo.format.bitsPerPixel / 8;
-		BYTE *srcbuffpos = (BYTE*)m_DIBbits;
+		const int widthBytes = (rect.right - rect.left) * bytesPerPixel;
+		const int rowCount = rect.bottom - rect.top;
 
-		srcbuffpos += (m_bytesPerRow * crect_re_vd_top) + (bytesPerPixel * crect_re_vd_left);
 		destbuffpos += bytesPerPixel * crect_re_vd_left;
 
-		const int widthBytes = (rect.right - rect.left) * bytesPerPixel;
-
-		for (int y = rect.top; y < rect.bottom; y++)
+		if (m_DIBbits_bottom_up)
 		{
-			memcpy(destbuffpos, srcbuffpos, widthBytes);
-			srcbuffpos += m_bytesPerRow;
-			destbuffpos += m_bytesPerRow;
+			// The section's row 0 is the BOTTOM of the bitmap.  The bitmap is
+			// (m_bmrect.bottom - m_bmrect.top) rows tall, so the section row
+			// holding output row 'crect_re_vd_top + n' is:
+			//
+			//     bitmapHeight - 1 - (crect_re_vd_top + n)
+			//
+			// Walk the source DOWNWARDS while the destination walks upwards.
+			const int bitmapHeight = m_bmrect.bottom - m_bmrect.top;
+			BYTE *srcbase = (BYTE *)m_DIBbits + (bytesPerPixel * crect_re_vd_left);
+
+			int n;
+			for (n = 0; n < rowCount; n++)
+			{
+				const int srcRow = bitmapHeight - 1 - (crect_re_vd_top + n);
+				if (srcRow < 0)
+					break;			// defensive: should not happen
+				memcpy(destbuffpos + (DWORD)n * m_bytesPerRow,
+					   srcbase + (DWORD)srcRow * m_bytesPerRow,
+					   widthBytes);
+			}
+		}
+		else
+		{
+			BYTE *srcbuffpos = (BYTE*)m_DIBbits;
+			srcbuffpos += (m_bytesPerRow * crect_re_vd_top) + (bytesPerPixel * crect_re_vd_left);
+
+			for (int y = rect.top; y < rect.bottom; y++)
+			{
+				memcpy(destbuffpos, srcbuffpos, widthBytes);
+				srcbuffpos += m_bytesPerRow;
+				destbuffpos += m_bytesPerRow;
+			}
 		}
 	}
 }
@@ -1880,6 +2611,15 @@ DesktopWndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 {
 	vncDesktop *_this = (vncDesktop*)GetWindowLong(hwnd, GWL_USERDATA);
 
+	// WIN32S: _this is NULL for every message that arrives during CreateWindow,
+	// before InitWindow() gets to its SetWindowLong(GWL_USERDATA) call -
+	// WM_NCCREATE, WM_CREATE, WM_GETMINMAXINFO, WM_NCCALCSIZE.  The original
+	// dereferenced it unconditionally.  On NT an invalid write to a NULL 'this'
+	// happened to fall on unmapped memory and fault visibly; the sooner it is
+	// checked the better.
+	if (_this == NULL)
+		return DefWindowProc(hwnd, iMsg, wParam, lParam);
+
 	switch (iMsg)
 	{
 
@@ -2002,6 +2742,53 @@ DesktopWndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		return 0;
 
 	default:
+		// ==============================================================
+		// WIN32S: hook-notification messages are handled HERE now.
+		//
+		// These are RegisterWindowMessage() values, so they are not compile-time
+		// constants and cannot appear as case labels - hence the if-chain in the
+		// default arm.  The old vncDesktopThread::run_undetached loop tested
+		// them the same way, before its DispatchMessage() call.
+		//
+		// With VNCHooks stubbed out (VNCHooksStub.cpp) nothing on this platform
+		// posts RFB_SCREEN_UPDATE or RFB_MOUSE_UPDATE, so this is effectively
+		// dead code.  It is kept, and kept correct, so that the file still works
+		// if the hook DLL is ever restored for a Win32 build from this branch.
+		//
+		// NOT PORTED: the RFB_LOCAL_KEYBOARD / RFB_LOCAL_MOUSE handling.  Those
+		// messages come from the keyboard/mouse PRIORITY hooks, which cannot
+		// install on Win32s either, and the original handler needed
+		// ULARGE_INTEGER 64-bit arithmetic on FILETIMEs to implement its
+		// timeout.  Since the messages can never arrive, porting that would be
+		// dead weight; vncServer::LocalInputPriority() simply has no event
+		// source and the feature is inert.
+		// ==============================================================
+		if (_this == NULL)
+			return DefWindowProc(hwnd, iMsg, wParam, lParam);
+
+		if (iMsg == RFB_SCREEN_UPDATE)
+		{
+			// An area of the screen has changed.
+			// (The original ignored this when a mirror driver was active; there
+			// is no driver on this platform.)
+			{
+				RECT rect;
+				rect.left =	(SHORT)LOWORD(wParam);
+				rect.top = (SHORT)HIWORD(wParam);
+				rect.right = (SHORT)LOWORD(lParam);
+				rect.bottom = (SHORT)HIWORD(lParam);
+				_this->m_changed_rgn.AddRect(rect);
+			}
+			return 0;
+		}
+
+		if (iMsg == RFB_MOUSE_UPDATE)
+		{
+			// Save the cursor ID
+			_this->SetCursor((HCURSOR) wParam);
+			return 0;
+		}
+
 		return DefWindowProc(hwnd, iMsg, wParam, lParam);
 	}
 }
@@ -2120,11 +2907,8 @@ BOOL vncDesktop::CheckUpdates()
 		{
 			// Capture screen to main buffer
 			CaptureScreen(rect, m_mainbuff);
-			// If we have a video driver - reset counter
-			if ( m_videodriver != NULL && m_videodriver->IsActive())
-			{
-				m_videodriver->ResetCounter();
-			}
+			// (Was: reset the mirror driver's change counter.  No driver here -
+			// see the note on InitVideoDriver.)
 		}
 
 		// If we have incremental update requests
@@ -2132,38 +2916,61 @@ BOOL vncDesktop::CheckUpdates()
 		{
 			vncRegion rgn;
 
-			// Use either a mirror video driver, or perform polling
-			if (m_videodriver != NULL && m_videodriver->IsActive())
-			{
-				// FIXME: If there were no incremental update requests
-				//        for some time, we will loose updates.
-// IMPORTANT: Mirage outputs the regions re (0, 0)
-// so we have to offset them re virtual display
+			// WIN32S: polling is the ONLY change-detection mechanism here.
+			//
+			// The original chose between the mirror video driver and polling.
+			// There is no driver on this platform (InitVideoDriver returns FALSE)
+			// and no hooks either (see VNCHooksStub.cpp), so every screen change
+			// is found by PerformPolling() comparing the captured screen against
+			// the previous frame.
+			//
+			// GetPollingFlag() is set by the TIMER_POLL timer, which
+			// SetPollingTimer() installs at the configured polling cycle.  That
+			// rate limiting matters a great deal here: a full-screen capture is
+			// expensive on Win32s (see CaptureScreen), and without the flag this
+			// would capture on every single idle pass.
+			//
+			// ==========================================================
+			// WIN32S: DO NOT RELY ON THE TIMER ALONE.
+			//
+			// The pump diagnostic showed only 53 of 2303 passes with the flag set,
+			// and long stretches with ZERO - so WM_TIMER for TIMER_POLL is being
+			// delivered erratically.  That is expected on this platform: the
+			// timer is a window timer on the desktop sink window, Windows 3.1 has
+			// a small system-wide timer pool, and our own message loop is
+			// dispatching thousands of messages per second.  A window timer is
+			// also coalesced aggressively - if the queue is busy, ticks are
+			// silently dropped rather than queued.
+			//
+			// Fall back to an elapsed-time check so polling happens at the
+			// intended rate whether or not the timer message arrives.  The timer
+			// is kept because when it DOES fire it gives better pacing than
+			// polling GetTickCount.
+			// ==========================================================
+			BOOL doPoll = GetPollingFlag();
 
-// TODOTODO
-					BOOL bCursorShape = FALSE;
-
-					m_videodriver->HandleDriverChanges(
-						this,
-						m_changed_rgn,
-						m_bmrect.left,
-						m_bmrect.top,
-						bCursorShape);
+			if (!doPoll) {
+				DWORD nowTick = GetTickCount();
+				if (m_lastPollTick == 0)
+					m_lastPollTick = nowTick;
+				// Same floor as SetPollingTimer uses.
+				if ((DWORD)(nowTick - m_lastPollTick) >= 100)
+					doPoll = TRUE;
 			}
-			else
+
+			if (doPoll)
 			{
-				if (GetPollingFlag())
-				{
-					SetPollingFlag(false);
-					PerformPolling();
-				}
+				SetPollingFlag(false);
+				m_lastPollTick = GetTickCount();
+				PerformPolling();
 			}
 
 			// Check for moved windows
 // PrimaryDisplayOnlyShared: check if any problems when
 // dragging from another display
-			if ((m_server->FullScreen() || m_server->PrimaryDisplayOnlyShared()) &&
-				!(m_videodriver && m_videodriver->IsHandlingScreen2ScreenBlt()))
+			// (The "&& !driver handles screen-to-screen blits" condition is gone
+			// with the driver.)
+			if (m_server->FullScreen() || m_server->PrimaryDisplayOnlyShared())
 			{
 				CalcCopyRects();
 			}
@@ -2242,19 +3049,52 @@ BOOL vncDesktop::CheckUpdates()
 void
 vncDesktop::SetPollingTimer()
 {
-	const UINT driverCycle = 30;
-	const UINT minPollingCycle = 5;
+	// WIN32S NOTES
+	//
+	//  * The driver branch is gone (no mirror driver - see InitVideoDriver).
+	//
+	//  * minPollingCycle raised from 5 ms to 100 ms.  This is the single most
+	//    important tuning value in the port.  Each timer tick sets the polling
+	//    flag, and the next idle pass then performs a screen capture -
+	//    BitBlt from the screen DC into a memory DC, then GetDIBits or a
+	//    DIBSection read.  On Win32s every one of those is a 32->16 bit thunk
+	//    into the 16-bit GDI, and a full-screen capture at 640x480x8 is already
+	//    300 KB of copying.  At 5 ms the machine would spend all of its time
+	//    capturing and would appear frozen to its local user - which defeats the
+	//    purpose of a remote-control server.
+	//
+	//    100 ms gives roughly 10 captures per second in the best case, which is
+	//    a usable remote frame rate, and leaves the machine responsive.  The
+	//    /16 divisor on the configured cycle is kept so that the Properties
+	//    dialog's polling-cycle setting still has an effect.
+	//
+	//  * The result of SetTimer is now checked.  Windows 3.1 has a small,
+	//    system-wide timer limit (and WinVNC also wants a blank-screen timer and
+	//    the main loop's idle timer), so this can genuinely fail.  Without the
+	//    polling timer GetPollingFlag() never becomes true and the server would
+	//    silently never send an update - a confusing failure worth logging.
+	const UINT minPollingCycle = 100;
 
-	UINT msec;
-	if (m_videodriver != NULL) {
-		msec = driverCycle;
-	} else {
-		msec = m_server->GetPollingCycle() / 16;
-		if (msec < minPollingCycle) {
-			msec = minPollingCycle;
-		}
+	UINT msec = m_server->GetPollingCycle() / 16;
+	if (msec < minPollingCycle) {
+		msec = minPollingCycle;
 	}
+
+	// Replace any existing timer rather than leaking it: SetPollingTimer() is
+	// called again from CheckUpdates() whenever the polling cycle changes, and
+	// the original overwrote m_timer_polling without killing the old timer.
+	if (m_timer_polling != 0) {
+		KillTimer(Window(), TIMER_POLL);
+		m_timer_polling = 0;
+	}
+
 	m_timer_polling = SetTimer(Window(), TIMER_POLL, msec, NULL);
+	if (m_timer_polling == 0) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("could not create polling timer - no screen updates will be sent\n"));
+	} else {
+		vnclog.Print(LL_INTINFO, VNCLOG("polling every %d ms\n"), (int)msec);
+	}
 }
 
 inline void vncDesktop::CheckRects(vncRegion &rgn, rectlist &rects)
@@ -2692,6 +3532,32 @@ vncDesktop::PollWindow(HWND hwnd)
 
 void vncDesktop::PollArea(const RECT &rect)
 {
+	// ==================================================================
+	// WIN32S DIAGNOSTIC (temporary): does the change detection see anything?
+	//
+	// The pump diagnostic showed "changed_rgn has 0 rects" on every pass while
+	// the client-side regions work, which narrows the failure to here.  Two
+	// possibilities, and these counters separate them:
+	//
+	//   tiles>0, diff=0   ->  the memcmp never differs.  Either both buffers hold
+	//                         the same data (the capture is not reaching
+	//                         m_mainbuff at the offset the comparison reads) or
+	//                         both are all-zero (the capture is writing nowhere).
+	//                         The "first bytes" values distinguish those: if main
+	//                         and back are both 00, nothing is being captured; if
+	//                         they are equal and non-zero, the capture works and
+	//                         the screen genuinely has not changed.
+	//
+	//   tiles=0           ->  the loop does not run, i.e. the rect is empty or
+	//                         the alignment arithmetic excludes everything.
+	// ==================================================================
+	static DWORD s_pollCalls = 0;
+	static DWORD s_tilesChecked = 0;
+	static DWORD s_tilesDiffered = 0;
+	static DWORD s_lastPollReport = 0;
+
+	s_pollCalls++;
+
 	const int scanLine = m_pollingOrder[m_pollingStep++ % 32];
 	const UINT bytesPerPixel = m_scrinfo.format.bitsPerPixel / 8;
 
@@ -2726,8 +3592,10 @@ void vncDesktop::PollArea(const RECT &rect)
 		{
 			const int tile_w = min(rect.right - x, 32);
 			const int nBytes = tile_w * bytesPerPixel;
+			s_tilesChecked++;
 			if (memcmp(o_ptr, n_ptr, nBytes) != 0)
 			{
+				s_tilesDiffered++;
 				RECT tileRect;
 				tileRect.left = x;
 				tileRect.top = y;
@@ -2737,6 +3605,37 @@ void vncDesktop::PollArea(const RECT &rect)
 			}
 			o_ptr += nBytes;
 			n_ptr += nBytes;
+		}
+	}
+
+	// Report once every 5 seconds.
+	{
+		DWORD now = GetTickCount();
+		if (s_lastPollReport == 0)
+			s_lastPollReport = now;
+		if ((DWORD)(now - s_lastPollReport) >= 5000)
+		{
+			// Sample the first few bytes of both buffers at the shared origin, so
+			// we can tell "identical and non-zero" from "both all zero".
+			const int sampleOff = 0;
+			unsigned long mainSample = 0, backSample = 0;
+			if (m_mainbuff != NULL)
+				memcpy(&mainSample, m_mainbuff + sampleOff, 4);
+			if (m_backbuff != NULL)
+				memcpy(&backSample, m_backbuff + sampleOff, 4);
+
+			vnclog.Print(LL_INTERR,
+				VNCLOG("poll: %d calls, %d tiles checked, %d differed; "
+					   "main=%08lx back=%08lx bpr=%d bpp=%d rect=(%d,%d,%d,%d)\n"),
+				(int)s_pollCalls, (int)s_tilesChecked, (int)s_tilesDiffered,
+				mainSample, backSample,
+				(int)m_bytesPerRow, (int)bytesPerPixel,
+				(int)rect.left, (int)rect.top, (int)rect.right, (int)rect.bottom);
+
+			s_pollCalls = 0;
+			s_tilesChecked = 0;
+			s_tilesDiffered = 0;
+			s_lastPollReport = now;
 		}
 	}
 }
@@ -2830,105 +3729,88 @@ void vncDesktop::CopyRectToBuffer(const RECT &dest, const POINT &source)
 	}
 }
 
-BOOL	IsBadDirectAccessConfig()
-{
-	if (IsWinVerOrHigher(5, 1))
-	{
-		if (GetSystemMetrics(SM_XVIRTUALSCREEN) < 0)
-			return TRUE;
-		if (GetSystemMetrics(SM_YVIRTUALSCREEN) < 0)
-			return TRUE;
-	}
-	return FALSE;
-}
+// IsBadDirectAccessConfig() removed: it existed solely to decide whether to ask
+// the mirror driver for direct frame-buffer access, working around an XP bug with
+// negative virtual-screen origins.  Its only caller was InitVideoDriver().
+//
+// Note that SM_XVIRTUALSCREEN/SM_YVIRTUALSCREEN are Win98/Win2000 metrics
+// (locally #defined at the top of this file); GetSystemMetrics returns 0 for
+// unknown indices on Win32s, so the function would simply have returned FALSE.
+
+// ==========================================================================
+// MIRROR VIDEO DRIVER - REMOVED FOR THE WIN32S PORT
+// ==========================================================================
+//
+// The mirror driver ("Mirage") is a kernel-mode display driver that mirrors the
+// primary display into a shared memory buffer, so the server can read changed
+// rectangles directly instead of polling with GetDIBits.  It is the fastest
+// capture path by a wide margin - and it is completely unavailable here.
+//
+// The original InitVideoDriver() already refused to run on anything below
+// Windows 2000:
+//
+//     if (!vncService::IsWinNT())      return FALSE;   // not NT at all
+//     if (!IsWinVerOrHigher(5, 0))     return FALSE;   // NT4 support "broken"
+//
+// so on Win32s it returned FALSE on the very first line.  Everything below that
+// point was unreachable on this platform.
+//
+// Why the whole thing is removed rather than left to fail at run time:
+//
+//   * VideoDriver.cpp calls ExtEscape(), ChangeDisplaySettingsEx(),
+//     EnumDisplayDevices(), CreateDC() with driver names, and
+//     MapViewOfFile()/CreateFileMapping() against a kernel object.  Several of
+//     those - ChangeDisplaySettingsEx and EnumDisplayDevices in particular - are
+//     Win98/Win2000-era APIs that do NOT exist on Win32s.  Because the linker
+//     records every imported name whether or not the code path can execute, their
+//     mere presence in the import table prevents the EXE from LOADING on Win32s.
+//     That is the same failure that stopped the viewer starting, and it cannot be
+//     fixed by dead-code elimination - the compiler cannot know the calls are
+//     unreachable.
+//
+//   * VideoDriver.cpp also uses __int64 arithmetic and 64-bit shared-buffer
+//     offsets that MSVC 4.1 compiles poorly.
+//
+// InitVideoDriver() now returns FALSE unconditionally and ShutdownVideoDriver()
+// is a no-op.  m_videodriver is therefore ALWAYS NULL, which every call site
+// already tests for - the driver was optional by design, and the polling path
+// (PerformPolling / CheckUpdates) is the fallback that the original used whenever
+// the driver was absent.
+//
+// VideoDriver.cpp / VideoDriver.h have been removed from WinVNC.mak.  The files
+// are left in the tree for anyone building the NT version from this branch.
+//
+// Also removed with it: DriverDirectAccess / DontUseDriver had no other purpose,
+// but they are settings that persist in the registry and are read by
+// vncProperties, so the accessors remain (they simply no longer influence
+// anything).
+// ==========================================================================
 
 BOOL vncDesktop::InitVideoDriver()
 {
-	// Mirror video drivers supported under Win2K, WinXP, WinVista
-	// and Windows NT 4.0 SP3 (we assume SP6).
-	if (!vncService::IsWinNT())
-		return FALSE;
-
-	// FIXME: Windows NT 4.0 support is broken and thus we disable it here.
-	if (!IsWinVerOrHigher(5, 0))
-		return FALSE;
-
-	if (m_server->DontUseDriver())
-	{
-		vnclog.Print(LL_STATE, VNCLOG("not activating video driver interface\n"));
-		return FALSE;
-	}
-
-	BOOL	bIsBadDASDConfig = IsBadDirectAccessConfig();
-	if (bIsBadDASDConfig)
-	{
-		vnclog.Print(LL_INTINFO, VNCLOG("can't set direct access mode in this configuration of monitors due to a known Windows bug.\n"));
-	}
-
-	BOOL	bSolicitDASD = m_server->DriverDirectAccess() & !bIsBadDASDConfig;
-
-	_ASSERTE(!m_videodriver);
-	m_videodriver = new vncVideoDriver;
-	if (!m_videodriver)
-	{
-		vnclog.Print(LL_INTERR, VNCLOG("failed to create vncVideoDriver object\n"));
-		return FALSE;
-	}
-
-	if (IsWinVerOrHigher(5, 0))
-	{
-// restart the driver if left running.
-// NOTE that on NT4 it must be running beforehand
-		if (m_videodriver->TestMapped())
-		{
-			vnclog.Print(LL_INTINFO, VNCLOG("found abandoned Mirage driver running. restarting.\n"));
-			m_videodriver->Deactivate();
-		}
-		_ASSERTE(!m_videodriver->TestMapped());
-	}
-
-	{
-		RECT	vdesk_rect;
-		GetSourceDisplayRect(vdesk_rect);
-		BOOL b = m_videodriver->Activate(bSolicitDASD, &vdesk_rect);
-	}
-
-	if (!m_videodriver->CheckVersion())
-	{
-		vnclog.Print(LL_INTINFO, VNCLOG("******** PLEASE INSTALL NEWER VERSION OF MIRAGE DRIVER! ********\n"));
-// IMPORTANT: fail on NT46
-		if (IsNtVer(4, 0))
-			return FALSE;
-	}
-
-	if (m_videodriver->MapSharedbuffers(bSolicitDASD))
-	{
-		vnclog.Print(LL_INTINFO, VNCLOG("video driver interface activated\n"));
-	}
-	else
-	{
-		delete m_videodriver;
-		m_videodriver = NULL;
-		vnclog.Print(LL_INTERR, VNCLOG("failed to activate video driver interface\n"));
-		return FALSE;
-	}
-	_ASSERTE(bSolicitDASD == m_videodriver->IsDirectAccessInEffect());
-	return TRUE;
+	// See the note above: the mirror driver requires Windows 2000 or later.
+	return FALSE;
 }
 
 void vncDesktop::ShutdownVideoDriver()
 {
-	if (m_videodriver == NULL)
-		return;
-	delete m_videodriver;
-	m_videodriver = NULL;
-	vnclog.Print(LL_INTINFO, VNCLOG("video driver interface deactivated\n"));
+	// Nothing to shut down - m_videodriver is always NULL on this platform.
+	_ASSERTE(m_videodriver == NULL);
 }
 
 void
 vncDesktop::UpdateBlankScreenTimer()
 {
-	BOOL active = m_server->GetBlankScreen();
+	// WIN32S: BlankScreen() is a no-op here (see below), so there is nothing for
+	// this timer to do.  It is left disabled rather than removed so that the
+	// setting still round-trips through the Properties dialog.
+	//
+	// This also matters for a practical reason: Windows 3.1 has a small
+	// system-wide timer limit, and the server already needs the polling timer and
+	// the main loop's idle timer.  A 50 ms timer that does nothing is not worth
+	// one of them.
+	BOOL active = FALSE;
+
 	if (active && !m_timer_blank_screen) {
 		m_timer_blank_screen = SetTimer(Window(), TIMER_BLANK_SCREEN, 50, NULL);
 	} else if (!active && m_timer_blank_screen) {
@@ -2941,12 +3823,35 @@ vncDesktop::UpdateBlankScreenTimer()
 void
 vncDesktop::BlankScreen(BOOL set)
 {
-	if (set) {
-		SystemParametersInfo(SPI_SETPOWEROFFACTIVE, 1, NULL, 0);
-		SendMessage(GetDesktopWindow(), WM_SYSCOMMAND, SC_MONITORPOWER, (LPARAM)2);
-	} else {
-		SystemParametersInfo(SPI_SETPOWEROFFACTIVE, 0, NULL, 0);
-		SendMessage(GetDesktopWindow(), WM_SYSCOMMAND, SC_MONITORPOWER, (LPARAM)-1);
+	// "Blank the server's monitor while a client is connected."
+	//
+	// WIN32S: this cannot work and is now a no-op.
+	//
+	//   * SPI_SETPOWEROFFACTIVE (value 86) is a Windows 95 addition and is not
+	//     recognised by the Windows 3.1 SystemParametersInfo, which returns
+	//     FALSE for an unknown action.  Harmless, but useless.
+	//
+	//   * SC_MONITORPOWER is likewise Win95+: it is an APM/display-power request
+	//     that Windows 3.1's DefWindowProc does not implement.  Windows 3.1 has
+	//     no display power management at all - monitor blanking on that vintage
+	//     of hardware was a screen-saver, not a power state.
+	//
+	// The alternative - covering the screen with a black window - is deliberately
+	// NOT implemented: with one thread and one message queue, a full-screen
+	// topmost window would interfere with the screen capture we are performing on
+	// the same desktop.
+	//
+	// The function is kept (rather than removed) because UpdateBlankScreenTimer()
+	// and the TIMER_BLANK_SCREEN / TIMER_RESTORE_SCREEN handlers call it, and the
+	// "Blank screen" setting persists in the registry.
+	//
+	// Log once so that a user who enables the option understands why nothing
+	// happens.
+	static BOOL warned = FALSE;
+	if (set && !warned) {
+		warned = TRUE;
+		vnclog.Print(LL_INTWARN,
+			VNCLOG("blank-screen is not supported on this platform - ignoring\n"));
 	}
 }
 

@@ -25,7 +25,65 @@
 
 #include "VNCviewerApp.h"
 #include "Daemon.h"
-#include "list.h"
+//#include "list.h"
+
+// Define a maximum ceiling for simultaneous modeless dialogs
+#define MAX_MODELESS_DIALOGS 16
+
+class VNCviewerApp32 : public VNCviewerApp {
+public:
+	VNCviewerApp32(HINSTANCE hInstance, PSTR szCmdLine);
+	void ListenMode();
+	void NewConnection();
+	void NewConnection(TCHAR *host, int port);
+	void NewConnection(SOCKET sock);
+	Daemon  *m_pdaemon;
+	~VNCviewerApp32();
+private:
+	void RegisterSounds();
+
+public:
+	// Clean inline array implementations to replace the broken STL engine.
+	// No locking needed: single-threaded (see omnithread/omnithread.h).
+	void AddModelessDialog(HWND hwnd) {
+		for(int i = 0; i < MAX_MODELESS_DIALOGS; i++) {
+			if(m_dialogs[i] == NULL) {
+				m_dialogs[i] = hwnd;
+				break;
+			}
+		}
+	}
+	
+	void RemoveModelessDialog(HWND hwnd) {
+		for(int i = 0; i < MAX_MODELESS_DIALOGS; i++) {
+			if(m_dialogs[i] == hwnd) {
+				m_dialogs[i] = NULL;
+				break;
+			}
+		}
+	}
+	
+	bool ProcessDialogMessage(MSG *pmsg);
+
+	// ---- single-threaded session driving (see VNCviewerApp32.cpp) --------
+
+	// Called from the idle path of the main message loop.  Gives every live
+	// connection a chance to read one pending server message.  Returns true
+	// if any connection did work, so the loop can pump again before blocking.
+	bool PumpConnections();
+
+	// Delete connections that flagged themselves dead in their WM_DESTROY.
+	// Must only be called from the main loop, never from a window procedure.
+	void ReapDeadConnections();
+
+private:
+	// Flat array layout completely circumvents MSVC 4.1 template parser bugs
+	HWND m_dialogs[MAX_MODELESS_DIALOGS];
+};
+
+/* Original STL-based version, kept for reference.  It cannot be used with
+   MSVC 4.1 (list<> template) and the mutex is pointless in a single-threaded
+   build:
 
 class VNCviewerApp32 : public VNCviewerApp {
 public:
@@ -50,5 +108,5 @@ private:
 	// List of open modeless dialogs
 	list<HWND> m_dialogs;
 	omni_mutex m_dialogsMutex;
-};
+}; */
 

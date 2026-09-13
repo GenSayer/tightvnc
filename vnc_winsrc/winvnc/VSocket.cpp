@@ -98,7 +98,14 @@ VSocketSystem::VSocketSystem()
   WORD wVersionRequested;
   WSADATA wsaData;
 	
-  wVersionRequested = MAKEWORD(2, 0);
+  // WIN32S: must request 1.1, not 2.0.
+  //
+  // Win32s ships WinSock 1.1 (the stack vendor's WINSOCK.DLL under Windows
+  // 3.1), and wsock32.lib is a 1.1 import library.  Asking for MAKEWORD(2,0)
+  // makes WSAStartup fail with WSAVERNOTSUPPORTED, m_status becomes VFalse, and
+  // WinMain then shows "Failed to initialise the socket system" and exits.
+  // This is the same change already made in the viewer.
+  wVersionRequested = MAKEWORD(1, 1);
   if (WSAStartup(wVersionRequested, &wsaData) != 0)
   {
     m_status = VFalse;
@@ -489,18 +496,35 @@ VSocket::Resolve(VStringConst address)
 VBool
 VSocket::SetTimeout(VCard32 secs)
 {
-	if (LOBYTE(winsockVersion) < 2)
-		return VFalse;
+	// WIN32S: the original refused outright on WinSock < 2.
+	//
+	// roytam1's winvnc333r9-vc4 patch (27786ef) simply commented the check out.
+	// That is the right instinct but it leaves setsockopt's failure unhandled:
+	// SO_RCVTIMEO is optional in WinSock 1.1 and most Windows 3.1 stacks reject
+	// it.  Attempt it and tolerate refusal - a socket without a receive timeout
+	// still works, it just blocks indefinitely on a dead peer, and the
+	// single-threaded server polls with select() before reading anyway.
 	int timeout=secs;
+	VBool ok = VTrue;
+
 	if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout, sizeof(timeout)) == SOCKET_ERROR)
 	{
-		return VFalse;
+		vnclog.Print(LL_SOCKINFO,
+			VNCLOG("SO_RCVTIMEO not supported by this stack (WinSock error %d)\n"),
+			WSAGetLastError());
+		ok = VFalse;
 	}
 	if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char*)&timeout, sizeof(timeout)) == SOCKET_ERROR)
 	{
-		return VFalse;
+		vnclog.Print(LL_SOCKINFO,
+			VNCLOG("SO_SNDTIMEO not supported by this stack (WinSock error %d)\n"),
+			WSAGetLastError());
+		ok = VFalse;
 	}
-	return VTrue;
+
+	// Report the truth to the caller, but note that both callers treat a
+	// failure as non-fatal - grep SetTimeout in vncClient.cpp / vncServer.cpp.
+	return ok;
 }
 
 ////////////////////////////
@@ -541,17 +565,46 @@ VSocket::SendExact(const char *buff, const VCard bufflen)
 	// Put the data into the queue
 	SendQueued(buff, bufflen);
 
+	// WIN32S: same treatment as ReadExact - pump messages while waiting, and
+	// bound the wait so a client that stops reading cannot hang the server.
+	//
+	// A stalled client is a realistic case here rather than a theoretical one:
+	// the server generates update data faster than a 10 Mbit link and a slow
+	// viewer can drain it, so out_queue can stay non-empty for a long time.
+	const DWORD sendDeadlineMs = 30000;
+	DWORD startTick = GetTickCount();
+
 	while (out_queue) {
 		// Wait until some data can be sent
 		do {
 			FD_ZERO(&write_fds);
 			FD_SET((unsigned int)sock, &write_fds);
-			tm.tv_sec = 1;
-			tm.tv_usec = 0;
+			tm.tv_sec = 0;
+			tm.tv_usec = 50000;			// 50 ms, was a full second
 			count = select(sock + 1, NULL, &write_fds, NULL, &tm);
+
+			if (count == 0) {
+				MSG msg;
+				int pumped = 0;
+				while (pumped++ < 8 && PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+					if (msg.message == WM_QUIT) {
+						PostQuitMessage((int)msg.wParam);
+						return VFalse;
+					}
+					TranslateMessage(&msg);
+					DispatchMessage(&msg);
+				}
+
+				if ((DWORD)(GetTickCount() - startTick) > sendDeadlineMs) {
+					vnclog.Print(LL_SOCKERR,
+						VNCLOG("timed out sending; client is not reading\n"));
+					return VFalse;
+				}
+			}
 		} while (count == 0);
 		if (count < 0 || count > 1) {
-			vnclog.Print(LL_SOCKERR, VNCLOG("socket error in select()\n"));
+			vnclog.Print(LL_SOCKERR, VNCLOG("socket error in select(): %d\n"),
+						 WSAGetLastError());
 			return VFalse;
 		}
 		// Actually send some data
@@ -596,10 +649,19 @@ VSocket::SendFromQueue()
 	if (!out_queue)
 		return VTrue;
 
-	// Maximum data size to send at once
+	// Maximum data size to send at once.
+	//
+	// WIN32S: was 32768 (0x8000).  That value is INT_MIN as a 16-bit int, and
+	// the Win32s Winsock 1.1 thunk cannot marshal a 32K send down to the 16-bit
+	// stack - send() fails with WSAEFAULT (10014) and the client is dropped.
+	// Observed as Raw/RRE/CoRRE/full-screen-Hextile disconnecting on the first
+	// update (first chunk is always full-size) while Tight/Zlib/ZlibHex (small
+	// sends) and file transfers (8K blocks) worked.  16384 stays representable
+	// and halves segment-boundary exposure.  Encoders are unaffected: they
+	// produce identical bytes into the queue; only send() chunking changes.
 	size_t portion_size = out_queue->data_size - bytes_sent;
-	if (portion_size > 32768)
-		portion_size = 32768;
+	if (portion_size > 16384)
+		portion_size = 16384;
 
 	// Try to send some data
 	int bytes = Send(out_queue->data_ptr + bytes_sent, portion_size);
@@ -616,6 +678,79 @@ VSocket::SendFromQueue()
 		out_queue = sent->next;
 		bytes_sent = 0;
 		delete sent;
+	}
+
+	return VTrue;
+}
+
+////////////////////////////
+//
+// WIN32S SINGLE-THREADED ADDITIONS
+//
+// See the note in VSocket.h.  The server has no per-client thread any more, so
+// the idle loop needs to ask "is there anything to do?" without blocking.
+//
+
+VBool
+VSocket::HasData()
+{
+	if (sock < 0)
+		return VFalse;
+
+	struct fd_set read_fds;
+	struct timeval tm;
+
+	FD_ZERO(&read_fds);
+	FD_SET((unsigned int)sock, &read_fds);
+	tm.tv_sec = 0;
+	tm.tv_usec = 0;
+
+	// The first argument is ignored by WinSock (an fd_set is an array of
+	// handles, not a bitmask), so sock+1 is not required - but pass it anyway
+	// for consistency with the rest of this file.
+	int count = select(sock + 1, &read_fds, NULL, NULL, &tm);
+	if (count <= 0)
+		return VFalse;
+
+	return FD_ISSET((unsigned int)sock, &read_fds) ? VTrue : VFalse;
+}
+
+VBool
+VSocket::FlushQueued()
+{
+	if (sock < 0)
+		return VFalse;
+	if (out_queue == NULL)
+		return VTrue;
+
+	struct fd_set write_fds;
+	struct timeval tm;
+
+	// Push out as much as the stack will accept right now.  Bounded so that a
+	// large queued update cannot monopolise the single thread: the idle loop
+	// will call us again on its next pass.
+	int rounds = 0;
+	while (out_queue != NULL && rounds++ < 16) {
+		FD_ZERO(&write_fds);
+		FD_SET((unsigned int)sock, &write_fds);
+		tm.tv_sec = 0;
+		tm.tv_usec = 0;
+
+		int count = select(sock + 1, NULL, &write_fds, NULL, &tm);
+		if (count < 0) {
+			vnclog.Print(LL_SOCKERR,
+				VNCLOG("socket error in FlushQueued select(): %d\n"),
+				WSAGetLastError());
+			return VFalse;
+		}
+		if (count == 0)
+			break;					// would block; try again next time round
+
+		if (!FD_ISSET((unsigned int)sock, &write_fds))
+			break;
+
+		if (!SendFromQueue())
+			return VFalse;
 	}
 
 	return VTrue;
@@ -649,6 +784,58 @@ VSocket::ReadExact(char *buff, const VCard bufflen)
 	struct timeval tm;
 	int count;
 
+	// ==================================================================
+	// WIN32S: ReadExact(NULL, n) MUST WORK - it is the "discard n bytes"
+	// idiom used all over vncClient.cpp's file-transfer handlers, e.g.
+	//
+	//     m_socket->ReadExact(NULL, msg.fdr.fNameSize);   // skip the name
+	//
+	// The original relied on Read() -> recv(sock, NULL, len, 0), i.e. it
+	// passed a NULL buffer straight to WinSock.  On NT that returns
+	// WSAEFAULT and the loop treats it as a socket error, which happens to
+	// look like "connection failed" rather than a crash - but on a
+	// WinSock 1.1 stack under Win32s, recv() with a NULL buffer can fault
+	// inside the 16-bit stack and take the whole VM down.
+	//
+	// Handle it explicitly: read into a scratch buffer and throw the data
+	// away.
+	// ==================================================================
+	if (buff == NULL) {
+		char discard[256];
+		VCard remaining = bufflen;
+		while (remaining > 0) {
+			VCard chunk = (remaining > sizeof(discard)) ?
+						  (VCard)sizeof(discard) : remaining;
+			if (!ReadExact(discard, chunk))
+				return VFalse;
+			remaining -= chunk;
+		}
+		return VTrue;
+	}
+
+	// WIN32S NOTE ON THE WAIT LOOP BELOW.
+	//
+	// This function still blocks until the requested bytes arrive.  That is
+	// deliberate and safe, because vncClient::PumpIdle() only calls into the
+	// protocol code after VSocket::HasData() has reported that a message has
+	// started arriving - so we are always completing a message the client has
+	// already begun sending.  Do NOT call ReadExact speculatively from the idle
+	// loop.
+	//
+	// Two changes from the original:
+	//
+	//  * The inner "do { select(...) } while (count == 0)" spun with a 50
+	//    MICROSECOND timeout (tv_usec = 50, not 50000).  On a cooperatively
+	//    scheduled system with one thread, that is a tight busy-loop that
+	//    starves every other Windows task while it waits.  The timeout is now
+	//    50 ms and the loop pumps messages, so the machine stays usable.
+	//
+	//  * The wait is bounded.  A client that opens a connection, sends one byte
+	//    of a message header and then goes silent used to hang the server
+	//    forever; now it disconnects after the timeout.
+	const DWORD readDeadlineMs = 30000;		// 30 s for a partial message
+	DWORD startTick = GetTickCount();
+
 	while (currlen > 0) {
 		// Wait until some data can be read or sent
 		do {
@@ -658,11 +845,34 @@ VSocket::ReadExact(char *buff, const VCard bufflen)
 			if (out_queue)
 				FD_SET((unsigned int)sock, &write_fds);
 			tm.tv_sec = 0;
-			tm.tv_usec = 50;
+			tm.tv_usec = 50000;			// 50 ms, was 50 us
 			count = select(sock + 1, &read_fds, &write_fds, NULL, &tm);
+
+			if (count == 0) {
+				// Nothing yet.  Give the rest of the system a chance to run -
+				// this is the single application thread.
+				MSG msg;
+				int pumped = 0;
+				while (pumped++ < 8 && PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+					if (msg.message == WM_QUIT) {
+						PostQuitMessage((int)msg.wParam);
+						return VFalse;
+					}
+					TranslateMessage(&msg);
+					DispatchMessage(&msg);
+				}
+
+				if ((DWORD)(GetTickCount() - startTick) > readDeadlineMs) {
+					vnclog.Print(LL_SOCKERR,
+						VNCLOG("timed out waiting for %u more bytes\n"),
+						(unsigned int)currlen);
+					return VFalse;
+				}
+			}
 		} while (count == 0);
 		if (count < 0 || count > 2) {
-			vnclog.Print(LL_SOCKERR, VNCLOG("socket error in select()\n"));
+			vnclog.Print(LL_SOCKERR, VNCLOG("socket error in select(): %d\n"),
+						 WSAGetLastError());
 			return VFalse;
 		}
 		if (FD_ISSET((unsigned int)sock, &write_fds)) {

@@ -38,18 +38,17 @@ SessionDialog::SessionDialog(VNCOptions *pOpt,ClientConnection *cc)
 {
 	m_pOpt = pOpt;
 	m_cc = cc;
-	DWORD dispos;
 
-	RegCreateKeyEx(HKEY_CURRENT_USER,
-		KEY_VNCVIEWER_HISTORI, 0, NULL, 
-		REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS,
-		NULL, &m_hRegKey, &dispos);
-    
+	// WIN32S: connection history lives in the [History] section of
+	// vncviewer.ini now; there is no registry key to open.  m_hRegKey stays
+	// NULL and every use below already guards on it.
+	m_hRegKey = NULL;
 }
 
 SessionDialog::~SessionDialog()
 {
-  RegCloseKey(m_hRegKey); 
+  if (m_hRegKey != NULL)
+	  RegCloseKey(m_hRegKey);
 }
 
 // It's exceedingly unlikely, but possible, that if two modal dialogs were
@@ -85,20 +84,18 @@ BOOL CALLBACK SessionDialog::SessDlgProc(  HWND hwnd,  UINT uMsg,  WPARAM wParam
             CentreWindow(hwnd);
 			_this->m_cc->m_hSess = hwnd;
 
-			// Load connection history to the combo box.
+			// Load connection history to the combo box, from the [History]
+			// section of vncviewer.ini.
 			const int maxEntries = pApp->m_options.m_historyLimit;
 			int listIndex = 0;
 			for (i = 0; i < maxEntries; i++) {
-				TCHAR keyName[256];
-				itoa(i, keyName, 10);
-				TCHAR buf[256];
-				int dwbuflen = 255;
-				if (RegQueryValueEx(_this->m_hRegKey, keyName, NULL, NULL,
-									(LPBYTE)buf, (LPDWORD)&dwbuflen) == ERROR_SUCCESS) {
-					buf[255] = '\0';
-					if (buf[0] != 0) {
-						SendMessage(hcombo, CB_INSERTSTRING, (WPARAM)listIndex++, (LPARAM)buf);
-					}
+				char keyName[16];
+				sprintf(keyName, "%d", i);
+				char buf[256];
+				VNCOptions::IniGetString(VIEWER_INI_HISTORY, keyName,
+										 buf, sizeof(buf));
+				if (buf[0] != 0) {
+					SendMessage(hcombo, CB_INSERTSTRING, (WPARAM)listIndex++, (LPARAM)buf);
 				}
 			}
 			if (_this->m_pOpt->m_display[0] == '\0') {
@@ -140,7 +137,16 @@ BOOL CALLBACK SessionDialog::SessDlgProc(  HWND hwnd,  UINT uMsg,  WPARAM wParam
 			case CBN_SELENDOK:
 				{
 					int a = (int)SendMessage(hcombo, CB_GETCURSEL, 0, 0L);
-					SendMessage(hcombo, CB_GETLBTEXT, a, (LPARAM)(int FAR*)buffer );
+					// CB_GETLBTEXT with CB_ERR (-1) writes nothing but the old
+					// code used buffer[] regardless; and the length is not
+					// checked against sizeof(buffer).
+					if (a == CB_ERR)
+						break;
+					LRESULT tl = SendMessage(hcombo, CB_GETLBTEXTLEN, a, 0);
+					if (tl == CB_ERR || tl >= (LRESULT)sizeof(buffer))
+						break;
+					buffer[0] = '\0';
+					SendMessage(hcombo, CB_GETLBTEXT, a, (LPARAM)buffer);
 					_this->m_pOpt->LoadOpt(buffer,KEY_VNCVIEWER_HISTORI);
 					
 					_this->cmp(hwnd);
@@ -156,7 +162,10 @@ BOOL CALLBACK SessionDialog::SessDlgProc(  HWND hwnd,  UINT uMsg,  WPARAM wParam
 			return TRUE;
 		case IDC_LOAD:
 			{
-				TCHAR buf[80];
+				// GetOpenFileName writes the chosen path here and ofn.nMaxFile
+				// is set to _MAX_PATH in ClientConnectionFile.cpp, so an 80-byte
+				// buffer was a stack overflow waiting for a long path.
+				TCHAR buf[_MAX_PATH];
 				buf[0]='\0';
 				if (_this->m_cc->LoadConnection(buf, true) != -1) {
 					FormatDisplay(_this->m_cc->m_port,
@@ -237,27 +246,39 @@ BOOL CALLBACK SessionDialog::SessDlgProc(  HWND hwnd,  UINT uMsg,  WPARAM wParam
 				GetDlgItemText(hwnd, IDC_HOSTNAME_EDIT, 
 								_this->m_pOpt->m_display, 256);
 				SendMessage(hcombo, CB_RESETCONTENT, 0, 0);
-				int dwbuflen = 255;
-				TCHAR valname[256];
-				TCHAR buf[256];
+				char valname[16];
+				char buf[256];
 				int maxEntries = pApp->m_options.m_historyLimit;				
 				for ( i = 0; i < maxEntries; i++) { 				
-					itoa(i, valname, 10);
-					dwbuflen = 255;
-					if(RegQueryValueEx( _this->m_hRegKey, (LPTSTR)valname , NULL, NULL, 
-						(LPBYTE) buf, (LPDWORD) &dwbuflen) != ERROR_SUCCESS) {
+					sprintf(valname, "%d", i);
+					VNCOptions::IniGetString(VIEWER_INI_HISTORY, valname,
+											 buf, sizeof(buf));
+					if (buf[0] == '\0') {
 						break;
 					}
-					SendMessage(hcombo, CB_INSERTSTRING, (WPARAM)i, (LPARAM)(int FAR*)buf);
+					SendMessage(hcombo, CB_INSERTSTRING, (WPARAM)i, (LPARAM)buf);
 				}
 				SetDlgItemText(hwnd, IDC_HOSTNAME_EDIT, _this->m_pOpt->m_display); 				
 				_this->cmp(hwnd);									
 				SetFocus(hOptionButton);
 				return TRUE;
 			}
-		}			
+		}
+		// IMPORTANT: this "break" was missing.  Without it, any WM_COMMAND whose
+		// ID is not one of the cases above fell straight through into the
+		// WM_DESTROY case below and called EndDialog(hwnd, FALSE) - i.e. the
+		// New Connection dialog closed itself with a "cancelled" result, and
+		// GetConnectDetails() then threw QuietException("User Cancelled").
+		// Every ID currently sent by this dialog's own controls is handled, so
+		// this is latent rather than always-fatal, but it is exactly the kind
+		// of thing to eliminate before chasing a "connection never starts"
+		// report.
+		break;
 	case WM_DESTROY:
-		EndDialog(hwnd, FALSE);
+		// Do not call EndDialog from WM_DESTROY: by this point the dialog is
+		// already being destroyed, and EndDialog on a dying window is at best
+		// a no-op.  The IDC_OK/IDCANCEL handlers above already end the dialog
+		// with the correct result.
 		return TRUE;
 	}	
 	return 0;

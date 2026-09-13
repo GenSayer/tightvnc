@@ -43,13 +43,29 @@ WallpaperUtils::KillWallpaper()
 	if (!m_restore_wallpaper) {
 		// Tell all applications that there is no wallpaper
 		// Note that this doesn't change the wallpaper registry setting!
+		//
+		// WIN32S: SPI_SETDESKWALLPAPER exists in Windows 3.1's
+		// SystemParametersInfo, so this genuinely works - removing the wallpaper
+		// is worth doing here, because a tiled bitmap background is exactly the
+		// kind of thing that makes every full-screen poll expensive.
+		//
+		// SPIF_SENDCHANGE is honoured on 3.1 as well (it broadcasts
+		// WM_WININICHANGE).
 		SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, "", SPIF_SENDCHANGE);
 		m_restore_wallpaper = true;
 	}
 
-	CoInitialize(NULL);
+	// WIN32S: CoInitialize/CoUninitialize removed.
+	//
+	// These are OLE32 imports.  OLE32.DLL is not part of Win32s (OLE 2 for
+	// Windows 3.1 exists as a separate 16-bit package, but its 32-bit entry
+	// points do not), so linking against them stops the EXE from LOADING.
+	//
+	// They were only here for KillActiveDesktop(), which in this build already
+	// does nothing but log "Active Desktop not supported in this build" - Active
+	// Desktop is an Internet Explorer 4 shell feature and could not exist on
+	// Windows 3.1 in any case.
 	KillActiveDesktop();
-	CoUninitialize();
 }
 
 void
@@ -61,11 +77,12 @@ WallpaperUtils::RestoreActiveDesktop()
 void
 WallpaperUtils::RestoreWallpaper()
 {
-	CoInitialize(NULL);
+	// WIN32S: CoInitialize/CoUninitialize removed - see KillWallpaper above.
 	RestoreActiveDesktop();
-	CoUninitialize();
 
 	if (m_restore_wallpaper) {
+		// Passing NULL (rather than "") makes Windows re-read the wallpaper from
+		// the registry / WIN.INI and restore it.
 		SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, NULL, SPIF_SENDCHANGE);
 		m_restore_wallpaper = false;
 	}

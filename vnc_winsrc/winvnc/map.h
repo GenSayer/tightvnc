@@ -1,8 +1,36 @@
 #ifndef DETECT_MAP_H
 #define DETECT_MAP_H
 
-// Place this directly inside namespace std if your files expect std::map, 
-// or simply keep it global if you strip the "std::" prefix.
+// Minimal std::map replacement for MSVC 4.1 / Win32s.
+//
+// The compiler's bundled STL cannot compile the instantiations this project
+// needs.  This is a singly-linked list with map-like syntax: O(n) lookup, which
+// is fine for the only user here (vncKeymap's keysym->VK tables, a few hundred
+// entries, built once at startup).
+//
+// WIN32S / MSVC 4.1 REVIEW NOTES - behaviour that differs from real std::map and
+// that callers must not rely on:
+//
+//   * Iteration order is REVERSE INSERTION order, not sorted key order.
+//     vncKeymap never iterates, so this does not matter - but do not add code
+//     that assumes ordering.
+//
+//   * operator[] INSERTS a default-constructed value when the key is absent,
+//     like std::map.  vncKeymap uses find() for lookups and operator[] only when
+//     building the tables, which is correct.
+//
+//   * No erase(), no size(), no insert(), no reverse iterators.  Nothing needs
+//     them.
+//
+//   * COPYING IS NOT IMPLEMENTED.  See the private declarations below: the
+//     compiler-generated copy constructor and operator= would duplicate 'head',
+//     giving two maps that own the same node list, and both destructors would
+//     free it.  key_mapper is a file-scope object that is never copied, so
+//     declaring them private turns any future copy into a link error rather than
+//     a double-free.
+//
+// Placing this in namespace std is technically illegal, but MSVC 4.1 accepts it
+// and the existing sources say std::map<...>.
 namespace std {
 
 template <class Key, class Value>
@@ -57,6 +85,18 @@ public:
     ~map() {
         clear();
     }
+
+private:
+    // Not implemented - see the note at the top of this file.
+    // MSVC 4.1: the template parameter list is MANDATORY in type positions.
+    // Bare "map" inside the class template gives
+    //     error C2955: 'map' : class template name expecting parameter list
+    // because MSVC 4.1 predates the injected-class-name rule.  Constructor and
+    // destructor NAMES are fine unqualified; parameters and return types are not.
+    map(const map<Key, Value>&);
+    map<Key, Value>& operator=(const map<Key, Value>&);
+
+public:
 
     void clear() {
         Node* current = head;

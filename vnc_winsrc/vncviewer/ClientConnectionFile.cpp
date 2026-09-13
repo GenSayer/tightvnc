@@ -30,6 +30,7 @@
 #include "Exception.h"
 #include "vncauth.h"
 
+
 // This file contains the code for saving and loading connection info.
 
 static OPENFILENAME ofn;
@@ -39,7 +40,18 @@ static void ofnInit()
 	static char filter[] = "VNC files (*.vnc)\0*.vnc\0" \
 						   "All files (*.*)\0*.*\0";
 	memset((void *) &ofn, 0, sizeof(OPENFILENAME));
+
+	// WIN32S: lStructSize must be the *Windows 3.1-era* size.
+	//
+	// COMDLG32 identifies the caller's OPENFILENAME version by this field.
+	// The MSVC 4.1 SDK's OPENFILENAME is the original Win32 structure, so
+	// sizeof() is correct for this build - but be explicit about the intent,
+	// because if this project is ever built with a newer SDK the structure
+	// grows (pvReserved/dwReserved/FlagsEx) and GetOpenFileName then fails on
+	// Win32s with CDERR_STRUCTSIZE and returns 0, which LoadConnection reports
+	// as "user cancelled".
 	ofn.lStructSize = sizeof(OPENFILENAME);
+
 	ofn.lpstrFilter = filter;
 	ofn.nMaxFile = _MAX_PATH;
 	ofn.nMaxFileTitle = _MAX_FNAME + _MAX_EXT;
@@ -57,26 +69,37 @@ void ClientConnection::SaveConnection()
 	char tname[_MAX_FNAME + _MAX_EXT];
 	ofnInit();
 
-	// Let's choose a reasonable file name based on hostname and port
+	// Let's choose a reasonable file name based on hostname and port.
+	//
+	// WIN32S: the default filename must satisfy 16-bit COMMDLG, which fails
+	// the whole call with FNERR_INVALIDFILENAME ("Invalid filename", no dialog
+	// at all) for anything that is not 8.3-safe.  The old code copied up to 24
+	// hostname chars verbatim, so an IP literal became "192.168.1.207.vnc"
+	// (multiple dots - illegal) and an empty host became ".vnc".  Build an
+	// 8.3-safe base instead: alphanumerics only, at most 8 chars, then ".vnc".
+	// The port suffix is kept only if the base still fits 8.3.
 	char fname[_MAX_PATH];
-
-	// If the first character of the hostname is a letter, try to use
-	// only the part of the hostname before the first dot
-	char *ptr = NULL;
-	if (isalpha(m_host[0])) {
-		ptr = strchr(m_host, '.');
-		if (ptr - m_host > 24)
-			ptr = NULL;
+	int fn = 0;
+	const char *hp = m_host;
+	while (*hp != '\0' && fn < 8) {
+		if (isalnum((unsigned char)*hp))
+			fname[fn++] = *hp;
+		hp++;
 	}
-	if (ptr) {
-		memcpy(fname, m_host, ptr - m_host);
-		fname[ptr - m_host] = '\0';
+	if (fn == 0) {
+		strcpy(fname, "server");
+		fn = 6;
 	} else {
-		sprintf(fname, "%.24s", m_host);
+		fname[fn] = '\0';
 	}
-	// Append the port number if it's not the default port
+	// Append the port number if it's not the default port and still fits
 	if (PORT_TO_DISPLAY(m_port) != 0) {
-		sprintf(&fname[strlen(fname)], "-%d", m_port);
+		char pbuf[8];
+		sprintf(pbuf, "-%d", m_port);
+		if (fn + (int)strlen(pbuf) <= 8) {
+			strcpy(fname + fn, pbuf);
+			fn += (int)strlen(pbuf);
+		}
 	}
 	// Finally, append the .vnc suffix (note there will be no buffer overrun)
 	strcat(fname, ".vnc");
@@ -142,6 +165,15 @@ int ClientConnection::LoadConnection(char *fname, bool sess)
 			return -1;
 		}
 	}
+	// GetPrivateProfileString needs a real path.  A relative name is resolved
+	// against the Windows directory, which is rarely what the user meant, but
+	// leave that behaviour alone - just make sure fname is not NULL/empty,
+	// which happens when the /config switch is given without a value.
+	if (fname == NULL || fname[0] == '\0') {
+		MessageBox(m_hwnd, "No configuration file specified", "Config file error",
+				   MB_ICONERROR | MB_OK);
+		return -1;
+	}
 	if (GetPrivateProfileString("connection", "host", "", m_host, MAX_HOST_NAME_LEN, fname) == 0) {
 		MessageBox(m_hwnd, "Error reading host name from file", "Config file error", MB_ICONERROR | MB_OK);
 		return -1;
@@ -154,13 +186,25 @@ int ClientConnection::LoadConnection(char *fname, bool sess)
 
 	char buf[1026];
 	m_passwdSet = false;
-	if (GetPrivateProfileString("connection", "password", "", buf, 32, fname) > 0) {
+	memset(buf, 0, sizeof(buf));
+	// The password is stored as MAXPWLEN hex byte pairs.  Require the full
+	// length before parsing: the old code accepted any non-empty string and
+	// then read buf+i*2 for i up to MAXPWLEN-1, running past the terminator
+	// (and past the 32-byte limit it passed to GetPrivateProfileString) for a
+	// short or truncated entry.
+	DWORD pwLen = GetPrivateProfileString("connection", "password", "",
+										  buf, 32, fname);
+	if (pwLen >= (DWORD)(MAXPWLEN * 2)) {
 		for (int i = 0; i < MAXPWLEN; i++)	{
 			int x = 0;
-			sscanf(buf+i*2, "%2x", &x);
+			if (sscanf(buf + i * 2, "%2x", &x) != 1) {
+				m_passwdSet = false;
+				memset(m_encPasswd, 0, sizeof(m_encPasswd));
+				break;
+			}
 			m_encPasswd[i] = (unsigned char) x;
+			m_passwdSet = true;
 		}
-		m_passwdSet = true;
 	}
 	if (sess) {
 		m_opts.Load(fname);

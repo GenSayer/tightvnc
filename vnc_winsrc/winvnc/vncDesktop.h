@@ -45,7 +45,20 @@ class vncDesktop;
 #include "RectList.h"
 #include "translate.h"
 #include <omnithread.h>
-#include "VideoDriver.h"
+// WIN32S: VideoDriver.h is NOT included any more.
+//
+// The mirror driver requires Windows 2000 or later, and VideoDriver.cpp imports
+// ChangeDisplaySettingsEx, EnumDisplayDevices and ExtEscape - names that do not
+// exist in the Win32s USER32/GDI32 stub sets.  Because the linker records every
+// import whether or not the code path can run, merely COMPILING that file into
+// the EXE prevents it from loading on Win32s.
+//
+// InitVideoDriver() returns FALSE unconditionally (see vncDesktop.cpp) and
+// m_videodriver is always NULL.  The member and the class pointer type are kept
+// so that the many "if (m_videodriver != NULL)" guards still compile, which is
+// why a forward declaration is enough.
+// #include "VideoDriver.h"
+class vncVideoDriver;
 
 // Constants
 extern const UINT RFB_SCREEN_UPDATE;
@@ -65,7 +78,9 @@ public:
 
 // Methods
 public:
-	// Make the desktop thread & window proc friends
+	// WIN32S: class vncDesktopThread no longer exists (see the long note in
+	// vncDesktop.cpp).  The friend declaration is retained only so that the
+	// name remains valid if anything still refers to it.
 	friend class vncDesktopThread;
 	friend LRESULT CALLBACK DesktopWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
@@ -74,6 +89,16 @@ public:
 	~vncDesktop();
 
 	BOOL Init(vncServer *pSrv);
+
+	// ---- single-threaded driver (see vncDesktop.cpp) ---------------------
+	//
+	// Called from the application idle loop.  Performs the change detection
+	// that the desktop thread used to do when its message queue went empty.
+	// Returns FALSE when the desktop has shut down.
+	BOOL PumpIdle();
+
+	// TRUE once PumpIdle() has torn the desktop down.
+	BOOL IsShutdown() { return m_shutdown_requested; }
 
 	// Hooking stuff
 	void TryActivateHooks();
@@ -88,7 +113,7 @@ public:
 	void SetLocalInputPriorityHook(BOOL enable);
 	void CaptureScreen(RECT &UpdateArea, BYTE *scrBuff);
 	void CaptureScreenFromAdapterGeneral(RECT UpdateArea, BYTE *scrBuff);
-	void CaptureScreenFromMirage(RECT UpdateArea, BYTE *scrBuff);
+	// CaptureScreenFromMirage() removed with the mirror driver.
 	int ScreenBuffSize();
 	HWND Window() { return m_hwnd; }
 
@@ -192,9 +217,19 @@ protected:
 
 	// Generally useful stuff
 	vncServer 		*m_server;
-	omni_thread 	*m_thread;
+	// WIN32S: m_thread removed - there is no desktop thread.  m_shutdown_requested
+	// replaces "the thread has returned".
+	BOOL			m_shutdown_requested;
 	HWND			m_hwnd;
 	BOOL			m_polling_flag;
+
+	// WIN32S: last time PerformPolling() actually ran, from GetTickCount().
+	//
+	// The TIMER_POLL window timer is delivered erratically on this platform (the
+	// diagnostic measured 53 ticks in 2303 idle passes, and sometimes none at
+	// all), so CheckUpdates() falls back to an elapsed-time test.  See the note
+	// there.
+	DWORD			m_lastPollTick;
 	UINT			m_timer_polling;
 	UINT			m_timer_blank_screen;
 	HWND			m_hnextviewer;
@@ -203,11 +238,37 @@ protected:
 	BOOL			m_hooks_may_change;
 
 	// Video driver stuff
+	// Always NULL - see the note on VideoDriver.h above.
 	vncVideoDriver	*m_videodriver;
 
 	// device contexts for memory and the screen
 	HDC				m_hmemdc;
 	HDC				m_hrootdc;
+
+	// WIN32S: a memory DC with NO bitmap selected, used solely for GetDIBits.
+	//
+	// The 16-bit GDI refuses GetDIBits when the DC passed to it has a non-stock
+	// bitmap selected - which m_hmemdc does, since m_membitmap lives there for
+	// the BitBlt.  NT does not enforce that rule, which is why the original code
+	// passed m_hmemdc.  See CopyToBuffer().
+	//
+	// Created lazily on first capture and released in Shutdown().
+	HDC				m_hgetdibdc;
+
+	// WIN32S: scratch buffer for the bottom-up -> top-down row inversion in
+	// CopyToBuffer().  The 16-bit GDI cannot produce a top-down DIB (negative
+	// biHeight), so each capture is read bottom-up into here and then copied out
+	// row by row in the correct order.  Cached across calls because this is the
+	// hot path.  Freed in Shutdown().
+	BYTE			*m_flipbuff;
+	DWORD			m_flipbuffsize;
+
+	// WIN32S: TRUE when m_DIBbits points at a BOTTOM-UP DIB section.
+	//
+	// CreateDIBSection cannot produce a top-down section on the 16-bit GDI, so on
+	// this platform the section is bottom-up and every direct read of m_DIBbits
+	// must invert the row index.  See CopyToBuffer (both overloads).
+	BOOL			m_DIBbits_bottom_up;
 
 	// New and old bitmaps
 	HBITMAP			m_membitmap;

@@ -64,10 +64,24 @@ void SharedDesktopArea::Init()
 	// configure select window picture
 	//
 
+	// Subclass the bitmap-cursor static control so we can track the mouse over
+	// it (the "pick a window to share" crosshair).
+	//
+	// WIN32S: IDC_BMPCURSOR is an SS_BITMAP static, and SS_BITMAP is Win95+ - a
+	// Windows 3.1 static control cannot display a bitmap resource by ID (see the
+	// note in WinVNC.rc).  The control still EXISTS, so subclassing works and the
+	// window-picking still functions; only the crosshair picture is missing.
+	//
+	// GetDlgItem can return NULL if the control is absent from the template.
+	// SetWindowLong(NULL, ...) is an invalid-window call, and m_OldBmpWndProc
+	// would then be 0 - which BmpWndProc later hands to CallWindowProc.
 	HWND bmp_hWnd = GetDlgItem(m_hwnd, IDC_BMPCURSOR);
-	m_OldBmpWndProc = GetWindowLong(bmp_hWnd, GWL_WNDPROC);
-	SetWindowLong(bmp_hWnd, GWL_WNDPROC, (LONG)BmpWndProc);
-	SetWindowLong(bmp_hWnd, GWL_USERDATA, (LONG)this);
+	m_OldBmpWndProc = 0;
+	if (bmp_hWnd != NULL) {
+		m_OldBmpWndProc = GetWindowLong(bmp_hWnd, GWL_WNDPROC);
+		SetWindowLong(bmp_hWnd, GWL_WNDPROC, (LONG)BmpWndProc);
+		SetWindowLong(bmp_hWnd, GWL_USERDATA, (LONG)this);
+	}
 
 	//
 	// setup match window
@@ -207,6 +221,19 @@ LRESULT CALLBACK SharedDesktopArea::BmpWndProc(HWND hWnd, UINT message, WPARAM w
 	HCURSOR hNewCursor, hOldCursor;
 	SharedDesktopArea* pDialog = (SharedDesktopArea*) GetWindowLong(hWnd, GWL_USERDATA);
 
+	// WIN32S: pDialog can be NULL.
+	//
+	// The subclass is installed in three steps (GetWindowLong / SetWindowLong
+	// WNDPROC / SetWindowLong USERDATA), and messages can be delivered to this
+	// procedure between the second and third - the control is already subclassed
+	// but the back-pointer is not yet stored.  Every case below dereferences
+	// pDialog.
+	//
+	// It is also NULL if the SetWindowLong(GWL_USERDATA) was skipped because
+	// GetDlgItem returned NULL (see InitPage).
+	if (pDialog == NULL)
+		return DefWindowProc(hWnd, message, wParam, lParam);
+
 	switch (message) {
 
 	case WM_SETCURSOR :
@@ -215,8 +242,12 @@ LRESULT CALLBACK SharedDesktopArea::BmpWndProc(HWND hWnd, UINT message, WPARAM w
 			hNewImage = LoadBitmap(hAppInstance, MAKEINTRESOURCE(IDB_BITMAP2));
 			hOldImage = (HBITMAP)::SendMessage(hWnd, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)hNewImage);
 			DeleteObject(hOldImage);
-			hNewCursor = (HCURSOR)LoadImage(hAppInstance, MAKEINTRESOURCE(IDC_CURSOR1),
-											IMAGE_CURSOR, 32, 32, LR_DEFAULTCOLOR);
+			// WIN32S: LoadImage is Win95+ and is not exported by the Win32s
+			// USER32 - having the name in the import table would stop the EXE
+			// loading.  Win32sLoadImageIcon resolves it at run time; when it is
+			// unavailable it falls back to LoadIcon, so pass the cursor through
+			// LoadCursor instead, which exists everywhere.
+			hNewCursor = LoadCursor(hAppInstance, MAKEINTRESOURCE(IDC_CURSOR1));
 			hOldCursor = SetCursor(hNewCursor);
 			DestroyCursor(hOldCursor);
 			pDialog->m_bCaptured = TRUE;
@@ -276,7 +307,40 @@ LRESULT CALLBACK SharedDesktopArea::BmpWndProc(HWND hWnd, UINT message, WPARAM w
 
 	case WM_PAINT:
 	case STM_SETIMAGE:
-		return CallWindowProc((WNDPROC)pDialog->m_OldBmpWndProc,
+		// ==================================================================
+		// MSVC 4.1 / WIN32S: the cast must be to FARPROC, not WNDPROC.
+		//
+		// This produced
+		//   error C2664: 'CallWindowProcA' : cannot convert parameter 1 from
+		//   'long (__stdcall *)(void *,unsigned int,unsigned int,long)'
+		//   to 'int (__stdcall *)(void)'
+		//
+		// The MSVC 4.1 SDK declares CallWindowProc's first parameter as FARPROC,
+		// which in a NON-STRICT build is "int (__stdcall *)(void)" - a
+		// parameterless function pointer.  Later SDKs declare it as WNDPROC, so
+		// "(WNDPROC)" is the correct cast there and this code compiles
+		// unchanged on them.
+		//
+		// C++ will not implicitly convert between two different function-pointer
+		// types, so casting to WNDPROC does not help: the compiler still has to
+		// convert WNDPROC -> FARPROC to make the call, and it refuses.
+		//
+		// Casting to FARPROC directly is what this SDK wants.  Note this is
+		// specifically a consequence of NOT defining STRICT (see the note in
+		// stdhdrs.h): with STRICT, windows.h would declare the parameter as
+		// WNDPROC even on 4.1 - but STRICT breaks the HWND/HANDLE typedefs that
+		// win32s_fix.h has to make before windows.h is seen.
+		//
+		// m_OldBmpWndProc is a LONG (the return value of GetWindowLong), so the
+		// cast is from an integer type either way.
+		// ==================================================================
+		// Guard against a failed subclass (m_OldBmpWndProc == 0): CallWindowProc
+		// with a NULL proc is undefined, and on Win32s it would call through a
+		// null pointer.
+		if (pDialog->m_OldBmpWndProc == 0)
+			return DefWindowProc(hWnd, message, wParam, lParam);
+
+		return CallWindowProc((FARPROC)pDialog->m_OldBmpWndProc,
 							  hWnd, message, wParam, lParam);
 	
 	default:

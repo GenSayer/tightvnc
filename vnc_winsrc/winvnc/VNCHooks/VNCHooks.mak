@@ -64,7 +64,7 @@ BSC32_FLAGS=/nologo /o"$(OUTDIR)\VNCHooks.bsc"
 BSC32_SBRS= \
 	
 LINK32=link.exe
-LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:windows /dll /incremental:no /pdb:"$(OUTDIR)\VNCHooks.pdb" /machine:PPC /def:".\VNCHooks.def" /out:"$(OUTDIR)\VNCHooks.dll" /implib:"$(OUTDIR)\VNCHooks.lib" /libpath:"\\shallot\omni\release\lib\x86_nt_4.0" 
+LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:windows /dll /incremental:no /pdb:"$(OUTDIR)\VNCHooks.pdb" /machine:MIPS /def:".\VNCHooks.def" /out:"$(OUTDIR)\VNCHooks.dll" /implib:"$(OUTDIR)\VNCHooks.lib" /libpath:"\\shallot\omni\release\lib\x86_nt_4.0" 
 DEF_FILE= \
 	".\VNCHooks.def"
 LINK32_OBJS= \
@@ -112,7 +112,7 @@ BSC32_FLAGS=/nologo /o"$(OUTDIR)\VNCHooks.bsc"
 BSC32_SBRS= \
 	
 LINK32=link.exe
-LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:windows /dll /incremental:yes /pdb:"$(OUTDIR)\VNCHooks.pdb" /debug /machine:PPC /def:".\VNCHooks.def" /out:"$(OUTDIR)\VNCHooks.dll" /implib:"$(OUTDIR)\VNCHooks.lib" /pdbtype:sept 
+LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:windows /dll /incremental:yes /pdb:"$(OUTDIR)\VNCHooks.pdb" /debug /machine:MIPS /def:".\VNCHooks.def" /out:"$(OUTDIR)\VNCHooks.dll" /implib:"$(OUTDIR)\VNCHooks.lib" /pdbtype:sept 
 DEF_FILE= \
 	".\VNCHooks.def"
 LINK32_OBJS= \
@@ -158,7 +158,7 @@ BSC32_FLAGS=/nologo /o"$(OUTDIR)\VNCHooks.bsc"
 BSC32_SBRS= \
 	
 LINK32=link.exe
-LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:windows /dll /profile /debug /machine:PPC /def:".\VNCHooks.def" /out:"$(OUTDIR)\VNCHooks.dll" /implib:"$(OUTDIR)\VNCHooks.lib" 
+LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:windows /dll /profile /debug /machine:MIPS /def:".\VNCHooks.def" /out:"$(OUTDIR)\VNCHooks.dll" /implib:"$(OUTDIR)\VNCHooks.lib" 
 DEF_FILE= \
 	".\VNCHooks.def"
 LINK32_OBJS= \
@@ -200,7 +200,7 @@ BSC32_FLAGS=/nologo /o"$(OUTDIR)\VNCHooks.bsc"
 BSC32_SBRS= \
 	
 LINK32=link.exe
-LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:windows /dll /incremental:no /pdb:"$(OUTDIR)\VNCHooks.pdb" /machine:PPC /def:".\VNCHooks.def" /out:"$(OUTDIR)\VNCHooks.dll" /implib:"$(OUTDIR)\VNCHooks.lib" 
+LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:windows /dll /incremental:no /pdb:"$(OUTDIR)\VNCHooks.pdb" /machine:MIPS /def:".\VNCHooks.def" /out:"$(OUTDIR)\VNCHooks.dll" /implib:"$(OUTDIR)\VNCHooks.lib" 
 DEF_FILE= \
 	".\VNCHooks.def"
 LINK32_OBJS= \

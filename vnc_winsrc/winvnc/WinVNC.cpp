@@ -19,12 +19,10 @@
 //
 // TightVNC distribution homepage on the Web: http://www.tightvnc.com/
 //
-// If the source code for the VNC system is not available from the place 
+// If the source code for the VNC system is not available from the place
 // whence you received this file, check http://www.uk.research.att.com/vnc or contact
 // the authors on vnc@uk.research.att.com for information on obtaining it.
 
-
-// WinVNC.cpp
 
 // 24/11/97		WEZ
 
@@ -43,6 +41,7 @@
 #include "vncMenu.h"
 #include "vncInstHandler.h"
 #include "vncService.h"
+#include "Win32sApi.h"
 
 extern "C" {
 #include "ParseHost.h"
@@ -70,6 +69,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 		_CrtSetDbgFlag( tmpFlag );
 	}
 #endif
+
+	// WIN32S: resolve the Win95-and-later APIs before anything else uses them.
+	// Must be first: vncMenu's constructor needs Win32sShellNotifyIcon, and
+	// several dialogs need Win32sGetWorkArea.
+	Win32sApiInit();
 
 	// Save the application instance and main thread id
 	hAppInstance = hInstance;
@@ -121,7 +125,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 		if (strncmp(&szCmdLine[i], winvncRunService, arglen) == 0 &&
 			arglen == strlen(winvncRunService))
 		{
-			// Run WinVNC as a service
+			// Run WinVNC as a service.
+			// WIN32S: stubbed - reports that services are unavailable.
 			return vncService::WinVNCServiceMain();
 		}
 		if (strncmp(&szCmdLine[i], winvncRunAsUserApp, arglen) == 0 &&
@@ -352,16 +357,63 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 	return 0;
 }
 
-// This is the main routine for WinVNC when running as an application
-// (under Windows 95 or Windows NT)
-// Under NT, WinVNC can also run as a service.  The WinVNCServerMain routine,
-// defined in the vncService header, is used instead when running as a service.
+// This is the main routine for WinVNC when running as an application.
+//
+// ==========================================================================
+// WIN32S SINGLE-THREADED MAIN LOOP
+//
+// The original was a plain GetMessage() loop:
+//
+//     while (GetMessage(&msg, NULL, 0, 0)) {
+//         TranslateMessage(&msg);
+//         DispatchMessage(&msg);
+//     }
+//
+// That worked because everything else ran on its own thread: one thread per
+// client reading its socket, one for the desktop poll, one blocking in accept()
+// on the listening socket, one for the HTTP listener.
+//
+// With no threads, this loop must also drive all of that.  The structure is the
+// same one used by the viewer:
+//
+//   PeekMessage   - drain every pending window message first, so that the tray
+//                   menu, the properties dialogs and repainting always take
+//                   priority over network and capture work.
+//
+//   PumpIdle      - vncServer::PumpIdle() accepts connections, services each
+//                   client, polls the screen and reaps finished clients.  See
+//                   the long comment on it in vncServer.cpp for the ordering
+//                   rationale.
+//
+//   WaitMessage   - when there is nothing at all to do, yield.  This is
+//                   essential on Win32s: scheduling is cooperative, so a busy
+//                   loop here freezes every other application on the machine,
+//                   including the very Windows 3.1 desktop we are trying to
+//                   serve.
+//
+//   A 50 ms timer makes WaitMessage() safe.  Without it, a client that sends a
+//   request while we are idle would not be noticed until some unrelated message
+//   arrived.  The timer is a NULL-window timer, so its WM_TIMER simply wakes the
+//   loop and is then discarded by DispatchMessage.
+//
+// Note the deliberate asymmetry with the viewer: the viewer pumps up to 16
+// network messages per pass, because it is decoding a screen and throughput
+// matters.  Here PumpIdle() is called once per pass, because its third step is a
+// screen capture - doing that repeatedly without returning to the message queue
+// would make the local machine unusable.
+// ==========================================================================
 
 int WinVNCAppMain()
 {
-	// Set this process to be the last application to be shut down.
-	SetProcessShutdownParameters(0x100, 0);
-	
+	// WIN32S: SetProcessShutdownParameters is a Win95/NT API.  It is not in the
+	// Win32s KERNEL32 stub set, and because the linker records it as an import
+	// the EXE would not LOAD on Win32s at all - the process would never start and
+	// there would be no diagnostic.  It only adjusts shutdown ORDER, which is
+	// meaningless on a system with no orderly shutdown protocol, so it is simply
+	// dropped rather than resolved dynamically.
+	//
+	// Was:  SetProcessShutdownParameters(0x100, 0);
+
 	// Check for previous instances of WinVNC!
 	vncInstHandler instancehan;
 	if (!instancehan.Init())
@@ -378,7 +430,11 @@ int WinVNCAppMain()
 	server.SetName(szAppName);
 	vnclog.Print(LL_STATE, VNCLOG("server created ok\n"));
 
-	// Create tray icon & menu if we're running as an app
+	// Create tray icon & menu if we're running as an app.
+	//
+	// WIN32S: there is no system tray on Windows 3.1.  vncMenu detects that and
+	// shows an ordinary (minimised) window instead, so that the user still has
+	// somewhere to click for the menu and a way to quit.  See vncMenu.cpp.
 	vncMenu *menu = new vncMenu(&server);
 	if (menu == NULL)
 	{
@@ -386,13 +442,58 @@ int WinVNCAppMain()
 		PostQuitMessage(0);
 	}
 
-	// Now enter the message handling loop until told to quit!
-	MSG msg;
-	while (GetMessage(&msg, NULL, 0,0) ) {
-		vnclog.Print(LL_INTINFO, VNCLOG("message %d received\n"), msg.message);
-		TranslateMessage(&msg);	// convert key ups and downs to chars
-		DispatchMessage(&msg);
+	// ----------------------------------------------------------------------
+	// Main loop.  See the long comment above.
+	// ----------------------------------------------------------------------
+
+	const UINT IDLE_POLL_TIMER = 0x7FF2;
+	const UINT IDLE_POLL_MS    = 50;
+
+	// SetTimer returns UINT in the MSVC 4.1 SDK, not UINT_PTR.
+	UINT pollTimer = SetTimer(NULL, IDLE_POLL_TIMER, IDLE_POLL_MS, NULL);
+	if (pollTimer == 0) {
+		// Windows 3.1 has a small system-wide timer limit and this can genuinely
+		// fail.  Without the timer the loop still works, but it will only notice
+		// network activity when some other message arrives - so warn loudly.
+		vnclog.Print(LL_INTERR,
+			VNCLOG("could not create idle timer - responsiveness will suffer\n"));
 	}
+
+	MSG msg;
+	memset(&msg, 0, sizeof(msg));	// so the final "return msg.wParam" is defined
+									// even if the loop never runs
+	BOOL quit = FALSE;
+
+	while (!quit)
+	{
+		// 1. Drain the message queue.
+		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+		{
+			if (msg.message == WM_QUIT) {
+				quit = TRUE;
+				break;
+			}
+			vnclog.Print(LL_INTINFO, VNCLOG("message %d received\n"), msg.message);
+			TranslateMessage(&msg);	// convert key ups and downs to chars
+			DispatchMessage(&msg);
+		}
+		if (quit)
+			break;
+
+		// 2. Drive the server: accept connections, service clients, poll the
+		//    screen, reap finished clients.
+		BOOL busy = server.PumpIdle();
+
+		// 3. Nothing to do?  Yield until the next message or timer tick.
+		if (!busy)
+		{
+			if (!PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE))
+				WaitMessage();
+		}
+	}
+
+	if (pollTimer != 0)
+		KillTimer(NULL, pollTimer);
 
 	vnclog.Print(LL_STATE, VNCLOG("shutting down server\n"));
 

@@ -19,67 +19,62 @@
 //
 // TightVNC distribution homepage on the Web: http://www.tightvnc.com/
 //
-// If the source code for the VNC system is not available from the place 
+// If the source code for the VNC system is not available from the place
 // whence you received this file, check http://www.uk.research.att.com/vnc or contact
 // the authors on vnc@uk.research.att.com for information on obtaining it.
 
+
 // vncTimedMsgBox
 
-// vncTimedMsgBox::Do spawns an omni-thread to draw the message
-// box and wait a few seconds before returning, leaving the message-box displayed
-// until WinVNC quits.
+// ==========================================================================
+// WIN32S SINGLE-THREADED CONVERSION
+// ==========================================================================
+//
+// The original spawned an omni_thread to display a MessageBox and then slept for
+// four seconds in the CALLING thread, so that the box stayed up while the caller
+// carried on (and ultimately until WinVNC quit, since nothing ever dismissed it).
+//
+// That design does not survive the loss of threads, and it was already dubious:
+//
+//   * vncTimedMsgBoxThread::run() called MessageBox(), which runs its own modal
+//     message loop.  The thread therefore never returned until the user clicked
+//     OK - and because the thread was started with start() (detached), nothing
+//     ever joined it or freed the object.  The strdup'd caption and title leaked
+//     on every call.
+//
+//   * The caller's "Sleep(4000)" was pure guesswork about how long the box needs
+//     to appear.
+//
+// On Win32s there is no second thread to put the box on, and a modal MessageBox
+// from the single thread would block the entire server - including screen
+// polling and every connected client - until someone dismissed it.
+//
+// The replacement is a plain MessageBox with MB_OK, shown modally, but ONLY from
+// the places that genuinely want to interrupt the user.  Since the sole remaining
+// caller is vncService.cpp (which now consists of stubs that report unavailable
+// features), the four-second flourish serves no purpose.
+//
+// If a non-blocking notification is ever needed, the right implementation on this
+// platform is a modeless dialog created with CreateDialog() plus a WM_TIMER to
+// dismiss it - not a thread.
+// ==========================================================================
 
 #include "stdhdrs.h"
-#include "omnithread.h"
-
 #include "vncTimedMsgBox.h"
-
-// The message-box delay
-const UINT TIMED_MSGBOX_DELAY = 4000;
-
-// The vncTimedMsgBoxThread class
-
-class vncTimedMsgBoxThread : public omni_thread
-{
-public:
-	vncTimedMsgBoxThread(const char *caption, const char *title, UINT type)
-	{
-		m_type = type;
-		m_caption = strdup(caption);
-		m_title = strdup(title);
-	};
-	virtual ~vncTimedMsgBoxThread()
-	{
-		if (m_caption != NULL)
-			free(m_caption);
-		if (m_title != NULL)
-			free(m_title);
-	};
-	virtual void run(void *)
-	{
-		// Create the desired dialog box
-		if (m_caption == NULL)
-			return;
-		MessageBox(NULL, m_caption, m_title, m_type | MB_OK);
-	};
-	char *m_caption;
-	char *m_title;
-	UINT m_type;
-};
 
 // The main vncTimedMsgBox class
 
 void
 vncTimedMsgBox::Do(const char *caption, const char *title, UINT type)
 {
-	// Create the thread object
-	vncTimedMsgBoxThread *thread = new vncTimedMsgBoxThread(caption, title, type);
-	if (thread == NULL)
+	if (caption == NULL)
 		return;
+	if (title == NULL)
+		title = "WinVNC";
 
-	// Start the thread object
-	thread->start();
-
-	// And wait a few seconds
-	Sleep(TIMED_MSGBOX_DELAY);
+	// MB_SETFOREGROUND so the box is visible even if another application has
+	// focus; MB_TASKMODAL rather than the default because we have no window to
+	// parent it to and MB_TASKMODAL disables only OUR windows, which on Win32s
+	// (one VM, one message queue) is the polite choice.
+	MessageBox(NULL, caption, title, type | MB_OK | MB_SETFOREGROUND | MB_TASKMODAL);
 }

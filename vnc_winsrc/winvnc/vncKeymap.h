@@ -30,12 +30,10 @@
 #include "rfb.h"
 #include "vncServer.h"
 
-#ifndef _BOOLHACKDEFINED
-#define _BOOKHACKDEFINED
-typedef int bool;
-#define false 0
-#define true 1
-#endif
+// WIN32S: bool/true/false come from win32s_fix.h (force-included).  Do not
+// redefine them here - see the long note in Log.h.  Note the original guard
+// tested _BOOLHACKDEFINED but defined _BOOKHACKDEFINED (K, not L), so it never
+// actually guarded anything.
 
 class vncKeymap {
 public:

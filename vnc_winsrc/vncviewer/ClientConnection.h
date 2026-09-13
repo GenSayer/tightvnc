@@ -42,6 +42,7 @@
 #include "KeyMap.h"
 #include "ConnectingDialog.h"
 #include "FileTransfer.h"
+#include "Win32sApi.h"
 #include "zlib/zlib.h"
 extern "C" {
 #include "libjpeg/jpeglib.h"
@@ -57,7 +58,22 @@ extern "C" {
 class ClientConnection;
 typedef void (ClientConnection:: *tightFilterFunc)(int);
 
-class ClientConnection  : public omni_thread
+//
+// WIN32S SINGLE-THREADED NOTE
+//
+// ClientConnection used to derive from omni_thread and run its receive loop on
+// a second thread (run_undetached).  Win32s has no threads, so the class is now
+// a plain object driven from the application's idle loop:
+//
+//   Run()      - blocking connect + handshake, as before, then StartSession()
+//                instead of start_undetached()
+//   PumpIdle() - called repeatedly from the main message loop; if a whole
+//                server message is available it reads and processes exactly
+//                one message, then returns.  Never blocks.
+//   IsDead()   - true once the session has ended; the app then deletes us
+//                from a safe place (never from inside a window procedure).
+//
+class ClientConnection
 {
 public:
 	ClientConnection(VNCviewerApp *pApp);
@@ -68,17 +84,64 @@ public:
 	void Run();
 	void KillThread();
 	void CopyOptions(ClientConnection *source);
+
+	// Options accessors.  m_opts is private, and the auth-retry logic in
+	// VNCviewerApp32 now needs to copy the options *out* of a connection before
+	// deleting it (so that only one ClientConnection exists at a time - see the
+	// notes there).  VNCOptions::operator= takes a non-const reference, hence
+	// the non-const accessor.
+	VNCOptions& GetOptions() { return m_opts; }
+	void SetOptions(VNCOptions &opts) { m_opts = opts; }
+
 	int  LoadConnection(char *fname, bool sess);
 	void UnloadConnection() { m_opts.m_configSpecified = false; }
+
+	// ---- single-threaded session driver (see ClientConnection.cpp) --------
+
+	// Send the first update request and mark the session live.  Replaces
+	// omni_thread::start_undetached().
+	void StartSession();
+
+	// Non-blocking: service at most one pending server message.  Returns
+	// true if it did some work (so the caller can keep pumping before it
+	// goes back to sleep in GetMessage).
+	bool PumpIdle();
+
+	// True when the session has finished and this object may be deleted.
+	bool IsDead() { return m_dead; }
+
+	// Called by the window procedure on WM_DESTROY.  Marks the object for
+	// deletion by the app's reaper instead of doing the old join().
+	void OnWindowDestroyed();
+
 	int m_port;
     TCHAR m_host[MAX_HOST_NAME_LEN];
 	HWND m_hSess;
 
 private:
+	// Window procedures.
+	//
+	// Each CALLBACK is a thin wrapper (defined in ClientConnection.cpp) that
+	//   * returns DefWindowProc immediately if the 'pseudo-this' in
+	//     GWL_USERDATA is not set yet - messages such as WM_GETMINMAXINFO and
+	//     WM_NCCREATE arrive *during* CreateWindow, before SetWindowLong has
+	//     run, and the original code dereferenced NULL for them; and
+	//   * catches every Exception, so nothing is ever thrown across the USER32
+	//     stack frame that dispatched the message.  MSVC 4.1 has no unwind
+	//     information for that frame, so a throw there corrupts the stack or
+	//     terminates the process.
+	// The real handlers are the *Impl functions.
 	static LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam);
 	static LRESULT CALLBACK WndProc1(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam);
 	static LRESULT CALLBACK Proc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam);
 	static LRESULT CALLBACK ScrollProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam);
+
+	static LRESULT WndProcImpl(ClientConnection *_this, HWND hwnd, UINT iMsg,
+							   WPARAM wParam, LPARAM lParam);
+	static LRESULT WndProc1Impl(ClientConnection *_this, HWND hwnd, UINT iMsg,
+								WPARAM wParam, LPARAM lParam);
+	static LRESULT ScrollProcImpl(ClientConnection *_this, HWND hwnd, UINT iMsg,
+								  WPARAM wParam, LPARAM lParam);
 	void DoBlit();
 	VNCviewerApp *m_pApp;
 	ConnectingDialog *m_connDlg;
@@ -89,6 +152,27 @@ private:
 	FileTransfer *m_pFileTransfer;
 
 	SOCKET m_sock;
+ 	// WIN32S re-entrancy guard: set around the recv()/send() loops in
+ 	// ReadExact/WriteExact.  This build is single-threaded and the mutexes
+ 	// below are no-ops, so if a write ever runs while a read is in flight
+ 	// (or vice versa) it can only be OS-level dispatch during a blocking
+ 	// Winsock call - which the VNCVIEW logs confirm happens
+ 	// (WSAEINPROGRESS on a PointerEvent write mid-update).  Writes during a
+ 	// read are deferred to m_pendingHead/Tail and flushed when the read
+ 	// completes; the remaining EINPROGRESS retries cover transient busies.
+ 	bool m_inReadExact, m_inWriteExact;
+	// WIN32S deferred-write queue: on Win32s the OS dispatches window input
+	// from inside a blocking recv(), so a key/mouse/update-request WriteExact
+	// can run while a bulk ReadExact (e.g. a full-screen Raw rect) is still
+	// in flight on the same socket.  The stack answers the re-entrant send
+	// with WSAEINPROGRESS and, once retries exhaust, the session drops
+	// (VNCVIEW1/2.LOG: "WriteExact during ReadExact" -> 10036 -> 10038).
+	// While m_inReadExact is set, WriteExact() enqueues a copy here instead
+	// of touching the socket; ReadExact() flushes FIFO on success.
+	struct PendingWrite { char *data; int len; PendingWrite *next; };
+	PendingWrite *m_pendingHead, *m_pendingTail;
+	void FlushPendingWrites();
+	void DiscardPendingWrites();
 	bool m_serverInitiated;
 	HWND m_hwnd, m_hbands, m_hwnd1, 
 		 m_hToolbar, m_hwndscroll;
@@ -236,9 +320,34 @@ private:
 	void WriteExact(char *buf, int bytes);
 	char *ReadFailureReason();
 
-	// This is what controls the thread
-	void * run_undetached(void* arg);
+	// Session state.
+	//
+	// m_bKillThread keeps its old name (it is tested in many places) but now
+	// simply means "stop servicing this session".
+	// m_dead is set when the session is over and the object can be freed.
 	bool m_bKillThread;
+	bool m_dead;
+
+	// True once StartSession() has run, so PumpIdle() knows the handshake is
+	// complete and it is legal to read protocol messages.
+	bool m_sessionStarted;
+
+	// Non-blocking check: is there at least one byte to read on the socket?
+	bool SocketHasData();
+
+	// ---- bulk pixel drawing (see the long comment in ClientConnection.cpp) --
+	//
+	// These replace the per-pixel SetPixel loops that SETPIXELS/SETPIXELS_NOCONV
+	// used to expand to.  One SetDIBitsToDevice call per band of rows instead of
+	// one GDI call per pixel.
+	void DrawPixelBlock(char *buffer, int bpp, int x, int y, int w, int h);
+	void DrawColorRefBlock(char *buffer, int x, int y, int w, int h);
+
+	// Scratch DIB used by the two functions above.  Reused between calls; freed
+	// in the destructor.
+	unsigned char *m_dibbuf;
+	size_t m_dibbufsize;
+	bool CheckDibBufferSize(size_t bufsize);
 
 	// Utilities
 
@@ -272,6 +381,9 @@ private:
 	void CheckBufferSize(size_t bufsize);
 	char *m_netbuf;
 	size_t m_netbufsize;
+	// These are now empty no-op objects (see omnithread/omnithread.h).  They
+	// are retained only so that the many "omni_mutex_lock l(m_xxxMutex);"
+	// statements in the decoders compile without edits.
 	omni_mutex m_bufferMutex, 
 		m_bitmapdcMutex,  m_clipMutex,
 		m_readMutex, m_writeMutex, m_sockMutex,
@@ -379,10 +491,23 @@ private:
 
 // Some handy classes for temporary GDI object selection
 // These select objects when constructed and automatically release them when destructed.
+//
+// Both guard against a NULL DC or object.  m_hPalette is NULL on a true-colour
+// display (SetupPixelFormat only creates a palette for 8-bit), and m_hBitmapDC
+// is NULL until CreateDisplay has run - so these constructors were being handed
+// NULLs on ordinary code paths.
 class ObjectSelector {
 public:
-	ObjectSelector(HDC hdc, HGDIOBJ hobj) { m_hdc = hdc; m_hOldObj = SelectObject(hdc, hobj); }
-	~ObjectSelector() { m_hOldObj = SelectObject(m_hdc, m_hOldObj); }
+	ObjectSelector(HDC hdc, HGDIOBJ hobj) {
+		m_hdc = hdc;
+		m_hOldObj = NULL;
+		if (hdc != NULL && hobj != NULL)
+			m_hOldObj = SelectObject(hdc, hobj);
+	}
+	~ObjectSelector() {
+		if (m_hdc != NULL && m_hOldObj != NULL)
+			m_hOldObj = SelectObject(m_hdc, m_hOldObj);
+	}
 	HGDIOBJ m_hOldObj;
 	HDC m_hdc;
 };
@@ -391,12 +516,17 @@ class PaletteSelector {
 public:
 	PaletteSelector(HDC hdc, HPALETTE hpal) { 
 		m_hdc = hdc; 
-		m_hOldPal = SelectPalette(hdc, hpal, FALSE); 
-		RealizePalette(hdc);
+		m_hOldPal = NULL;
+		if (hdc != NULL && hpal != NULL) {
+			m_hOldPal = SelectPalette(hdc, hpal, FALSE); 
+			RealizePalette(hdc);
+		}
 	}
 	~PaletteSelector() { 
-		m_hOldPal = SelectPalette(m_hdc, m_hOldPal, FALSE); 
-		RealizePalette(m_hdc);
+		if (m_hdc != NULL && m_hOldPal != NULL) {
+			m_hOldPal = SelectPalette(m_hdc, m_hOldPal, FALSE); 
+			RealizePalette(m_hdc);
+		}
 	}
 	HPALETTE m_hOldPal;
 	HDC m_hdc;
@@ -405,7 +535,11 @@ public:
 class TempDC {
 public:
 	TempDC(HWND hwnd) { m_hdc = GetDC(hwnd); m_hwnd = hwnd; }
-	~TempDC() { ReleaseDC(m_hwnd, m_hdc); }
+	// Do not release a DC we never got.  ReleaseDC(hwnd, NULL) is a bad-handle
+	// call, and GetDC does fail on Win32s once the (small, fixed) common DC
+	// cache is exhausted - which is exactly what happens if a DC is leaked
+	// anywhere in the paint path.
+	~TempDC() { if (m_hdc != NULL) ReleaseDC(m_hwnd, m_hdc); }
 	operator HDC() {return m_hdc;};
 	HDC m_hdc;
 	HWND m_hwnd;
@@ -460,7 +594,10 @@ public:
 #ifdef UNDER_CE
 #define SETPIXEL(b,x,y,c) SetPixel((b),(x),(y),(c))
 #else
-#define SETPIXEL(b,x,y,c) SetPixelV((b),(x),(y),(c))
+// SetPixelV is Win95+ and is NOT exported by the Win32s GDI32 stub, so it must
+// never appear in the import table.  Win32sSetPixelV (Win32sApi.h) resolves it
+// at run time and falls back to SetPixel.
+#define SETPIXEL(b,x,y,c) Win32sSetPixelV((b),(x),(y),(c))
 #endif
 
 #define SETPIXELS(buffer, bpp, x, y, w, h)										\

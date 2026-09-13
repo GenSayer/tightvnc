@@ -36,42 +36,81 @@
 // This version created:
 // 24/11/97
 
+// ==========================================================================
+// WIN32S / WINDOWS 3.1 PORT - VNCHOOKS IS NOT USED
+// ==========================================================================
+//
+// On this target the hook DLL cannot work, and the reason is structural rather
+// than a missing API:
+//
+//   * VNCHooks installs SYSTEM-WIDE hooks - SetWindowsHookEx(WH_CALLWNDPROC,
+//     ..., 0) and the same for WH_GETMESSAGE and WH_SYSMSGFILTER - so that every
+//     application posts RFB_SCREEN_UPDATE to the server when it repaints.  That
+//     is how the server normally learns what changed without scanning the
+//     screen.
+//
+//   * A global hook works by injecting the hook DLL into each hooked process.
+//     Win32s runs all Win32 applications in a single VM sharing the Windows 3.1
+//     16-bit message queue, and a 32-bit Win32s DLL cannot be injected into a
+//     16-bit task.  On Windows 3.1 essentially every application IS 16-bit, so
+//     there is nothing the hooks could reach even if they installed.
+//
+//   * Even for the Win32s VM itself, WH_SYSMSGFILTER and system-wide
+//     WH_CALLWNDPROC are not supported by the Win32s USER32 subset.
+//
+// The DLL is therefore NOT BUILT and NOT LINKED for this port (VNCHooks.lib has
+// been removed from WinVNC.mak).  Instead:
+//
+//   * these eight entry points are declared as ordinary functions and
+//     implemented as stubs in winvnc/VNCHooksStub.cpp;
+//
+//   * SetHook() returns FALSE, which vncDesktop::ActivateHooks already handles -
+//     it logs the failure and calls m_server->PollFullScreen(TRUE), i.e. it
+//     falls back to polling the whole screen.  That fallback path is the normal
+//     operating mode on Win32s.
+//
+// This means the server detects screen changes by POLLING.  Polling cost is the
+// single biggest performance issue for this port; see the notes on
+// vncDesktop::PerformPolling.
+//
+// The DllExport/__declspec markers are gone: with the stubs linked directly into
+// WinVNC.exe there is no DLL boundary, and leaving __declspec(dllimport) in
+// place would make the linker look for VNCHooks.lib.
+// ==========================================================================
+
 #if !defined(_VNCHOOKS_DLL_)
 #define _VNCHOOKS_DLL_
 
 #include <windows.h>
 
 /////////////////////////////////////////////////////////////////////////////
-// Define the import/export tags
-
-#define DllImport __declspec(dllimport)
-#define DllExport __declspec(dllexport)
-
-/////////////////////////////////////////////////////////////////////////////
 //
-// Functions used by WinVNC
+// Functions used by WinVNC.
+//
+// Implemented in winvnc/VNCHooksStub.cpp for the Win32s build.  If you ever
+// build the real DLL again, restore the DllExport markers below and re-add
+// VNCHooks.lib to WinVNC.mak.
 
 extern "C"
 {
-	// DLL functions:
-	DllExport BOOL SetHook(
+	BOOL SetHook(
 		HWND hWnd,
 		UINT UpdateMsg,
 		UINT CopyMsg,
 		UINT MouseMsg
 		);											// Set the hook
-	DllExport BOOL UnSetHook(HWND hWnd);			// Remove it
+	BOOL UnSetHook(HWND hWnd);						// Remove it
 	
 	// Control keyboard filtering
-	DllExport BOOL SetKeyboardFilterHook(BOOL activate);
+	BOOL SetKeyboardFilterHook(BOOL activate);
 	// Control mouse filtering
-	DllExport BOOL SetMouseFilterHook(BOOL activate);
+	BOOL SetMouseFilterHook(BOOL activate);
 	// hooks for Local event priority impl. (win9x)
-	DllExport BOOL SetKeyboardPriorityHook(HWND hwnd, BOOL activate,UINT LocalMsg);
-	DllExport BOOL SetMousePriorityHook(HWND hwnd, BOOL activate,UINT LocalMsg);
+	BOOL SetKeyboardPriorityHook(HWND hwnd, BOOL activate,UINT LocalMsg);
+	BOOL SetMousePriorityHook(HWND hwnd, BOOL activate,UINT LocalMsg);
 	// hooks for Local event priority impl. (winNT)
-	DllExport BOOL SetKeyboardPriorityLLHook(HWND hwnd, BOOL activate,UINT LocalMsg);
-	DllExport BOOL SetMousePriorityLLHook(HWND hwnd, BOOL activate,UINT LocalMsg);
+	BOOL SetKeyboardPriorityLLHook(HWND hwnd, BOOL activate,UINT LocalMsg);
+	BOOL SetMousePriorityLLHook(HWND hwnd, BOOL activate,UINT LocalMsg);
 
 }
 

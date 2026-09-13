@@ -87,23 +87,27 @@ void ClientConnection::ReadZlibRect(rfbFramebufferUpdateRectHeader *pfburh) {
 	SETUP_COLOR_SHORTCUTS;
 
 	{
-		// No other threads can use bitmap DC
+		// (No-op lock: single-threaded.)
 		omni_mutex_lock l(m_bitmapdcMutex);
-		ObjectSelector b(m_hBitmapDC, m_hBitmap);							  \
-		PaletteSelector p(m_hBitmapDC, m_hPalette);							  \
+		ObjectSelector b(m_hBitmapDC, m_hBitmap);
+		PaletteSelector p(m_hBitmapDC, m_hPalette);
 
-		// This big switch is untidy but fast
+		// WIN32S: bulk DIB draw instead of per-pixel SetPixel - see
+		// DrawPixelBlock in ClientConnection.cpp.
 		switch (m_myFormat.bitsPerPixel) {
 		case 8:
-			SETPIXELS(m_zlibbuf, 8, pfburh->r.x, pfburh->r.y, pfburh->r.w, pfburh->r.h)
-				break;
+			DrawPixelBlock((char *)m_zlibbuf, 8, pfburh->r.x, pfburh->r.y,
+						   pfburh->r.w, pfburh->r.h);
+			break;
 		case 16:
-			SETPIXELS(m_zlibbuf, 16, pfburh->r.x, pfburh->r.y, pfburh->r.w, pfburh->r.h)
-				break;
+			DrawPixelBlock((char *)m_zlibbuf, 16, pfburh->r.x, pfburh->r.y,
+						   pfburh->r.w, pfburh->r.h);
+			break;
 		case 24:
 		case 32:
-			SETPIXELS(m_zlibbuf, 32, pfburh->r.x, pfburh->r.y, pfburh->r.w, pfburh->r.h)            
-				break;
+			DrawPixelBlock((char *)m_zlibbuf, 32, pfburh->r.x, pfburh->r.y,
+						   pfburh->r.w, pfburh->r.h);
+			break;
 		default:
 			vnclog.Print(0, _T("Invalid number of bits per pixel: %d\n"), m_myFormat.bitsPerPixel);
 			return;

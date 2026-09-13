@@ -56,6 +56,7 @@ LoginAuthDialog::LoginAuthDialog(char *vnchost, char *title, char *username)
 		m_username[255] = TEXT('\0');
 	}
 	m_passwd[0] = TEXT('\0');
+	m_cancelled = false;
 	m_vnchost = (vnchost != NULL) ? vnchost : "[unknown]";
 }
 
@@ -65,9 +66,23 @@ LoginAuthDialog::~LoginAuthDialog()
 
 int LoginAuthDialog::DoDialog()
 {
-	return DialogBoxParam(pApp->m_instance,
-						  DIALOG_MAKEINTRESOURCE(IDD_LOGIN_AUTH_DIALOG), 
-						  NULL, (DLGPROC)DlgProc, (LONG)this);
+	m_cancelled = false;
+	int res = DialogBoxParam(pApp->m_instance,
+							 DIALOG_MAKEINTRESOURCE(IDD_LOGIN_AUTH_DIALOG), 
+							 NULL, (DLGPROC)DlgProc, (LONG)this);
+	// Throw *here*, after the dialog's message loop has fully unwound - never
+	// from inside DlgProc (see the note in the IDCANCEL handler below).
+	if (res == -1) {
+		// DialogBoxParam itself failed (bad template, no memory).  Treat as a
+		// hard error rather than silently continuing with an empty password.
+		vnclog.Print(0, _T("Could not create authentication dialog: %d\n"),
+					 GetLastError());
+		throw ErrorException("Could not display the authentication dialog.");
+	}
+	if (m_cancelled || res == 0) {
+		throw QuietException("User canceled authentication.");
+	}
+	return res;
 }
 
 BOOL CALLBACK LoginAuthDialog::DlgProc(HWND hwnd, UINT uMsg,
@@ -97,20 +112,41 @@ BOOL CALLBACK LoginAuthDialog::DlgProc(HWND hwnd, UINT uMsg,
 		}
 		return TRUE;
 	case WM_COMMAND:
+		if (_this == NULL)
+			break;
 		switch (LOWORD(wParam)) {
 		case IDOK:
 			GetDlgItemText(hwnd, IDC_LOGIN_EDIT, _this->m_username, 256);
 			GetDlgItemText(hwnd, IDC_PASSWD_EDIT, _this->m_passwd, 256);
+			_this->m_cancelled = false;
 			EndDialog(hwnd, TRUE);
 			return TRUE;
 		case IDCANCEL:
+			// Was:
+			//     EndDialog(hwnd, FALSE);
+			//     throw QuietException("User canceled authentication.");
+			//
+			// Throwing out of a window procedure means throwing across the
+			// USER32 call frame that dispatched the message.  There is no C++
+			// unwind information for that frame, so with MSVC 4.1 this either
+			// terminates the process or corrupts the stack.  It is a prime
+			// suspect for "crashes when making a connection" on every platform:
+			// it fires whenever the user presses Cancel at the password prompt.
+			//
+			// Record the decision and let DoDialog() throw once we are back on
+			// our own stack.
+			_this->m_cancelled = true;
 			EndDialog(hwnd, FALSE);
-			throw QuietException("User canceled authentication.");
 			return TRUE;
 		}
 		break;
-	case WM_DESTROY:
+	case WM_CLOSE:
+		if (_this != NULL)
+			_this->m_cancelled = true;
 		EndDialog(hwnd, FALSE);
+		return TRUE;
+	case WM_DESTROY:
+		// Do not EndDialog here - the dialog is already going away.
 		return TRUE;
 	}
 	return 0;

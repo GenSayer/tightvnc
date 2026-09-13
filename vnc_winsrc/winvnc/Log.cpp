@@ -35,13 +35,28 @@ Log::Log(int mode, int level, char *filename, bool append)
 
 	// If the compiler returns full path names in __FILE__,
 	// remember the path prefix, to remove it from the log messages.
+	//
+	// WIN32S: m_prefix / m_prefix_len were only assigned INSIDE this if - so when
+	// __FILE__ has no backslash (which is the case when compiling with a relative
+	// path, as this makefile does) they were left uninitialised.  Print() then
+	// used m_prefix_len to skip that many characters of the file name and
+	// compared against m_prefix, i.e. it read through a garbage pointer on every
+	// single log line.  This constructor runs before WinMain, so the garbage is
+	// whatever the pre-main stack held.
+	m_prefix = NULL;
+	m_prefix_len = 0;
+
 	char *path = __FILE__;
 	char *ptr = strrchr(path, '\\');
 	if (ptr != NULL) {
 		m_prefix_len = ptr + 1 - path;
 		m_prefix = (char *)malloc(m_prefix_len + 1);
-		memcpy(m_prefix, path, m_prefix_len);
-		m_prefix[m_prefix_len] = '\0';
+		if (m_prefix != NULL) {
+			memcpy(m_prefix, path, m_prefix_len);
+			m_prefix[m_prefix_len] = '\0';
+		} else {
+			m_prefix_len = 0;		// keep the pair consistent
+		}
 	}
 }
 
@@ -63,9 +78,29 @@ void Log::SetMode(int mode) {
     }
     
     if (mode & ToConsole) {
-        if (!m_toconsole)
-            AllocConsole();
-        m_toconsole = true;
+        // WIN32S: AllocConsole() does not exist on Win32s - Windows 3.1 has no
+        // console subsystem.  Because the linker records it as an import, its
+        // presence would stop the EXE from LOADING, so it must be resolved at run
+        // time even though this code path is rarely taken.
+        //
+        // WriteConsole (used by ReallyPrintLine) is in the same position, but it
+        // is only reached when m_toconsole is true, which now requires
+        // AllocConsole to have succeeded.  Belt and braces: if the console cannot
+        // be created, fall back to debug output.
+        if (!m_toconsole) {
+            typedef BOOL (WINAPI *PFNALLOCCONSOLE)(void);
+            HINSTANCE hK32 = GetModuleHandle("KERNEL32");
+            PFNALLOCCONSOLE pAlloc = (hK32 == NULL) ? NULL :
+                (PFNALLOCCONSOLE)GetProcAddress(hK32, "AllocConsole");
+            if (pAlloc != NULL && pAlloc()) {
+                m_toconsole = true;
+            } else {
+                m_toconsole = false;
+                m_todebug = true;		// so /logtoconsole still produces output
+            }
+        } else {
+            m_toconsole = true;
+        }
     } else {
         m_toconsole = false;
     }
@@ -167,8 +202,34 @@ inline void Log::ReallyPrintLine(char *line)
 {
     if (m_todebug) OutputDebugString(line);
     if (m_toconsole) {
-        DWORD byteswritten;
-        WriteConsole(GetStdHandle(STD_OUTPUT_HANDLE), line, strlen(line), &byteswritten, NULL);
+        // WIN32S: WriteConsole and GetStdHandle are console-subsystem APIs that
+        // Win32s does not provide.  m_toconsole can only be true if AllocConsole
+        // succeeded (see SetMode), which cannot happen on Win32s - but the NAMES
+        // would still be in the import table and stop the EXE loading.  Resolve
+        // them at run time.
+        //
+        // The pointers are cached in statics: this is on the logging path and is
+        // called for every line.
+        typedef BOOL (WINAPI *PFNWRITECONSOLE)(HANDLE, const void *, DWORD, DWORD *, void *);
+        typedef HANDLE (WINAPI *PFNGETSTDHANDLE)(DWORD);
+        static PFNWRITECONSOLE pWriteConsole = NULL;
+        static PFNGETSTDHANDLE pGetStdHandle = NULL;
+        static int consoleResolved = 0;
+
+        if (!consoleResolved) {
+            consoleResolved = 1;
+            HINSTANCE hK32 = GetModuleHandle("KERNEL32");
+            if (hK32 != NULL) {
+                pWriteConsole = (PFNWRITECONSOLE)GetProcAddress(hK32, "WriteConsoleA");
+                pGetStdHandle = (PFNGETSTDHANDLE)GetProcAddress(hK32, "GetStdHandle");
+            }
+        }
+
+        if (pWriteConsole != NULL && pGetStdHandle != NULL) {
+            DWORD byteswritten;
+            pWriteConsole(pGetStdHandle(STD_OUTPUT_HANDLE), line,
+                          strlen(line), &byteswritten, NULL);
+        }
     }
     if (m_tofile && (hlogfile != NULL)) {
         DWORD byteswritten;
@@ -200,6 +261,8 @@ void Log::ReallyPrint(char *format, va_list ap)
 		if (memcmp(format, m_prefix, m_prefix_len) == 0)
 			format_ptr = format + m_prefix_len;
 #else
+		// MSVC 4.1 provides _strnicmp; the un-underscored strnicmp is the older
+		// spelling.  Both exist in this CRT, so either compiles - kept as-is.
 		if (_strnicmp(format, m_prefix, m_prefix_len) == 0)
 			format_ptr = format + m_prefix_len;
 #endif

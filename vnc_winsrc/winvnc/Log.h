@@ -20,12 +20,27 @@
 #include <stdio.h>
 #include <time.h>
 
-#ifndef _BOOLHACKDEFINED
-#define _BOOLHACKDEFINED
-typedef bool;
-#define false 0
-#define true 1
-#endif
+// WIN32S: bool/true/false come from win32s_fix.h, which is force-included via
+// /FI"win32s_fix.h".  Do NOT define them here.
+//
+// This block used to read:
+//     #ifndef _BOOLHACKDEFINED
+//     #define _BOOLHACKDEFINED
+//     typedef bool;            <- declares NOTHING
+//     #define false 0
+//     #define true 1
+//     #endif
+//
+// "typedef bool;" is not a typedef of anything - it declares no name at all.
+// So in any translation unit that saw Log.h before something that really did
+// define bool, bool was either undefined (compile error) or, worse, defined
+// differently than in another translation unit.  vncKeymap.h had its own
+// "typedef int bool" guarded by the SAME _BOOLHACKDEFINED macro (spelled
+// _BOOKHACKDEFINED on the #define line - another typo), so whichever header
+// was reached first won, and the size of bool could differ between object
+// files.  Every class with a bool member - including vncServer - then had a
+// different layout depending on which .cpp built it.  That is an ODR violation
+// and it corrupts memory silently.
 
 // Macros for sticking in the current file name
 #define VNCLOG(s)	(__FILE__ ":\t" s)

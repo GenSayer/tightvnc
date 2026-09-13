@@ -30,19 +30,34 @@
 
 Exception::Exception(const char *info)
 {
-	assert(info != NULL);
+	// Was: assert(info != NULL); then strlen(info).  In a release build the
+	// assert vanishes and a NULL info faults inside strlen - while constructing
+	// an exception, i.e. while already handling an error.  Several call sites
+	// can pass NULL (Exception's own default argument is NULL, and
+	// WarningException(ReadFailureReason()) passes whatever that returned).
+	if (info == NULL)
+		info = "(no information)";
 	m_info = new char[strlen(info)+1];
-	strcpy(m_info, info);
+	if (m_info != NULL)
+		strcpy(m_info, info);
 }
 
 Exception::~Exception()
 {
-	delete [] m_info;
+	if (m_info != NULL) {
+		delete [] m_info;
+		m_info = NULL;
+	}
 }
 
 void Exception::Report()
 {
-	assert(false);
+	// Was: assert(false).  The base class is reported directly by the new
+	// catch(Exception&) handlers in the window procedures, so it must do
+	// something useful rather than abort a release build silently.
+	MessageBox(NULL, (m_info != NULL) ? m_info : "Unknown error",
+			   "TightVNC info",
+			   MB_OK | MB_ICONEXCLAMATION | MB_SETFOREGROUND | MB_TOPMOST);
 }
 
 // ---------------------------------------

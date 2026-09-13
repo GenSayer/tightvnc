@@ -58,9 +58,15 @@ public:
 	VNCOptions m_options;
 	HINSTANCE  m_instance;
 
-private:
+	// False if WSAStartup() failed.  WinMain checks this and exits instead of
+	// trying to connect through an uninitialised sockets library.
+	bool m_winsockOK;
+
+protected:
+	// The connection list is protected rather than private so that the
+	// derived app can walk it from its idle-time pump/reap helpers.
+	// Single-threaded, so no mutex is required (see omnithread/omnithread.h).
 	ClientConnection *m_clilist[MAX_CONNECTIONS];
-	omni_mutex m_clilistMutex;
 };
 
 #endif // VNCVIEWERAPP_H__

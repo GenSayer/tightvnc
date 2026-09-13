@@ -51,6 +51,13 @@ void ClientConnection::SetFullScreenMode(bool enable)
 // SetFullScreenMode, you need to call this to make it happen.
 void ClientConnection::RealiseFullScreenMode(bool suppressPrompt)
 {
+	// StartSession() calls this before the session goes live, and PumpIdle()
+	// error paths can reach it after the window has already been destroyed
+	// (m_hwnd1 is zeroed in WM_DESTROY).  GetWindowLong(NULL, ...) returns 0
+	// and then every SetWindowLong/SetWindowPos below operates on NULL.
+	if (m_hwnd1 == NULL)
+		return;
+
 	LONG style = GetWindowLong(m_hwnd1, GWL_STYLE);
 	if (m_opts.m_FullScreen) {
 		if (!suppressPrompt && !pApp->m_options.m_skipprompt) {
@@ -61,7 +68,8 @@ void ClientConnection::RealiseFullScreenMode(bool suppressPrompt)
 				_T("VNCviewer full-screen mode"),
 				MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND);
 		}
-		ShowWindow(m_hToolbar, SW_HIDE);
+		if (m_hToolbar != NULL)
+			ShowWindow(m_hToolbar, SW_HIDE);
 		EnableMenuItem(GetSystemMenu(m_hwnd1, FALSE), ID_TOOLBAR, MF_BYCOMMAND|MF_GRAYED);
 		ShowWindow(m_hwnd1, SW_MAXIMIZE);
 		style = GetWindowLong(m_hwnd1, GWL_STYLE);
@@ -74,7 +82,8 @@ void ClientConnection::RealiseFullScreenMode(bool suppressPrompt)
 		CheckMenuItem(GetSystemMenu(m_hwnd1, FALSE), ID_FULLSCREEN, MF_BYCOMMAND|MF_CHECKED);
 		
 	} else {
-		ShowWindow(m_hToolbar, SW_SHOW);
+		if (m_hToolbar != NULL)
+			ShowWindow(m_hToolbar, SW_SHOW);
 		EnableMenuItem(GetSystemMenu(m_hwnd1, FALSE), ID_TOOLBAR, MF_BYCOMMAND|MF_ENABLED);
 		style |= (WS_DLGFRAME | WS_THICKFRAME | WS_BORDER);
 		

@@ -17,213 +17,115 @@
 //
 //    You should have received a copy of the GNU Library General Public
 //    License along with this library; if not, write to the Free
-//    Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  
+//    Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 //    02111-1307, USA
 //
 
+// ==========================================================================
+// WIN32S / WINDOWS 3.1 SINGLE-THREADED BUILD  (winvnc)
+// ==========================================================================
 //
-// Interface to OMNI thread abstraction.
+// Win32s has no threads.  This is the same replacement header already used by
+// vncviewer, extended with the two pieces the SERVER needs and the viewer did
+// not: omni_condition, and a compatibility shim for the omni_thread classes
+// that the server subclasses.
 //
-// This file declares classes for threads and synchronisation objects
-// (mutexes, condition variables and counting semaphores).
+// WHAT THE SERVER USED THREADS FOR, AND WHAT REPLACES IT:
 //
-// Wherever a seemingly arbitrary choice has had to be made as to the interface
-// provided, the intention here has been to be as POSIX-like as possible.  This
-// is why there is no semaphore timed wait, for example.
+//   vncClientThread    (vncClient.cpp)      one per connected client, ran the
+//                                           whole RFB message loop.
+//                                           -> vncClient::PumpIdle(), driven
+//                                              from the app's idle loop.
 //
+//   vncDesktopThread   (vncDesktop.cpp)     owned the desktop sink window and
+//                                           polled for screen changes.
+//                                           -> vncDesktop::PumpIdle(), same
+//                                              idle loop.  Note that the sink
+//                                              window's messages are now
+//                                              dispatched by the main loop,
+//                                              because there is only one queue.
+//
+//   vncSockConnectThread                    blocking accept() on the listening
+//                                           socket.
+//                                           -> WSAAsyncSelect + FD_ACCEPT,
+//                                              posted to a window.
+//
+//   vncHTTPConnectThread / ListenThread     same, for the built-in HTTP server.
+//                                           -> same treatment.
+//
+//   vncTimedMsgBoxThread                    a MessageBox with a timeout.
+//                                           -> SetTimer + a modeless dialog.
+//
+// omni_mutex / omni_mutex_lock are no-ops: with one thread there is nothing to
+// serialise, and the ~90 "omni_mutex_lock l(...)" statements throughout the
+// server therefore compile unchanged and cost nothing.
+//
+// omni_condition IS still declared, because vncServer holds one
+// (m_clientquitsig) and vncDesktopThread used one to hand its init result back
+// to the caller.  Its wait() CANNOT block - that would deadlock the single
+// thread instantly - so it pumps messages instead.  See the comment on wait().
+//
+// DELIBERATELY REMOVED: class omni_thread and the file-scope
+// "static omni_thread::init_t omni_thread_init;" object, which ran TlsAlloc /
+// TlsSetValue / DuplicateHandle / operator new before WinMain in EVERY
+// translation unit.  On Win32s that is a crash before any window exists - the
+// exact failure the viewer had.
+// ==========================================================================
 
 #ifndef __omnithread_h_
 #define __omnithread_h_
 
-#ifndef NULL
-#define NULL (void*)0
-#endif
+#include <windows.h>
+
+#define _OMNITHREAD_NTDLL_
 
 class omni_mutex;
-class omni_condition;
 class omni_semaphore;
-class omni_thread;
+class omni_condition;
 
 //
-// OMNI_THREAD_EXPOSE can be defined as public or protected to expose the
-// implementation class - this may be useful for debugging.  Hopefully this
-// won't change the underlying structure which the compiler generates so that
-// this can work without recompiling the library.
+// Thrown in the event of a fatal error.  Retained for source compatibility.
 //
-
-#ifndef OMNI_THREAD_EXPOSE
-#define OMNI_THREAD_EXPOSE private
-#endif
-
-
-//
-// Include implementation-specific header file.
-//
-// This must define 4 CPP macros of the form OMNI_x_IMPLEMENTATION for mutex,
-// condition variable, semaphore and thread.  Each should define any
-// implementation-specific members of the corresponding classes.
-//
-
-
-#if defined(__arm__) && defined(__atmos__)
-#include <omnithread/posix.h>
-
-#elif defined(__alpha__) && defined(__osf1__)
-#include <omnithread/posix.h>
-
-#elif defined(__powerpc__) && defined(__aix__)
-#include <omnithread/posix.h>
-
-#elif defined(__hpux__)
-#include <omnithread/posix.h>
-
-#elif defined(__WIN32__)
-#include "nt.h"
-
-#ifdef _MSC_VER
-
-// Using MSVC++ to compile. If compiling library as a DLL,
-// define _OMNITHREAD_DLL. If compiling as a statuc library, define
-// _WINSTATIC
-// If compiling an application that is to be statically linked to omnithread,
-// define _WINSTATIC (if the application is  to be dynamically linked, 
-// there is no need to define any of these macros).
-
-#if defined (_OMNITHREAD_DLL) && defined(_WINSTATIC)
-#error "Both _OMNITHREAD_DLL and _WINSTATIC are defined."
-#elif defined(_OMNITHREAD_DLL)
-#define _OMNITHREAD_NTDLL_ __declspec(dllexport)
-#elif !defined(_WINSTATIC)
-#define _OMNITHREAD_NTDLL_ __declspec(dllimport)
-#elif defined(_WINSTATIC)
-#define _OMNITHREAD_NTDLL_
-#endif
- // _OMNITHREAD_DLL && _WINSTATIC
-
-#else
-
-// Not using MSVC++ to compile
-#define _OMNITHREAD_NTDLL_
-
-#endif
- // _MSC_VER
- 
-#elif defined(__sunos__) && (__OSVERSION__ == 5)
-#ifdef UsePthread
-#include <omnithread/posix.h>
-#else
-#include <omnithread/solaris.h>
-#endif
-
-#elif defined(__linux__)
-#include <omnithread/posix.h>
-
-#elif defined(__nextstep__)
-#include <omnithread/mach.h>
-
-#elif defined(__VMS)
-#include <omnithread/posix.h>
-
-#elif defined(__SINIX__)
-#include <omnithread/posix.h>
-
-#elif defined(__osr5__)
-#include <omnithread/posix.h>
-
-#elif defined(__irix__)
-#include <omnithread/posix.h>
-
-#else
-#error "No implementation header file"
-#endif
-
-#if !defined(__WIN32__)
-#define _OMNITHREAD_NTDLL_
-#endif
-
-#if (!defined(OMNI_MUTEX_IMPLEMENTATION) || \
-     !defined(OMNI_CONDITION_IMPLEMENTATION) || \
-     !defined(OMNI_SEMAPHORE_IMPLEMENTATION) || \
-     !defined(OMNI_THREAD_IMPLEMENTATION))
-#error "Implementation header file incomplete"
-#endif
-
-
-//
-// This exception is thrown in the event of a fatal error.
-//
-
 class _OMNITHREAD_NTDLL_ omni_thread_fatal {
 public:
     int error;
     omni_thread_fatal(int e = 0) : error(e) {}
 };
 
-
 //
-// This exception is thrown when an operation is invoked with invalid
-// arguments.
+// Thrown when an operation is invoked with invalid arguments.
 //
-
 class _OMNITHREAD_NTDLL_ omni_thread_invalid {};
 
 
 ///////////////////////////////////////////////////////////////////////////
 //
-// Mutex
+// Mutex - no-op in a single-threaded process.
 //
 ///////////////////////////////////////////////////////////////////////////
 
 class _OMNITHREAD_NTDLL_ omni_mutex {
-
 public:
-    omni_mutex(void);
-    ~omni_mutex(void);
+    omni_mutex(void) {}
+    ~omni_mutex(void) {}
 
-    void lock(void);
-    void unlock(void);
-    void acquire(void) { lock(); }
-    void release(void) { unlock(); }
-	// the names lock and unlock are preferred over acquire and release
-	// since we are attempting to be as POSIX-like as possible.
+    void lock(void) {}
+    void unlock(void) {}
+    void acquire(void) {}
+    void release(void) {}
 
     friend class omni_condition;
 
 private:
-    // dummy copy constructor and operator= to prevent copying
     omni_mutex(const omni_mutex&);
     omni_mutex& operator=(const omni_mutex&);
-
-OMNI_THREAD_EXPOSE:
-    OMNI_MUTEX_IMPLEMENTATION
 };
 
-//
-// As an alternative to:
-// {
-//   mutex.lock();
-//   .....
-//   mutex.unlock();
-// }
-//
-// you can use a single instance of the omni_mutex_lock class:
-//
-// {
-//   omni_mutex_lock l(mutex);
-//   ....
-// }
-//
-// This has the advantage that mutex.unlock() will be called automatically
-// when an exception is thrown.
-//
-
 class _OMNITHREAD_NTDLL_ omni_mutex_lock {
-    omni_mutex& mutex;
 public:
-    omni_mutex_lock(omni_mutex& m) : mutex(m) { mutex.lock(); }
-    ~omni_mutex_lock(void) { mutex.unlock(); }
+    omni_mutex_lock(omni_mutex&) {}
+    ~omni_mutex_lock(void) {}
 private:
-    // dummy copy constructor and operator= to prevent copying
     omni_mutex_lock(const omni_mutex_lock&);
     omni_mutex_lock& operator=(const omni_mutex_lock&);
 };
@@ -231,90 +133,95 @@ private:
 
 ///////////////////////////////////////////////////////////////////////////
 //
-// Condition variable
+// Condition variable.
+//
+// SINGLE-THREADED SEMANTICS - read this before using it.
+//
+// A condition variable is meaningless with one thread: whatever you are waiting
+// for can only be produced by the thread that is waiting.  A blocking wait()
+// here is a guaranteed hang.
+//
+// wait() therefore does NOT block.  It pumps the message queue once and
+// returns.  Every caller in the server is of the form
+//
+//     while (!condition_is_satisfied)
+//         cond->wait();
+//
+// so pumping messages inside wait() lets the code that satisfies the condition
+// (a window procedure, a socket notification, an idle-time pump) actually run.
+// The loop then re-tests and exits.
+//
+// A caller that spins forever because nothing will ever satisfy its condition
+// is a bug in the CALLER, not here - and it will spin visibly rather than
+// deadlocking silently.  vncServer::WaitUntilAuthEmpty is the case to watch:
+// it is called during shutdown and relies on clients being reaped.
 //
 ///////////////////////////////////////////////////////////////////////////
 
 class _OMNITHREAD_NTDLL_ omni_condition {
-
-    omni_mutex* mutex;
-
 public:
-    omni_condition(omni_mutex* m);
-	// constructor must be given a pointer to an existing mutex. The
-	// condition variable is then linked to the mutex, so that there is an
-	// implicit unlock and lock around wait() and timed_wait().
+    omni_condition(omni_mutex *m) { mutex = m; }
+    ~omni_condition(void) {}
 
-    ~omni_condition(void);
+    // Pump one round of messages, then return.  See the note above.
+    void wait(void) {
+        MSG msg;
+        int guard = 0;
+        while (guard++ < 64 && PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) {
+                // Re-post so the real message loop sees it and exits.
+                PostQuitMessage((int)msg.wParam);
+                return;
+            }
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+        // Yield to Windows if there was nothing to do, so a spinning caller
+        // does not starve the rest of the (cooperatively scheduled) system.
+        if (guard == 1)
+            Sleep(10);
+    }
 
-    void wait(void);
-	// wait for the condition variable to be signalled.  The mutex is
-	// implicitly released before waiting and locked again after waking up.
-	// If wait() is called by multiple threads, a signal may wake up more
-	// than one thread.  See POSIX threads documentation for details.
+    // Timed wait.  Returns 1 (as omniORB's does) meaning "not timed out";
+    // behaviour is otherwise identical to wait().
+    int timedwait(unsigned long /*secs*/, unsigned long /*nanosecs*/ = 0) {
+        wait();
+        return 1;
+    }
 
-    int timedwait(unsigned long secs, unsigned long nanosecs = 0);
-	// timedwait() is given an absolute time to wait until.  To wait for a
-	// relative time from now, use omni_thread::get_time. See POSIX threads
-	// documentation for why absolute times are better than relative.
-	// Returns 1 (true) if successfully signalled, 0 (false) if time
-	// expired.
-
-    void signal(void);
-	// if one or more threads have called wait(), signal wakes up at least
-	// one of them, possibly more.  See POSIX threads documentation for
-	// details.
-
-    void broadcast(void);
-	// broadcast is like signal but wakes all threads which have called
-	// wait().
+    // No-ops: there is no other thread to wake.
+    void signal(void) {}
+    void broadcast(void) {}
 
 private:
-    // dummy copy constructor and operator= to prevent copying
+    omni_mutex *mutex;
+
     omni_condition(const omni_condition&);
     omni_condition& operator=(const omni_condition&);
-
-OMNI_THREAD_EXPOSE:
-    OMNI_CONDITION_IMPLEMENTATION
 };
 
 
 ///////////////////////////////////////////////////////////////////////////
 //
-// Counting semaphore
+// Counting semaphore - degenerate single-threaded implementation.
 //
 ///////////////////////////////////////////////////////////////////////////
 
 class _OMNITHREAD_NTDLL_ omni_semaphore {
-
 public:
-    omni_semaphore(unsigned int initial = 1);
-    ~omni_semaphore(void);
+    omni_semaphore(unsigned int initial = 1) { value = initial; }
+    ~omni_semaphore(void) {}
 
-    void wait(void);
-	// if semaphore value is > 0 then decrement it and carry on. If it's
-	// already 0 then block.
-
-    int trywait(void);
-	// if semaphore value is > 0 then decrement it and return 1 (true).
-	// If it's already 0 then return 0 (false).
-
-    void post(void);
-	// if any threads are blocked in wait(), wake one of them up. Otherwise
-	// increment the value of the semaphore.
+    void wait(void) { if (value > 0) value--; }
+    int  trywait(void) { if (value > 0) { value--; return 1; } return 0; }
+    void post(void) { value++; }
 
 private:
-    // dummy copy constructor and operator= to prevent copying
     omni_semaphore(const omni_semaphore&);
     omni_semaphore& operator=(const omni_semaphore&);
 
-OMNI_THREAD_EXPOSE:
-    OMNI_SEMAPHORE_IMPLEMENTATION
+    unsigned int value;
 };
-
-//
-// A helper class for semaphores, similar to omni_mutex_lock above.
-//
 
 class _OMNITHREAD_NTDLL_ omni_semaphore_lock {
     omni_semaphore& sem;
@@ -322,7 +229,6 @@ public:
     omni_semaphore_lock(omni_semaphore& s) : sem(s) { sem.wait(); }
     ~omni_semaphore_lock(void) { sem.post(); }
 private:
-    // dummy copy constructor and operator= to prevent copying
     omni_semaphore_lock(const omni_semaphore_lock&);
     omni_semaphore_lock& operator=(const omni_semaphore_lock&);
 };
@@ -330,173 +236,52 @@ private:
 
 ///////////////////////////////////////////////////////////////////////////
 //
-// Thread
+// omni_thread replacement.
+//
+// There is no thread class any more.  What remains is the small set of static
+// helpers that the server called for their side effects, as free functions in a
+// class scope so that "omni_thread::sleep(1)" still compiles.
+//
+// NOTE: sleep() on Win32s does not yield to other Windows tasks the way it does
+// on NT - scheduling is cooperative.  Prefer pumping messages.  The three
+// vncService.cpp call sites that used omni_thread::sleep are in code paths that
+// are stubbed out on Win32s anyway.
 //
 ///////////////////////////////////////////////////////////////////////////
 
 class _OMNITHREAD_NTDLL_ omni_thread {
-
 public:
-
-    enum priority_t {
-	PRIORITY_LOW,
-	PRIORITY_NORMAL,
-	PRIORITY_HIGH
-    };
-
-    enum state_t {
-	STATE_NEW,		// thread object exists but thread hasn't
-				// started yet.
-	STATE_RUNNING,		// thread is running.
-	STATE_TERMINATED	// thread has terminated but storage has not
-				// been reclaimed (i.e. waiting to be joined).
-    };
-
-    //
-    // Constructors set up the thread object but the thread won't start until
-    // start() is called. The create method can be used to construct and start
-    // a thread in a single call.
-    //
-
-    omni_thread(void (*fn)(void*), void* arg = NULL,
-		priority_t pri = PRIORITY_NORMAL);
-    omni_thread(void* (*fn)(void*), void* arg = NULL,
-		priority_t pri = PRIORITY_NORMAL);
-	// these constructors create a thread which will run the given function
-	// when start() is called.  The thread will be detached if given a
-	// function with void return type, undetached if given a function
-	// returning void*. If a thread is detached, storage for the thread is
-	// reclaimed automatically on termination. Only an undetached thread
-	// can be joined.
-
-    void start(void);
-	// start() causes a thread created with one of the constructors to
-	// start executing the appropriate function.
-
-protected:
-
-    omni_thread(void* arg = NULL, priority_t pri = PRIORITY_NORMAL);
-	// this constructor is used in a derived class.  The thread will
-	// execute the run() or run_undetached() member functions depending on
-	// whether start() or start_undetached() is called respectively.
-
-    void start_undetached(void);
-	// can be used with the above constructor in a derived class to cause
-	// the thread to be undetached.  In this case the thread executes the
-	// run_undetached member function.
-
-    virtual ~omni_thread(void);
-	// destructor cannot be called by user (except via a derived class).
-	// Use exit() or cancel() instead. This also means a thread object must
-	// be allocated with new - it cannot be statically or automatically
-	// allocated. The destructor of a class that inherits from omni_thread
-	// shouldn't be public either (otherwise the thread object can be
-	// destroyed while the underlying thread is still running).
-
-public:
-
-    void join(void**);
-	// join causes the calling thread to wait for another's completion,
-	// putting the return value in the variable of type void* whose address
-	// is given (unless passed a null pointer). Only undetached threads
-	// may be joined. Storage for the thread will be reclaimed.
-
-    void set_priority(priority_t);
-	// set the priority of the thread.
-
-    static omni_thread* create(void (*fn)(void*), void* arg = NULL,
-			       priority_t pri = PRIORITY_NORMAL);
-    static omni_thread* create(void* (*fn)(void*), void* arg = NULL,
-			       priority_t pri = PRIORITY_NORMAL);
-	// create spawns a new thread executing the given function with the
-	// given argument at the given priority. Returns a pointer to the
-	// thread object. It simply constructs a new thread object then calls
-	// start.
-
-    static void exit(void* return_value = NULL);
-	// causes the calling thread to terminate.
-
-    static omni_thread* self(void);
-	// returns the calling thread's omni_thread object.
-	// If the calling thread is not the main thread and
-	// is not created using this library, returns 0.
-
-    static void yield(void);
-	// allows another thread to run.
-
-    static void sleep(unsigned long secs, unsigned long nanosecs = 0);
-	// sleeps for the given time.
-
-    static void get_time(unsigned long* abs_sec, unsigned long* abs_nsec,
-			 unsigned long rel_sec = 0, unsigned long rel_nsec=0);
-	// calculates an absolute time in seconds and nanoseconds, suitable for
-	// use in timed_waits on condition variables, which is the current time
-	// plus the given relative offset.
-
-private:
-
-    virtual void run(void* arg) {}
-    virtual void* run_undetached(void* arg) { return NULL; }
-	// can be overridden in a derived class.  When constructed using the
-	// the constructor omni_thread(void*, priority_t), these functions are
-	// called by start() and start_undetached() respectively.
-
-    void common_constructor(void* arg, priority_t pri, int det);
-	// implements the common parts of the constructors.
-
-    omni_mutex mutex;
-	// used to protect any members which can change after construction,
-	// i.e. the following 2 members:
-
-    state_t _state;
-    priority_t _priority;
-
-    static omni_mutex* next_id_mutex;
-    static int next_id;
-    int _id;
-
-    void (*fn_void)(void*);
-    void* (*fn_ret)(void*);
-    void* thread_arg;
-    int detached;
-
-public:
-
-    priority_t priority(void) {
-
-	// return this thread's priority.
-
-	omni_mutex_lock l(mutex);
-	return _priority;
+    static void sleep(unsigned long secs, unsigned long nanosecs = 0) {
+        // Pump messages while waiting rather than blocking outright: on a
+        // cooperatively scheduled system a bare Sleep() freezes everything.
+        DWORD until = GetTickCount() + (DWORD)(secs * 1000 + nanosecs / 1000000);
+        MSG msg;
+        while ((long)(GetTickCount() - until) < 0) {
+            if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+                if (msg.message == WM_QUIT) {
+                    PostQuitMessage((int)msg.wParam);
+                    return;
+                }
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            } else {
+                Sleep(10);
+            }
+        }
     }
 
-    state_t state(void) {
+    // Formerly returned the current omni_thread*.  Only used in a debug
+    // _RPT3 trace in vncDesktop.cpp; return the thread id so that trace still
+    // prints something meaningful.
+    static DWORD self(void) { return GetCurrentThreadId(); }
 
-	// return thread state (invalid, new, running or terminated).
-
-	omni_mutex_lock l(mutex);
-	return _state;
+    // omni_thread::create(fn) started a detached thread.  There is no way to
+    // honour that here.  Callers must be restructured; the two in
+    // vncService.cpp are in Win32s-stubbed paths.  Returning NULL makes any
+    // remaining caller fail visibly rather than silently doing nothing.
+    static omni_thread *create(void (*fn)(void *), void *arg = 0) {
+        return 0;
     }
-
-    int id(void) { return _id; }
-	// return unique thread id within the current process.
-
-
-    // This class plus the instance of it declared below allows us to execute
-    // some initialisation code before main() is called.
-
-    class _OMNITHREAD_NTDLL_ init_t {
-	static int count;
-    public:
-	init_t(void);
-    };
-
-    friend class init_t;
-
-OMNI_THREAD_EXPOSE:
-    OMNI_THREAD_IMPLEMENTATION
 };
 
-static omni_thread::init_t omni_thread_init;
-
-#endif
+#endif // __omnithread_h_

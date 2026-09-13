@@ -30,6 +30,7 @@
 #include "stdhdrs.h"
 #include "vncviewer.h"
 #include "ClientConnection.h"
+#include "Exception.h"
 
 void ClientConnection::ReadCoRRERect(rfbFramebufferUpdateRectHeader *pfburh)
 {
@@ -41,6 +42,16 @@ void ClientConnection::ReadCoRRERect(rfbFramebufferUpdateRectHeader *pfburh)
 	ReadExact(tmpbuf, sz_rfbRREHeader + m_minPixelBytes);
 
 	prreh->nSubrects = Swap32IfLE(prreh->nSubrects);
+
+	// WIN32S: same wire-count validation as RRE (see ClientConnectionRRE.cpp):
+	// a count above the rect's pixel count wraps the 32-bit subrect buffer
+	// size and desynchronises the stream, surfacing later as "update rectangle
+	// outside the framebuffer".
+	if (prreh->nSubrects > (CARD32)((unsigned long)pfburh->r.w * (unsigned long)pfburh->r.h)) {
+		vnclog.Print(0, _T("CoRRE subrect count out of range: %u\n"),
+					 (unsigned int)prreh->nSubrects);
+		throw WarningException("Protocol error: CoRRE subrect count out of range.");
+	}
 
 	SETUP_COLOR_SHORTCUTS;
     COLORREF color;

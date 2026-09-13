@@ -29,9 +29,19 @@
 
 CapsContainer::CapsContainer(int maxCaps)
 {
+	// Bound maxCaps: it is a constructor default (64) everywhere today, but
+	// "new CARD32[maxSize]" with a zero or negative value would be silently
+	// accepted by MSVC 4.1 and then written through by Enable().
+	if (maxCaps < 1)
+		maxCaps = 1;
+	if (maxCaps > 1024)
+		maxCaps = 1024;
+
 	maxSize = maxCaps;
 	listSize = 0;
 	plist = new CARD32[maxSize];
+	if (plist == NULL)
+		maxSize = 0;			// Enable() checks listSize < maxSize
 }
 
 //
@@ -40,12 +50,24 @@ CapsContainer::CapsContainer(int maxCaps)
 
 CapsContainer::~CapsContainer()
 {
-	delete[] plist;
+	if (plist != NULL) {
+		delete[] plist;
+		plist = NULL;
+	}
+	maxSize = 0;
+	listSize = 0;
 
 	// Remove char[] strings allocated by the new[] operator.
+	// Note: descMap stores NULL for capabilities added without a description,
+	// and "delete[] (char *)NULL" is legal, so no check is strictly needed - but
+	// be explicit, and null the entry so a double destruction cannot double-free
+	// (see the copying note in map.h).
 	std::map<CARD32,char*>::const_iterator iter;
 	for (iter = descMap.begin(); iter != descMap.end(); iter++) {
-		delete[] iter->second;
+		if (iter->second != NULL) {
+			delete[] iter->second;
+			iter->second = NULL;
+		}
 	}
 }
 
@@ -61,26 +83,45 @@ CapsContainer::Add(CARD32 code, const char *vendor, const char *name,
 {
 	// Fill in an rfbCapabilityInfo structure and pass it to the overloaded
 	// function.
+	//
+	// vendor and name are fixed-length signature fields (4 and 8 bytes), NOT
+	// NUL-terminated strings, and the callers pass string literals of exactly
+	// that length.  memcpy of the exact field size is therefore correct - but it
+	// reads past the end of the literal if a caller ever passes a shorter one,
+	// so guard against NULL at least, and zero-fill first so a short literal
+	// cannot leak stack contents into the protocol.
 	rfbCapabilityInfo capinfo;
+	memset(&capinfo, 0, sizeof(capinfo));
 	capinfo.code = code;
-	memcpy(capinfo.vendorSignature, vendor, sz_rfbCapabilityInfoVendor);
-	memcpy(capinfo.nameSignature, name, sz_rfbCapabilityInfoName);
+	if (vendor != NULL)
+		memcpy(capinfo.vendorSignature, vendor, sz_rfbCapabilityInfoVendor);
+	if (name != NULL)
+		memcpy(capinfo.nameSignature, name, sz_rfbCapabilityInfoName);
 	Add(&capinfo, desc);
 }
 
 void
 CapsContainer::Add(const rfbCapabilityInfo *capinfo, const char *desc)
 {
+	if (capinfo == NULL)
+		return;
+
 	infoMap[capinfo->code] = *capinfo;
 	enableMap[capinfo->code] = false;
 
+	// IsKnown() consults descMap, and descMap[code] below inserts - so on the
+	// first Add for a code, IsKnown() is false and nothing is deleted; on a
+	// repeat Add the old string is freed here.  Correct, but fragile: keep the
+	// order (test, free, replace).
 	if (IsKnown(capinfo->code)) {
 		delete[] descMap[capinfo->code];
+		descMap[capinfo->code] = NULL;
 	}
 	char *desc_copy = NULL;
 	if (desc != NULL) {
 		desc_copy = new char[strlen(desc) + 1];
-		strcpy(desc_copy, desc);
+		if (desc_copy != NULL)
+			strcpy(desc_copy, desc);
 	}
 	descMap[capinfo->code] = desc_copy;
 }
@@ -133,6 +174,10 @@ CapsContainer::GetDescription(CARD32 code)
 bool
 CapsContainer::Enable(const rfbCapabilityInfo *capinfo)
 {
+	// capinfo comes from ReadCapabilityList, i.e. straight off the wire.
+	if (capinfo == NULL)
+		return false;
+
 	if (!IsKnown(capinfo->code))
 		return false;
 

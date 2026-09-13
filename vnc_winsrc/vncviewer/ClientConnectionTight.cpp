@@ -35,9 +35,7 @@
 #define TIGHT_MIN_TO_COMPRESS 12
 #define TIGHT_BUFFER_SIZE (2048 * 200)
 
-typedef int bool;
-#define false 0
-#define true 1
+// bool/true/false come from win32s_fix.h (force-included).  Do not redefine.
 
 void ClientConnection::ReadTightRect(rfbFramebufferUpdateRectHeader *pfburh)
 {
@@ -163,8 +161,9 @@ void ClientConnection::ReadTightRect(rfbFramebufferUpdateRectHeader *pfburh)
     ObjectSelector b(m_hBitmapDC, m_hBitmap);
     PaletteSelector p(m_hBitmapDC, m_hPalette);
 
-    SETPIXELS_NOCONV(m_zlibbuf, pfburh->r.x, pfburh->r.y,
-                     pfburh->r.w, pfburh->r.h);
+    // WIN32S: bulk DIB draw instead of per-pixel SetPixel.
+    DrawColorRefBlock((char *)m_zlibbuf, pfburh->r.x, pfburh->r.y,
+                      pfburh->r.w, pfburh->r.h);
 
     return;
   }
@@ -250,8 +249,9 @@ void ClientConnection::ReadTightRect(rfbFramebufferUpdateRectHeader *pfburh)
       ObjectSelector b(m_hBitmapDC, m_hBitmap);
       PaletteSelector p(m_hBitmapDC, m_hPalette);
 
-      SETPIXELS_NOCONV(m_zlibbuf, pfburh->r.x, pfburh->r.y + rowsProcessed,
-                       pfburh->r.w, numRows);
+      // WIN32S: bulk DIB draw instead of per-pixel SetPixel.
+      DrawColorRefBlock((char *)m_zlibbuf, pfburh->r.x, pfburh->r.y + rowsProcessed,
+                        pfburh->r.w, numRows);
 
       rowsProcessed += numRows;
     }
@@ -298,7 +298,13 @@ int ClientConnection::InitFilterCopy (int rw, int rh)
     &ClientConnection::FilterCopy32
   };
 
-  m_tightCurrentFilter = funcArray[m_myFormat.bitsPerPixel/16];
+  // bitsPerPixel 24 has no dedicated filter (wire data is 3 bytes/pixel but
+  // the format is promoted to 32 in SetupPixelFormat).  Clamp the index so a
+  // 24bpp format cannot select the 16-bit filter and garble the rect.
+  int idx = m_myFormat.bitsPerPixel / 16;
+  if (idx < 0) idx = 0;
+  if (idx > 2) idx = 2;
+  m_tightCurrentFilter = funcArray[idx];
   m_tightRectWidth = rw;
 
   if (m_myFormat.depth == 24 && m_myFormat.redMax == 0xFF &&
@@ -322,7 +328,18 @@ int ClientConnection::InitFilterGradient (int rw, int rh)
     &ClientConnection::FilterGradient32
   };
 
-  m_tightCurrentFilter = funcArray[m_myFormat.bitsPerPixel/16];
+  // m_tightPrevRow is 2048*3 CARD16s.  A wider rect would overflow it and
+  // corrupt the heap, garbling this and later rects.  Fall back to the copy
+  // filter (already selected by InitFilterCopy) instead.
+  if (rw > 2048) {
+    vnclog.Print(0, _T("Tight gradient rect too wide (%d), using copy filter\n"), rw);
+    return bits;
+  }
+
+  int idx = m_myFormat.bitsPerPixel / 16;
+  if (idx < 0) idx = 0;
+  if (idx > 2) idx = 2;
+  m_tightCurrentFilter = funcArray[idx];
 
   if (m_tightCutZeros) {
     m_tightCurrentFilter = &ClientConnection::FilterGradient24;
@@ -588,7 +605,9 @@ void ClientConnection::DecompressJpegRect(int x, int y, int w, int h)
     for (int dx = 0; dx < w; dx++) {
       *pixelPtr++ = COLOR_FROM_PIXEL24_ADDRESS(&m_zlibbuf[dx*3]);
     }
-    SETPIXELS_NOCONV(&m_zlibbuf[maxRowWidth*4], x, y + dy, w, 1);
+    // WIN32S: bulk DIB draw instead of per-pixel SetPixel.  One row at a time
+    // here because that is how the JPEG decompressor delivers scanlines.
+    DrawColorRefBlock((char *)&m_zlibbuf[maxRowWidth*4], x, y + dy, w, 1);
   }
 
   if (!jpegError)

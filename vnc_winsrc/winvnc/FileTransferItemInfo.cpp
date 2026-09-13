@@ -45,7 +45,13 @@ FileTransferItemInfo::~FileTransferItemInfo()
 
 void FileTransferItemInfo::Add(char *Name, unsigned int Size, unsigned int Data)
 {
+	// WIN32S: MSVC 4.1 new returns NULL on failure instead of throwing.  The
+	// old code memcpy/strcpy'd through it - a big directory on a Win3.1
+	// machine faulted the listing.  Name always fits: callers pass dir entries
+	// (<= MAX_PATH) into Name[MAX_PATH].
 	FTITEMINFO *pTemporary = new FTITEMINFO[m_NumEntries + 1];
+	if (pTemporary == NULL)
+		return;
 	if (m_NumEntries != 0) 
 		memcpy(pTemporary, m_pEntries, m_NumEntries * sizeof(FTITEMINFO));
 	strcpy(pTemporary[m_NumEntries].Name, Name);
@@ -71,23 +77,25 @@ void FileTransferItemInfo::Free()
 
 char * FileTransferItemInfo::GetNameAt(int Number)
 {
-	if ((Number >= 0) && (Number <= m_NumEntries))
+	// WIN32S: was "<= m_NumEntries" - one past the end.  Callers loop "<",
+	// so this never fired, but the getters are now exact.
+	if ((Number >= 0) && (Number < m_NumEntries))
 		return m_pEntries[Number].Name;
 	return NULL;
 }
 
 unsigned int FileTransferItemInfo::GetSizeAt(int Number)
 {
-	if ((Number >= 0) && (Number <= m_NumEntries)) 
+	if ((Number >= 0) && (Number < m_NumEntries)) 
 		return m_pEntries[Number].Size; 
-	return NULL;
+	return 0;
 }
 
 unsigned int FileTransferItemInfo::GetDataAt(int Number)
 {
-	if ((Number >= 0) && (Number <= m_NumEntries)) 
+	if ((Number >= 0) && (Number < m_NumEntries)) 
 		return m_pEntries[Number].Data; 
-	return NULL;
+	return 0;
 }
 
 int FileTransferItemInfo::GetNumEntries()

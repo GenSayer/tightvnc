@@ -219,10 +219,10 @@ vncEncodeZlibHex::zlibCompress(BYTE *from_buf, BYTE *to_buf, UINT length, struct
 
 #define DEFINE_SEND_HEXTILES(bpp)											\
 																			\
-static UINT subrectEncode##bpp(CARD##bpp *src, BYTE *dest,					\
+static UINT subrectEncode##bpp(CARD##bpp *src, BYTE *dest,		\
 				int w, int h, CARD##bpp bg,									\
 			    CARD##bpp fg, BOOL mono);									\
-static void testColours##bpp(CARD##bpp *data, int size, BOOL *mono,			\
+static void testColours##bpp(CARD##bpp *data, int size, BOOL *mono, \
 			     BOOL *solid, CARD##bpp *bg, CARD##bpp *fg);				\
 																			\
 																			\
@@ -238,13 +238,13 @@ vncEncodeZlibHex::EncodeHextiles##bpp(BYTE *source, BYTE *dest,				\
     int x, y, w, h;															\
     int rectoffset, destoffset;												\
     int encodedBytes, compressedSize;										\
-	CARD16* card16ptr;														\
+	CARD16 *card16ptr;											\
 	CARD##bpp bg, fg, newBg, newFg;											\
 	BOOL mono, solid;														\
 	BOOL validBg = FALSE;													\
 	BOOL validFg = FALSE;													\
 	int subEncodedLen;														\
-	CARD##bpp clientPixelData[(16*16+2)*(bpp/8)+8+14+2];					\
+	CARD##bpp clientPixelData[(16*16+2)*(bpp/8)+8+14+2];		\
 																			\
 	destoffset = 0;															\
 																			\
@@ -400,8 +400,8 @@ subrectEncode##bpp(CARD##bpp *src, BYTE *dest, int w, int h, CARD##bpp bg,	\
     int i,j;																\
     int hx=0,hy,vx=0,vy;													\
     int hyflag;																\
-    CARD##bpp *seg;															\
-    CARD##bpp *line;														\
+    CARD##bpp *seg;												\
+    CARD##bpp *line;											\
     int hw,hh,vw,vh;														\
     int thex,they,thew,theh;												\
     int numsubs = 0;														\
@@ -511,7 +511,7 @@ subrectEncode##bpp(CARD##bpp *src, BYTE *dest, int w, int h, CARD##bpp bg,	\
  */																			\
 																			\
 static void																	\
-testColours##bpp(CARD##bpp *data, int size,									\
+testColours##bpp(CARD##bpp *data, int size,						\
 				 BOOL *mono, BOOL *solid,									\
 				 CARD##bpp *bg, CARD##bpp *fg)								\
 {																			\

@@ -26,22 +26,49 @@
 
 #define VC_EXTRALEAN
 
-// These two lines are needed to get the mouse wheel macros.
-#define WINVER 0x0400
-#define _WIN32_WINDOWS 0x0410
 
-#include <winsock2.h>
+#ifndef WINVER
+#define WINVER 0x030A
+#endif
+
+// WAS: "#define WM_MOUSEWHEEEL 0x020A" - four E's.  The guard tested
+// WM_MOUSEWHEEL and then defined a *differently spelled* symbol, so
+// WM_MOUSEWHEEL still did not exist.  ClientConnection.cpp got away with it
+// only because it defined WM_MOUSEWHEEL again in the middle of its own switch
+// statement (now moved to the top of that file, properly guarded).
+#ifndef WM_MOUSEWHEEL
+#define WM_MOUSEWHEEL 0x020A
+#endif
+
+// The scrolling increment constant (1 notch = 120 units)
+#ifndef WHEEL_DELTA
+#define WHEEL_DELTA 120
+#endif
+
+// Unpacks the signed wheel rotation delta from wParam
+#ifndef GET_WHEEL_DELTA_WPARAM
+#define GET_WHEEL_DELTA_WPARAM(wParam) ((short)HIWORD(wParam))
+#endif
+
+// Unpacks the key state modifiers (e.g., Ctrl, Shift) from wParam.
+// WAS: "((first)LOWORD(wParam))" - "first" is not a type and this macro would
+// not compile if anything ever used it.  Nothing does today, which is the only
+// reason the build succeeds.
+#ifndef GET_KEYSTATE_WPARAM
+#define GET_KEYSTATE_WPARAM(wParam) ((int)(short)LOWORD(wParam))
+#endif
+
+#include <winsock.h>
 #include <stdio.h>
 #include <process.h>
 #include <assert.h>
-#ifndef __MINGW32__
-#include <crtdbg.h>
-#endif
-#include <locale.h>
 #include <time.h>
 #include <tchar.h>
 #include <windows.h>
 #include <io.h>
+#include <commctrl.h>
+
+
  
 #include "rfb.h"
 

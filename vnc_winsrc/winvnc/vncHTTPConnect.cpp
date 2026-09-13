@@ -113,20 +113,53 @@ const int filemappingsize		= 19;
 // Connection thread -- one per each client connection.
 //
 
-class vncHTTPConnectThread : public omni_thread
+// ==========================================================================
+// WIN32S SINGLE-THREADED CONVERSION
+//
+// This was "class vncHTTPConnectThread : public omni_thread", one instance per
+// HTTP client connection.  Its run() called DoHTTP(socket) and then deleted the
+// socket.
+//
+// It is now a plain helper object with no base class, and the transaction runs
+// SYNCHRONOUSLY from the listener's PumpIdle().  That is a real behavioural
+// change and it needs stating plainly:
+//
+//   Serving the Java applet JAR blocks the server - including screen polling
+//   and all connected VNC clients - for as long as the transfer takes.
+//
+// That is accepted for three reasons:
+//
+//   1. There is no alternative.  A non-blocking HTTP server would need its own
+//      state machine per connection, and each transaction is a single small
+//      resource read from the EXE plus one write to the socket.
+//
+//   2. The transfers are small (the largest applet class is a few tens of KB)
+//      and go to localhost or a LAN peer.
+//
+//   3. VSocket::SendExact now has a 30-second deadline and pumps messages while
+//      waiting (see VSocket.cpp), so a stalled HTTP client cannot hang the
+//      server permanently - which it COULD have done in the original if the
+//      thread had blocked forever.
+//
+// If this proves to be a problem in practice, the correct fix is to disable the
+// built-in HTTP server on this platform (it is optional - see
+// vncServer::HTTPConnectEnabled) rather than to reintroduce threads.
+// ==========================================================================
+
+class vncHTTPConnectHandler
 {
 public:
-	// Init routine
-	virtual BOOL Init(VSocket *socket, vncServer *server, BOOL allow_params);
+	// Was Init(): just stores the parameters now, no thread is started.
+	BOOL Init(VSocket *socket, vncServer *server, BOOL allow_params);
 
-	// Code to be executed by the thread
-	virtual void run(void *arg);
+	// Was run(): performs the whole transaction and deletes the socket.
+	void Run();
 
 	// Routines to handle HTTP requests
-	virtual void DoHTTP(VSocket *socket);
-	virtual BOOL ParseParams(const char *request, char *result, int max_bytes);
+	void DoHTTP(VSocket *socket);
+	BOOL ParseParams(const char *request, char *result, int max_bytes);
 	BOOL ValidateString(char *str);
-	virtual char *ReadLine(VSocket *socket, char delimiter, int max);
+	char *ReadLine(VSocket *socket, char delimiter, int max);
 
 protected:
 	// Fields used internally
@@ -136,34 +169,32 @@ protected:
 };
 
 // Method implementations
-BOOL vncHTTPConnectThread::Init(VSocket *socket, vncServer *server,
+BOOL vncHTTPConnectHandler::Init(VSocket *socket, vncServer *server,
 								BOOL allow_params)
 {
 	m_server = server;
 	m_socket = socket;
 	m_allow_params = allow_params;
 
-	// Start the thread
-	start();
-
+	// WIN32S: no start() - the caller invokes Run() directly.
 	return TRUE;
 }
 
-// Code to be executed by the thread
-void vncHTTPConnectThread::run(void *arg)
+void vncHTTPConnectHandler::Run()
 {
-	vnclog.Print(LL_INTINFO, VNCLOG("started HTTP client thread\n"));
+	vnclog.Print(LL_INTINFO, VNCLOG("serving HTTP request\n"));
 
 	// Perform the transaction
 	DoHTTP(m_socket);
 
 	// And close the client
 	delete m_socket;
+	m_socket = NULL;
 
-	vnclog.Print(LL_INTINFO, VNCLOG("quitting HTTP client thread\n"));
+	vnclog.Print(LL_INTINFO, VNCLOG("HTTP request complete\n"));
 }
 
-void vncHTTPConnectThread::DoHTTP(VSocket *socket)
+void vncHTTPConnectHandler::DoHTTP(VSocket *socket)
 {
 	char filename[1024];
 	char *line;
@@ -331,7 +362,7 @@ void vncHTTPConnectThread::DoHTTP(VSocket *socket)
 // of <param> tags for the index HTML page with embedded applet.
 //
 
-BOOL vncHTTPConnectThread::ParseParams(const char *request,
+BOOL vncHTTPConnectHandler::ParseParams(const char *request,
 									   char *result, int max_bytes)
 {
 	char param_request[128];
@@ -397,7 +428,7 @@ BOOL vncHTTPConnectThread::ParseParams(const char *request,
 // underscores, and dots. Replace all '+' signs with spaces.
 //
 
-BOOL vncHTTPConnectThread::ValidateString(char *str)
+BOOL vncHTTPConnectHandler::ValidateString(char *str)
 {
 	for (char *ptr = str; *ptr != '\0'; ptr++) {
 		if (!isalnum(*ptr) && *ptr != '_' && *ptr != '.') {
@@ -411,7 +442,7 @@ BOOL vncHTTPConnectThread::ValidateString(char *str)
 	return TRUE;
 }
 
-char *vncHTTPConnectThread::ReadLine(VSocket *socket, char delimiter, int max)
+char *vncHTTPConnectHandler::ReadLine(VSocket *socket, char delimiter, int max)
 {
 	// Allocate the maximum required buffer
 	char *buffer = new char[max+1];
@@ -446,116 +477,120 @@ char *vncHTTPConnectThread::ReadLine(VSocket *socket, char delimiter, int max)
 }
 
 //
-// Listening thread.
+// Listening socket.
+//
+// WIN32S: "class vncHTTPListenThread : public omni_thread" used to live here.
+// Its run_undetached() looped on TryAccept(&s, 100) and spawned a
+// vncHTTPConnectThread per accepted connection.
+//
+// It is replaced by vncHTTPConnect::PumpIdle(), called from the application idle
+// loop, exactly as done for vncSockConnect - see the long note at the top of
+// vncSockConnect.cpp for why polling was chosen over WSAAsyncSelect.
 //
 
-class vncHTTPListenThread : public omni_thread
-{
-public:
-	// Init routine
-	virtual BOOL Init(VSocket *socket, vncServer *server, BOOL allow_params);
-
-	// Code to be executed by the thread
-	virtual void *run_undetached(void * arg);
-
-	// Fields used internally
-	BOOL		m_shutdown;
-
-protected:
-	vncServer	*m_server;
-	VSocket		*m_listen_socket;
-	BOOL		m_allow_params;
-};
-
-BOOL vncHTTPListenThread::Init(VSocket *listen_socket, vncServer *server,
-							   BOOL allow_params)
-{
-	m_server = server;
-	m_listen_socket = listen_socket;
-	m_allow_params = allow_params;
-
-	// Start the thread
-	m_shutdown = FALSE;
-	start_undetached();
-
-	return TRUE;
-}
-
-// Code to be executed by the thread
-void *vncHTTPListenThread::run_undetached(void * arg)
-{
-	vnclog.Print(LL_INTINFO, VNCLOG("started HTTP server thread\n"));
-
-	// Go into a loop, listening for connections on the given socket
-	while (!m_shutdown) {
-		// Accept an incoming connection
-		VSocket *new_socket;
-		if (!m_listen_socket->TryAccept(&new_socket, 100))
-			break;
-		if (new_socket != NULL) {
-			// Start a client thread for this connection
-			vnclog.Print(LL_CLIENTS, VNCLOG("HTTP client connected\n"));
-			omni_thread *m_thread = new vncHTTPConnectThread;
-			if (m_thread == NULL)
-				break;
-			((vncHTTPConnectThread *)m_thread)->Init(new_socket, m_server,
-													 m_allow_params);
-		}
-	}
-
-	vnclog.Print(LL_INTINFO, VNCLOG("quitting HTTP server thread\n"));
-	return NULL;
-}
-
 //
-// The vncSockConnect class implementation
+// The vncHTTPConnect class implementation
 //
 
 vncHTTPConnect::vncHTTPConnect()
 {
-	m_listen_thread = NULL;
+	m_server = NULL;
+	m_listen_port = 0;
+	m_allow_params = FALSE;
+	m_shutdown = FALSE;
+	m_listening = FALSE;
 }
 
 BOOL vncHTTPConnect::Init(vncServer *server, UINT listen_port, BOOL allow_params)
 {
-	// Save the port number
+	// Save the parameters (the listen thread used to hold these)
+	m_server = server;
 	m_listen_port = listen_port;
+	m_allow_params = allow_params;
+	m_shutdown = FALSE;
+	m_listening = FALSE;
+
+	if (server == NULL)
+		return FALSE;
 
 	// Create the listening socket
-	if (!m_listen_socket.Create())
+	if (!m_listen_socket.Create()) {
+		vnclog.Print(LL_INTERR, VNCLOG("failed to create HTTP listening socket\n"));
 		return FALSE;
+	}
 
 	// Bind it
-	if (!m_listen_socket.Bind(m_listen_port, server->LoopbackOnly()))
+	if (!m_listen_socket.Bind(m_listen_port, server->LoopbackOnly())) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("failed to bind HTTP socket to port %d\n"), (int)m_listen_port);
+		m_listen_socket.Close();
 		return FALSE;
+	}
 
 	// Set it to listen
-	if (!m_listen_socket.Listen())
+	if (!m_listen_socket.Listen()) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("failed to listen on HTTP port %d\n"), (int)m_listen_port);
+		m_listen_socket.Close();
+		return FALSE;
+	}
+
+	// WIN32S: no thread is started.
+	m_listening = TRUE;
+	vnclog.Print(LL_STATE, VNCLOG("HTTP server listening on port %d\n"),
+				 (int)m_listen_port);
+
+	return TRUE;
+}
+
+// ==========================================================================
+// PumpIdle - accept and serve at most one HTTP request, without blocking on
+// the accept.
+//
+// NOTE: once a connection IS accepted, the transaction itself is synchronous -
+// see the long note on vncHTTPConnectHandler above.  Only one request is served
+// per call, so a client fetching many applet classes gets one per idle pass and
+// the rest of the server keeps running in between.
+// ==========================================================================
+BOOL vncHTTPConnect::PumpIdle()
+{
+	if (m_shutdown || !m_listening)
 		return FALSE;
 
-	// Create the new thread
-	m_listen_thread = new vncHTTPListenThread;
-	if (m_listen_thread == NULL)
+	VSocket *new_socket = NULL;
+	if (!m_listen_socket.TryAccept(&new_socket, 0)) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("error on HTTP listening socket - HTTP server stopping\n"));
+		m_listening = FALSE;
 		return FALSE;
+	}
 
-	// And start it running
-	return ((vncHTTPListenThread *)m_listen_thread)->Init(&m_listen_socket, server,
-														  allow_params);
+	if (new_socket == NULL)
+		return FALSE;					// nothing waiting
+
+	vnclog.Print(LL_CLIENTS, VNCLOG("HTTP client connected\n"));
+
+	// Serve the request inline.  The handler deletes new_socket when done.
+	vncHTTPConnectHandler handler;
+	if (!handler.Init(new_socket, m_server, m_allow_params)) {
+		delete new_socket;
+		return TRUE;
+	}
+	handler.Run();
+
+	return TRUE;
 }
 
 vncHTTPConnect::~vncHTTPConnect()
 {
+	m_shutdown = TRUE;
+	m_listening = FALSE;
+
+	// WIN32S: was Shutdown(), then signal m_shutdown on the thread, join it and
+	// only then Close().  No thread to signal or join - and as in
+	// vncSockConnect, the original leaked the socket when no thread had been
+	// created (bind succeeded but listen failed).
 	m_listen_socket.Shutdown();
-
-	// Join with our lovely thread
-	if (m_listen_thread != NULL) {
-		((vncHTTPListenThread *)m_listen_thread)->m_shutdown = TRUE;
-
-		void *returnval;
-		m_listen_thread->join(&returnval);
-		m_listen_thread = NULL;
-
-		m_listen_socket.Close();
-    }
+	m_listen_socket.Close();
 }
 

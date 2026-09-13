@@ -142,8 +142,9 @@ vncEncoder::EncodeRect(BYTE *source, BYTE *dest, const RECT &rect, int offsetx, 
 {
 	const int rectW = rect.right - rect.left;
 	const int rectH = rect.bottom - rect.top;
-
+	
 	// Create the header for the update in the destination area
+	// (Was: __unaligned qualifiers, a MIPS NT 4 workaround - removed for x86.)
 	rfbFramebufferUpdateRectHeader *surh = (rfbFramebufferUpdateRectHeader *)dest;
 	surh->r.x = (CARD16) (rect.left - offsetx);
 	surh->r.y = (CARD16) (rect.top - offsety);

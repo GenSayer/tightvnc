@@ -31,9 +31,7 @@
 #include "ClientConnection.h"
 #include "FileTransferItemInfo.h"
 
-typedef int bool;
-#define false 0
-#define true 1
+// bool/true/false come from win32s_fix.h (force-included).  Do not redefine.
 
 #pragma pack(push, 8)
 
@@ -109,6 +107,20 @@ public:
 	char m_DownloadFilename[rfbMAX_PATH];
 	void OnGetDispClientInfo(NMLVDISPINFO *plvdi); 
 	void OnGetDispServerInfo(NMLVDISPINFO *plvdi); 
+
+	// Pump network + browse-dialog messages until the outstanding server
+	// browse reply arrives (or the timeout expires).  Must only be called
+	// from the browse dialog's UI thread while m_bBrowseReplyPending is set.
+	void WaitForBrowseReply(DWORD timeoutMs);
+
+	// Which list-view row did the user just double-click?
+	//
+	// COMCTL32 4.00 (the version under Win32s) does not send LVN_ITEMACTIVATE
+	// and its NM_DBLCLK notification carries no item index, so the index has to
+	// be recovered by hit-testing the cursor.  See the implementation in
+	// FileTransfer.cpp for why LVNI_FOCUSED was not good enough.
+	int FTGetClickedItem(HWND hwndList);
+
 	static LRESULT CALLBACK FileTransferDlgProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 	static BOOL CALLBACK FTBrowseDlgProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 	void FileTransferDownload();
@@ -154,6 +166,19 @@ private:
 	BOOL m_bReportUploadCancel;
 	BOOL m_bServerBrowseRequest;
 	BOOL m_bFirstFileDownloadMsg;
+	// Set while a server directory listing for the browse tree is in
+	// flight.  The browse dialog is modal (DialogBoxParam), so the main
+	// idle loop cannot PumpIdle() for us - the sender waits on this flag
+	// (see WaitForBrowseReply in FileTransfer.cpp).  ShowServerItems()
+	// clears it once the reply has been consumed.
+	BOOL m_bBrowseReplyPending;
+	// Re-entrancy guard for server tree expansion.  Populating the tree
+	// must not recursively trigger another TVN_ITEMEXPANDING for the same
+	// item (TreeView_Expand inside ShowServerItems did exactly that:
+	// expand -> request -> populate -> Expand -> expand ... infinitely,
+	// flickering the [+] and locking Win32s).  The notify handler bails
+	// out while this is set.
+	BOOL m_bInBrowseExpand;
 
 	HANDLE m_hFiletoWrite;
     HANDLE m_hFiletoRead;

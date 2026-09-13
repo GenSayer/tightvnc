@@ -19,16 +19,17 @@
 //
 // TightVNC distribution homepage on the Web: http://www.tightvnc.com/
 //
-// If the source code for the VNC system is not available from the place 
+// If the source code for the VNC system is not available from the place
 // whence you received this file, check http://www.uk.research.att.com/vnc or contact
 // the authors on vnc@uk.research.att.com for information on obtaining it.
 
 // ConnectingDialog
+//
+// Win32s single-threaded version: a modeless dialog owned directly by this
+// object.  There is no ConnDialogThread any more (see ConnectingDialog.cpp).
 
 #if (!defined(_VNC_CONNECTINGDIALOG))
 #define _VNC_CONNECTINGDIALOG
-
-class ConnDialogThread;
 
 class ConnectingDialog
 {
@@ -36,11 +37,21 @@ public:
 	ConnectingDialog(HINSTANCE hInst, const char *vnchost);
 	~ConnectingDialog();
 
+	// Update the status line, then pump this dialog's messages so it paints.
 	void SetStatus(const char *msg);
 
+	// Destroy the dialog if it is still up.  Safe to call more than once.
+	void Close();
+
 private:
-	ConnDialogThread *m_thread;
+	static LRESULT CALLBACK DlgProc(HWND hwnd, UINT uMsg,
+									WPARAM wParam, LPARAM lParam);
+	void Pump();
+
+	HINSTANCE m_hInst;
+	HWND      m_hwnd;			// NULL once the dialog has gone away
+	bool      m_hostKnown;
+	char      m_vnchost[256];	// fixed buffer: no strdup/free pairing needed
 };
 
 #endif
-

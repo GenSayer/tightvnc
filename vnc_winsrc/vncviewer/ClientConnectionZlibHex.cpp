@@ -113,7 +113,8 @@ void ClientConnection::HandleZlibHexEncoding##bpp(int rx, int ry, int rw, int rh
 																				\
             if (subencoding & rfbHextileRaw) {									\
                 ReadExact(m_netbuf, w * h * (bpp / 8));							\
-                SETPIXELS(m_netbuf, bpp, x,y,w,h)								\
+                /* WIN32S: bulk DIB draw - see DrawPixelBlock. */				\
+                DrawPixelBlock(m_netbuf, bpp, x, y, w, h);						\
                 continue;														\
             }																	\
 																				\
@@ -122,7 +123,7 @@ void ClientConnection::HandleZlibHexEncoding##bpp(int rx, int ry, int rw, int rh
                 nCompData = Swap16IfLE(nCompData);								\
                 ReadExact(m_netbuf, nCompData);									\
 		        if (zlibDecompress((unsigned char *)m_netbuf, m_zlibbuf, nCompData, ((w*h+2)*(bpp/8)), &m_decompStreamRaw)) {  \
-                    SETPIXELS(m_zlibbuf, bpp, x,y,w,h);							\
+                    DrawPixelBlock((char *)m_zlibbuf, bpp, x, y, w, h);			\
 				}																\
                 continue;														\
             }																	\

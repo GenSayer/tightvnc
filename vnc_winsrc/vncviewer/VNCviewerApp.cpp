@@ -61,22 +61,37 @@ VNCviewerApp::VNCviewerApp(HINSTANCE hInstance, LPTSTR szCmdLine) {
 	for (int i = 0; i < MAX_CONNECTIONS; i++)
 		m_clilist[i] = NULL;
 
-	// Initialise winsock
-	WORD wVersionRequested = MAKEWORD(2, 0);
+	// Initialise winsock.
+	//
+	// WIN32S: must request 1.1, not 2.0.  Win32s ships WinSock 1.1
+	// (winsock.dll / the stack vendor's WINSOCK.DLL under Windows 3.1) and
+	// wsock32.lib is a 1.1 import library.  Asking for MAKEWORD(2,0) makes
+	// WSAStartup fail with WSAVERNOTSUPPORTED on Win32s and on plain Win95
+	// without the WinSock 2 update; every socket call after that fails.
+	//
+	// Also note the original bug: on failure it showed a message box and
+	// called PostQuitMessage() but then carried on constructing the app and
+	// opening a connection with an uninitialised socket library.  We now
+	// record the failure so callers can stop.
+	WORD wVersionRequested = MAKEWORD(1, 1);
 	WSADATA wsaData;
+	m_winsockOK = true;
 	if (WSAStartup(wVersionRequested, &wsaData) != 0) {
+		m_winsockOK = false;
 		MessageBox(NULL, _T("Error initialising sockets library"), _T("VNC info"), MB_OK | MB_ICONSTOP);
 		PostQuitMessage(1);
+		return;
 	}
-	vnclog.Print(3, _T("Started and Winsock (v %d) initialised\n"), wsaData.wVersion);
+	vnclog.Print(3, _T("Started and Winsock (v %d.%d) initialised\n"),
+				 LOBYTE(wsaData.wVersion), HIBYTE(wsaData.wVersion));
 }
 
 
 // The list of clients should fill up from the start and have NULLs
 // afterwards.  If the first entry is a NULL, the list is empty.
+// (Single-threaded: the omni_mutex_lock that used to guard these is gone.)
 
 void VNCviewerApp::RegisterConnection(ClientConnection *pConn) {
-	omni_mutex_lock l(m_clilistMutex);
 	int i;
 	for (i = 0; i < MAX_CONNECTIONS; i++) {
 		if (m_clilist[i] == NULL) {
@@ -94,7 +109,6 @@ void VNCviewerApp::RegisterConnection(ClientConnection *pConn) {
 }
 
 void VNCviewerApp::DeregisterConnection(ClientConnection *pConn) {
-	omni_mutex_lock l(m_clilistMutex);
 	int i;
 	for (i = 0; i < MAX_CONNECTIONS; i++) {
 		if (m_clilist[i] == pConn) {
@@ -121,10 +135,14 @@ void VNCviewerApp::DeregisterConnection(ClientConnection *pConn) {
 
 
 VNCviewerApp::~VNCviewerApp() {
-		
-	
-	// Clean up winsock
-	WSACleanup();
+
+	// Clean up winsock.
+	// Only if WSAStartup actually succeeded: WSACleanup without a matching
+	// startup returns WSANOTINITIALISED on NT but is not defined behaviour on
+	// every WinSock 1.1 stack.  WinMain also calls WSACleanup; the counts
+	// balance because there is exactly one successful WSAStartup.
+	if (m_winsockOK)
+		WSACleanup();
 	
 	vnclog.Print(2, _T("VNC viewer closing down\n"));
 

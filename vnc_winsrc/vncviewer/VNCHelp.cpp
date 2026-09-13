@@ -24,16 +24,59 @@
 #include "vncviewer.h"
 #include "VNCHelp.h"
 
+// ==========================================
+// Win32s WM_HELP / HELPINFO Stubs
+// ==========================================
+
+#ifndef HELPINFO_DEFINED
+#define HELPINFO_DEFINED
+
+// The standard HELPINFO structure fields layout
+typedef struct tagHELPINFO {
+    UINT    cbSize;             // Size of this structure
+    int     iContextType;       // HELPINFO_WINDOW or HELPINFO_MENUITEM
+    int     iCtrlId;            // Component ID
+    HANDLE  hItemHandle;        // Associated HWND or HMENU
+    DWORD   dwContextId;        // Context help ID
+    POINT   MousePos;           // Mouse coordinates
+} HELPINFO, *LPHELPINFO;
+
+// Standard Context Types (if needed by your code)
+#ifndef HELPINFO_WINDOW
+#define HELPINFO_WINDOW     0x0001
+#endif
+#ifndef HELPINFO_MENUITEM
+#define HELPINFO_MENUITEM   0x0002
+#endif
+
+#endif // HELPINFO_DEFINED
+
+
 VNCHelp::VNCHelp()
 {
-	m_dwCookie = NULL;
+	m_dwCookie = 0;		// DWORD, not a pointer
 	// HtmlHelp(NULL, NULL, HH_INITIALIZE, (DWORD)&m_dwCookie);
 }
 
 void VNCHelp::Popup(LPARAM lParam) 
 {
+	// HTML Help is disabled in this build (htmlhelp.lib / HHCTRL.OCX do not
+	// exist on Win32s, and linking htmlhelp.lib would put HtmlHelpA in the
+	// import table and stop the EXE loading).  All the HtmlHelp calls below are
+	// commented out, so this function now computes a popup topic and discards
+	// it.
+	//
+	// The important part for the port is the guard: WM_HELP is a Win95+ message
+	// and is never sent on Win32s, but the handlers that call this
+	// (ClientConnection::WndProc1, the dialogs) pass lParam straight through.
+	// A NULL lParam - which is what a stray or synthesised WM_HELP carries -
+	// used to be dereferenced immediately.
 	LPHELPINFO hlp = (LPHELPINFO) lParam;
+	if (hlp == NULL)
+		return;
+
 	HH_POPUP popup;
+	memset(&popup, 0, sizeof(popup));
 
 	if (hlp->iCtrlId != 0) {
 		
@@ -93,8 +136,11 @@ void VNCHelp::Popup(LPARAM lParam)
 
 BOOL VNCHelp::TranslateMsg(MSG *pmsg)
 {
-	// return (HtmlHelp(NULL, NULL, HH_PRETRANSLATEMESSAGE, (DWORD)pmsg) != 0);
-	return NULL;
+	// HTML Help disabled - see Popup() above.  Return FALSE (not NULL: this is
+	// a BOOL, and returning NULL for a BOOL is exactly the kind of thing MSVC
+	// 4.1 accepts silently and a reader misreads).
+	// (void)pmsg;
+	return FALSE;
 }
 
 VNCHelp::~VNCHelp()

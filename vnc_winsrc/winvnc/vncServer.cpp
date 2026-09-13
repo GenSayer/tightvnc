@@ -33,7 +33,11 @@
 #include "stdhdrs.h"
 #include <omnithread.h>
 #include <string.h>
-#include <lmcons.h>
+// WIN32S: <lmcons.h> removed (LAN Manager header, needed only for UNLEN).
+// #include <lmcons.h>
+#ifndef UNLEN
+#define UNLEN 256
+#endif
 
 // Custom
 #include "WinVNC.h"
@@ -63,6 +67,14 @@ typedef struct tagMONITORINFO {
 // function pointer types for dynamic loading
 typedef HMONITOR (WINAPI *pfnMonitorFromPoint)(POINT, DWORD);
 typedef BOOL	 (WINAPI *pfnGetMonitorInfo)(HMONITOR, LPMONITORINFO);
+
+// WIN32S: how long a blacklist entry stays valid, in milliseconds.
+//
+// The original added 10 to a value expressed in SECONDS, i.e. a 10-second
+// timeout.  Now that _lastRefTime is a GetTickCount() millisecond value, the
+// same interval has to be expressed in ms.  Getting this wrong would either
+// blacklist a host for 10 ms (useless) or for 10,000 seconds (a lockout).
+#define BLACKLIST_TIMEOUT_MS 10000UL
 
 // Constructor/destructor
 vncServer::vncServer()
@@ -277,19 +289,83 @@ vncServer::AddClient(VSocket *socket, BOOL reverse, BOOL shared,
 	client->EnableKeyboard(keysenabled && m_enable_remote_inputs);
 	client->EnablePointer(ptrenabled && m_enable_remote_inputs);
 
-	// Start the client
+	// ==================================================================
+	// WIN32S: REGISTER THE CLIENT *BEFORE* Init().
+	//
+	// THIS ORDERING IS LOAD-BEARING.  The original was:
+	//
+	//     if (!client->Init(...)) { delete client; return -1; }
+	//     m_clientmap[clientid] = client;
+	//     m_unauthClients.push_back(clientid);
+	//
+	// which was correct on NT only because Init() merely SPAWNED A THREAD and
+	// returned immediately - registration finished long before the handshake ran
+	// on that thread.
+	//
+	// In this port Init() runs the whole blocking handshake inline (there are no
+	// threads; see vncClient::Init and RunHandshake).  With the old ordering the
+	// entire authentication sequence executed while the client was in NEITHER
+	// m_clientmap NOR m_unauthClients, so:
+	//
+	//   * ReadClientInit() calls m_server->Authenticated(GetClientId()), which
+	//     searches m_unauthClients for this id.  It was not there, so the loop
+	//     body never ran: no vncDesktop was created, no vncBuffer was allocated,
+	//     and SetBuffer() was never called - yet Authenticated() still returned
+	//     its initial authok = TRUE.
+	//
+	//   * RunHandshake() then did "m_fullscreen = m_buffer->GetSize()" with
+	//     m_buffer still NULL.
+	//
+	//   * GetClient(clientid) returned NULL throughout, so the blacklist
+	//     add/remove and every other lookup silently did nothing.
+	//
+	// That is the cause of the "connects then hangs / no valid password" symptom.
+	//
+	// Registering first is safe: the client is in m_unauthClients, which is
+	// exactly the state the protocol expects during authentication, and the
+	// failure path below removes it again.
+	// ==================================================================
+	m_clientmap[clientid] = client;
+	m_unauthClients.push_back(clientid);
+
+	// Start the client.  This now performs the full protocol handshake inline.
 	if (!client->Init(this, socket, reverse, shared, clientid))
 	{
-		// The client will delete the socket for us...
 		vnclog.Print(LL_CONNERR, VNCLOG("failed to initialize client object\n"));
+
+		// Un-register.  Init() may have got as far as Authenticated(), in which
+		// case the id has moved from m_unauthClients to m_authClients, so both
+		// lists are searched.
+		//
+		// Deliberately NOT calling RemoveClient() here, for two reasons:
+		//
+		//   * We already hold m_clientsLock (see the omni_mutex_lock at the top
+		//     of this function).  RemoveClient takes m_desktopLock and
+		//     m_clientsLock itself - harmless with the no-op mutexes this build
+		//     uses, but an instant deadlock if real locking is ever restored.
+		//
+		//   * RemoveClient has side effects that are wrong for a client that
+		//     never authenticated: it destroys m_desktop when the auth list
+		//     empties, fires WM_SRV_CLIENT_DISCONNECT, and beeps.
+		vncClientList::iterator ci;
+		for (ci = m_unauthClients.begin(); ci != m_unauthClients.end(); ci++) {
+			if ((*ci) == clientid) {
+				m_unauthClients.erase(ci);
+				break;
+			}
+		}
+		for (ci = m_authClients.begin(); ci != m_authClients.end(); ci++) {
+			if ((*ci) == clientid) {
+				m_authClients.erase(ci);
+				break;
+			}
+		}
+		m_clientmap[clientid] = NULL;
+
+		// The client object owns the socket and deletes it.
 		delete client;
 		return -1;
 	}
-
-	m_clientmap[clientid] = client;
-
-	// Add the client to unauth the client list
-	m_unauthClients.push_back(clientid);
 
 	// Notify anyone interested about this event
 	DoNotify(WM_SRV_CLIENT_CONNECT, 0, 0);
@@ -436,12 +512,23 @@ vncServer::KillAuthClients()
 	omni_mutex_lock l(m_clientsLock);
 
 	// Tell all the authorised clients to die!
+	//
+	// WIN32S: GetClient() can return NULL - m_clientmap[] is cleared by
+	// RemoveClient() before the id leaves the list in some paths - and the
+	// original dereferenced it unconditionally.  With one thread the window in
+	// which that can happen is narrower, but ReapDeadClients() runs from the same
+	// thread as everything else, so a NULL here is entirely reachable.
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
+		vncClient *client = GetClient(*i);
+		if (client == NULL)
+			continue;
+
 		vnclog.Print(LL_INTINFO, VNCLOG("killing auth client\n"));
 
-		// Kill the client
-		GetClient(*i)->Kill();
+		// Kill the client.  This closes its socket and marks it dead; the object
+		// itself is freed by ReapDeadClients().
+		client->Kill();
 	}
 
 	vnclog.Print(LL_INTINFO, VNCLOG("KillAuthClients() done\n"));
@@ -453,13 +540,17 @@ vncServer::KillUnauthClients()
 	vncClientList::iterator i;
 	omni_mutex_lock l(m_clientsLock);
 
-	// Tell all the authorised clients to die!
+	// Tell all the unauthorised clients to die!  (The comment said
+	// "authorised" - it is the unauth list.)
 	for (i = m_unauthClients.begin(); i != m_unauthClients.end(); i++)
 	{
+		vncClient *client = GetClient(*i);
+		if (client == NULL)
+			continue;
+
 		vnclog.Print(LL_INTINFO, VNCLOG("killing unauth client\n"));
 
-		// Kill the client
-		GetClient(*i)->Kill();
+		client->Kill();
 	}
 
 	vnclog.Print(LL_INTINFO, VNCLOG("KillUnauthClients() done\n"));
@@ -481,15 +572,54 @@ vncServer::UnauthClientCount()
 	return m_unauthClients.size();
 }
 
+// ==========================================================================
+// WIN32S: WaitUntilAuthEmpty / WaitUntilUnauthEmpty
+//
+// These were:
+//
+//     omni_mutex_lock l(m_clientsLock);
+//     while (!m_authClients.empty())
+//         m_clientquitsig->wait();          // block until a client thread exits
+//
+// They are called from ~vncServer, immediately after KillAuthClients() /
+// KillUnauthClients().  On NT each client thread noticed its closed socket,
+// called RemoveClient() and signalled the condition, so the wait terminated.
+//
+// With one thread there is nobody to do that.  omni_condition::wait() in this
+// build pumps messages instead of blocking (see omnithread/omnithread.h), which
+// prevents an outright deadlock - but the clients would still never be removed,
+// because removal happens in ReapDeadClients() and nothing is calling PumpIdle()
+// during destruction.
+//
+// So these now drive the reaping themselves: Kill() has already marked every
+// client dead, so one ReapDeadClients() pass empties the lists.  The loop and
+// the timeout are belt and braces for a client that somehow is not dead yet.
+//
+// NOTE: the m_clientsLock that used to be held across the whole wait is gone.
+// Holding it would be wrong now, because ReapDeadClients() takes it itself -
+// harmless with a no-op mutex, but it would deadlock instantly if real locking
+// were ever restored.
+// ==========================================================================
+
 void
 vncServer::WaitUntilAuthEmpty()
 {
-	omni_mutex_lock l(m_clientsLock);
+	DWORD deadline = GetTickCount() + 5000;		// 5 s is generous
 
-	// Wait for all the clients to exit
 	while (!m_authClients.empty())
 	{
-		// Wait for a client to quit
+		ReapDeadClients();
+
+		if (m_authClients.empty())
+			break;
+
+		if ((long)(GetTickCount() - deadline) >= 0) {
+			vnclog.Print(LL_INTERR,
+				VNCLOG("timed out waiting for authorised clients to exit\n"));
+			break;
+		}
+
+		// Let any in-flight socket teardown complete, and keep the UI alive.
 		m_clientquitsig->wait();
 	}
 }
@@ -497,12 +627,21 @@ vncServer::WaitUntilAuthEmpty()
 void
 vncServer::WaitUntilUnauthEmpty()
 {
-	omni_mutex_lock l(m_clientsLock);
+	DWORD deadline = GetTickCount() + 5000;
 
-	// Wait for all the clients to exit
 	while (!m_unauthClients.empty())
 	{
-		// Wait for a client to quit
+		ReapDeadClients();
+
+		if (m_unauthClients.empty())
+			break;
+
+		if ((long)(GetTickCount() - deadline) >= 0) {
+			vnclog.Print(LL_INTERR,
+				VNCLOG("timed out waiting for unauthorised clients to exit\n"));
+			break;
+		}
+
 		m_clientquitsig->wait();
 	}
 }
@@ -517,7 +656,9 @@ vncServer::RemoteEventReceived()
 	// Iterate over the authorised clients
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
-		result = result || GetClient(*i)->RemoteEventReceived();
+		vncClient *c = GetClient(*i);
+		if (c != NULL)
+			result = result || c->RemoteEventReceived();
 	}
 	return result;
 }
@@ -550,7 +691,15 @@ vncServer::BlockRemoteInput(BOOL block)
 
 	vncClientList::iterator i;
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
-		GetClient(*i)->BlockInput(block);
+	{
+		// NOTE: braces added.  The original body was a single statement
+		//     GetClient(*i)->BlockInput(block);
+		// with no braces, so adding the NULL check silently moved it outside the
+		// loop.  A declaration cannot be the sole statement of a for body anyway.
+		vncClient *c = GetClient(*i);
+		if (c != NULL)
+			c->BlockInput(block);
+	}
 }
 
 const char*
@@ -627,21 +776,26 @@ vncServer::RemoveClient(vncClientId clientid)
 		vnclog.Print(LL_STATE, VNCLOG("deleting desktop server\n"));
 
 		// Are there locksettings set?
-		if (LockSettings() == 1)
+		//
+		// WIN32S: neither action is possible on Windows 3.1.
+		//
+		//   LockSettings() == 1  -> lock the workstation.  vncService::
+		//     LockWorkstation() is a stub returning FALSE; LockWorkstation is
+		//     NT 4.0+ and there is no login session to lock.
+		//
+		//   LockSettings() > 1   -> log the user off.  ExitWindowsEx(EWX_LOGOFF)
+		//     DOES exist on Win32s, but there is no user session: on Windows 3.1
+		//     it would attempt to shut Windows itself down and return the user to
+		//     DOS.  Doing that when a remote client merely disconnects would be
+		//     actively destructive - any unsaved work in other applications would
+		//     be lost - so it is deliberately NOT done.
+		//
+		// The setting is left in the registry and still round-trips through the
+		// Properties dialog; it simply has no effect here.
+		if (LockSettings() != 0)
 		{
-			// Yes - lock the machine on disconnect!
-			vncService::LockWorkstation();
-		} else if (LockSettings() > 1)
-		{
-		    char username[UNLEN+1];
-
-		    vncService::CurrentUser((char *)&username, sizeof(username));
-		    if (strcmp(username, "") != 0)
-		    {
-			// Yes - force a user logoff on disconnect!
-			if (!ExitWindowsEx(EWX_LOGOFF, 0))
-			    vnclog.Print(LL_CONNERR, VNCLOG("client disconnect - failed to logoff user!\n"));
-		    }
+			vnclog.Print(LL_INTWARN,
+				VNCLOG("lock/logoff on disconnect is not supported on this platform\n"));
 		}
 
 		// Delete the screen server
@@ -653,6 +807,178 @@ vncServer::RemoveClient(vncClientId clientid)
 	DoNotify(WM_SRV_CLIENT_DISCONNECT, 0, 0);
 
 	vnclog.Print(LL_INTINFO, VNCLOG("RemoveClient() done\n"));
+}
+
+// ==========================================================================
+// WIN32S SINGLE-THREADED DRIVING
+//
+// See the notes in vncServer.h.  These three functions replace what five
+// separate threads used to do.
+// ==========================================================================
+
+//
+// PumpIdle - drive the whole server once.  Never blocks.
+//
+// Order matters:
+//
+//   1. Accept new connections FIRST, so that a connection attempt is not left
+//      waiting behind a slow screen capture.
+//
+//   2. Service existing clients next: their input (keyboard, mouse) is what the
+//      user is waiting on, and their pending output needs flushing.
+//
+//   3. Look for screen changes LAST.  CheckUpdates()/PerformPolling() is by far
+//      the most expensive step on this platform (see the note on polling in
+//      vncDesktop.cpp), so it must not delay the other two.
+//
+//   4. Reap dead clients at the very end, when nothing is iterating the lists.
+//
+BOOL
+vncServer::PumpIdle()
+{
+	BOOL didWork = FALSE;
+
+	// 1. Incoming connections.
+	if (m_socketConn != NULL && m_socketConn->IsListening()) {
+		if (m_socketConn->PumpIdle())
+			didWork = TRUE;
+	}
+	if (m_httpConn != NULL && m_httpConn->IsListening()) {
+		if (m_httpConn->PumpIdle())
+			didWork = TRUE;
+	}
+
+	// 2. Existing clients.
+	if (PumpClients())
+		didWork = TRUE;
+
+	// 3. Screen changes.
+	//
+	// The desktop only exists while at least one client is authenticated
+	// (vncServer::Authenticated creates it, RemoveClient destroys it), so this
+	// costs nothing when nobody is connected.
+	{
+		omni_mutex_lock l(m_desktopLock);
+		if (m_desktop != NULL) {
+			if (!m_desktop->PumpIdle()) {
+				// The desktop has shut itself down (display mode change, or a
+				// capture failure).  Drop the clients: their framebuffer
+				// geometry is no longer valid.
+				vnclog.Print(LL_INTERR,
+					VNCLOG("desktop stopped - disconnecting clients\n"));
+				KillAuthClients();
+			} else {
+				didWork = TRUE;
+			}
+		}
+	}
+
+	// 4. Free anything that finished.
+	ReapDeadClients();
+
+	return didWork;
+}
+
+//
+// PumpClients - give every client one chance to read a message.
+//
+// IMPORTANT: this walks a COPY of the client id list, not the list itself.
+// vncClient::PumpIdle() can lead to RemoveClient() (a client that disconnects
+// mid-message), which erases from m_authClients - and our list<> invalidates
+// iterators on erase, exactly as std::list does for the erased element.
+// Iterating a copy of the ids and looking each one up via GetClient() is safe
+// because GetClient returns NULL for an id that has gone away.
+//
+BOOL
+vncServer::PumpClients()
+{
+	BOOL didWork = FALSE;
+
+	// Snapshot the ids.  MAX_CLIENTS is 128, so this is a small stack array
+	// rather than an allocation on every idle pass.
+	vncClientId ids[MAX_CLIENTS];
+	int nids = 0;
+
+	{
+		omni_mutex_lock l(m_clientsLock);
+
+		vncClientList::iterator i;
+		for (i = m_authClients.begin(); i != m_authClients.end() && nids < MAX_CLIENTS; i++)
+			ids[nids++] = *i;
+		for (i = m_unauthClients.begin(); i != m_unauthClients.end() && nids < MAX_CLIENTS; i++)
+			ids[nids++] = *i;
+	}
+
+	int n;
+	for (n = 0; n < nids; n++) {
+		vncClient *client = GetClient(ids[n]);
+		if (client == NULL)
+			continue;				// already removed
+		if (client->IsDead())
+			continue;				// waiting to be reaped
+		if (client->PumpIdle())
+			didWork = TRUE;
+	}
+
+	return didWork;
+}
+
+//
+// ReapDeadClients - remove and delete clients whose conversation has ended.
+//
+// A client marks itself dead in vncClient::PumpIdle() (or in Kill()).  It must
+// not remove itself: RemoveClient walks the very lists that PumpClients is
+// iterating, and it can delete the desktop object as a side effect.
+//
+// This is the single place where a vncClient is destroyed.  Note the ordering:
+// RemoveClient() takes the id out of the lists and clears m_clientmap, and the
+// object is deleted afterwards.  Doing it the other way round would leave a
+// dangling pointer in m_clientmap for the duration of RemoveClient, which itself
+// calls GetClient() indirectly through the m_authClients.empty() check.
+//
+void
+vncServer::ReapDeadClients()
+{
+	for (;;) {
+		vncClientId deadId = -1;
+		vncClient *deadClient = NULL;
+
+		{
+			omni_mutex_lock l(m_clientsLock);
+
+			vncClientList::iterator i;
+			for (i = m_authClients.begin(); i != m_authClients.end(); i++) {
+				vncClient *c = m_clientmap[*i];
+				if (c != NULL && c->IsDead()) {
+					deadId = *i;
+					deadClient = c;
+					break;
+				}
+			}
+			if (deadClient == NULL) {
+				for (i = m_unauthClients.begin(); i != m_unauthClients.end(); i++) {
+					vncClient *c = m_clientmap[*i];
+					if (c != NULL && c->IsDead()) {
+						deadId = *i;
+						deadClient = c;
+						break;
+					}
+				}
+			}
+		}
+
+		if (deadClient == NULL)
+			break;					// nothing left to reap
+
+		vnclog.Print(LL_INTINFO, VNCLOG("reaping dead client %hd\n"), deadId);
+
+		// Takes the client out of the lists, clears m_clientmap[], notifies
+		// listeners and drops the desktop if this was the last client.
+		RemoveClient(deadId);
+
+		// Now it is safe to destroy the object.
+		delete deadClient;
+	}
 }
 
 // NOTIFICATION HANDLING!
@@ -726,7 +1052,9 @@ vncServer::TriggerUpdate()
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
 		// Post the update
-		GetClient(*i)->TriggerUpdate();
+		vncClient *c = GetClient(*i);
+		if (c != NULL)
+			c->TriggerUpdate();
 	}
 }
 
@@ -741,7 +1069,9 @@ vncServer::UpdateRect(RECT &rect)
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
 		// Post the update
-		GetClient(*i)->UpdateRect(rect);
+		vncClient *c = GetClient(*i);
+		if (c != NULL)
+			c->UpdateRect(rect);
 	}
 }
 
@@ -759,7 +1089,9 @@ vncServer::UpdateRegion(vncRegion &region)
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
 		// Post the update
-			GetClient(*i)->UpdateRegion(region);
+		vncClient *c = GetClient(*i);
+		if (c != NULL)
+			c->UpdateRegion(region);
 	}
 }
 
@@ -774,7 +1106,9 @@ vncServer::CopyRect(RECT &dest, POINT &source)
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
 		// Post the update
-		GetClient(*i)->CopyRect(dest, source);
+		vncClient *c = GetClient(*i);
+		if (c != NULL)
+			c->CopyRect(dest, source);
 	}
 }
 
@@ -789,7 +1123,9 @@ vncServer::UpdateMouse()
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
 		// Post the update
-		GetClient(*i)->UpdateMouse();
+		vncClient *c = GetClient(*i);
+		if (c != NULL)
+			c->UpdateMouse();
 	}
 }
 
@@ -804,7 +1140,9 @@ vncServer::UpdateClipText(LPSTR text)
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
 		// Post the update
-		GetClient(*i)->UpdateClipText(text);
+		vncClient *c = GetClient(*i);
+		if (c != NULL)
+			c->UpdateClipText(text);
 	}
 }
 
@@ -819,7 +1157,9 @@ vncServer::UpdatePalette()
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
 		// Post the update
-		GetClient(*i)->UpdatePalette();
+		vncClient *c = GetClient(*i);
+		if (c != NULL)
+			c->UpdatePalette();
 	}
 }
 
@@ -1328,26 +1668,26 @@ vncServer::VerifyHost(const char *hostname) {
 	// -=- Is the specified host blacklisted?
 	vncServer::BlacklistEntry	*current = m_blacklist;
 	vncServer::BlacklistEntry	*previous = 0;
-	SYSTEMTIME					systime;
-	FILETIME					ftime;
-	LARGE_INTEGER				now;
 
-	// Get the current time as a 64-bit value
-	GetSystemTime(&systime);
-	SystemTimeToFileTime(&systime, &ftime);
-	now.LowPart=ftime.dwLowDateTime;now.HighPart=ftime.dwHighDateTime;
-	now.QuadPart /= 10000000; // Convert it into seconds
+	// WIN32S: was GetSystemTime + SystemTimeToFileTime + a 64-bit divide by
+	// 10000000 to get seconds.  GetTickCount() gives milliseconds directly, needs
+	// no 64-bit arithmetic, and is exactly right for the relative 10-second
+	// timeout this code implements.  See the note on BlacklistEntry in
+	// vncServer.h.
+	DWORD now = GetTickCount();
 
 	while (current) {
 
 		// Has the blacklist entry timed out?
-		if ((now.QuadPart - current->_lastRefTime.QuadPart) > 0) {
+		// (Written as a signed difference so it is correct across the 49.7-day
+		// GetTickCount wrap.)
+		if ((long)(now - current->_lastRefTime) >= 0) {
 
 			// Yes.  Is it a "blocked" entry?
 			if (current->_blocked) {
 				// Yes, so unblock it & re-set the reference time
 				current->_blocked = FALSE;
-				current->_lastRefTime.QuadPart = now.QuadPart + 10;
+				current->_lastRefTime = now + BLACKLIST_TIMEOUT_MS;
 			} else {
 				// No, so remove it
 				if (previous)
@@ -1487,14 +1827,8 @@ vncServer::AddAuthHostsBlacklist(const char *machine) {
 	// -=- Is the specified host blacklisted?
 	vncServer::BlacklistEntry	*current = m_blacklist;
 
-	// Get the current time as a 64-bit value
-	SYSTEMTIME					systime;
-	FILETIME					ftime;
-	LARGE_INTEGER				now;
-	GetSystemTime(&systime);
-	SystemTimeToFileTime(&systime, &ftime);
-	now.LowPart=ftime.dwLowDateTime;now.HighPart=ftime.dwHighDateTime;
-	now.QuadPart /= 10000000; // Convert it into seconds
+	// WIN32S: GetTickCount instead of FILETIME arithmetic - see VerifyHost above.
+	DWORD now = GetTickCount();
 
 	while (current) {
 
@@ -1506,7 +1840,7 @@ vncServer::AddAuthHostsBlacklist(const char *machine) {
 				return;
 
 			// Set the RefTime & failureCount
-			current->_lastRefTime.QuadPart = now.QuadPart + 10;
+			current->_lastRefTime = now + BLACKLIST_TIMEOUT_MS;
 			current->_failureCount++;
 
 			if (current->_failureCount > 5)
@@ -1521,7 +1855,7 @@ vncServer::AddAuthHostsBlacklist(const char *machine) {
 	current = new vncServer::BlacklistEntry;
 	current->_blocked = FALSE;
 	current->_failureCount = 0;
-	current->_lastRefTime.QuadPart = now.QuadPart + 10;
+	current->_lastRefTime = now + BLACKLIST_TIMEOUT_MS;
 	current->_machineName = strdup(machine);
 	current->_next = m_blacklist;
 	m_blacklist = current;
@@ -1634,7 +1968,9 @@ vncServer::SetNewFBSize(BOOL sendnewfb)
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
 		// Post the update
-		GetClient(*i)->SetNewFBSize( sendnewfb);
+		vncClient *c = GetClient(*i);
+		if (c != NULL)
+			c->SetNewFBSize(sendnewfb);
 	}
 }
 
@@ -1648,7 +1984,8 @@ vncServer::FullRgnRequested()
 	// Iterate over the authorised clients
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
-		if (GetClient(*i)->FullRgnRequested())
+		vncClient *c = GetClient(*i);
+		if (c != NULL && c->FullRgnRequested())
 			return TRUE;
 	}
 	return FALSE;
@@ -1663,7 +2000,8 @@ vncServer::IncrRgnRequested()
 	// Iterate over the authorised clients
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
-		if (GetClient(*i)->IncrRgnRequested())
+		vncClient *c = GetClient(*i);
+		if (c != NULL && c->IncrRgnRequested())
 			return TRUE;
 	}
 	return FALSE;
@@ -1678,7 +2016,9 @@ vncServer::UpdateLocalFormat()
 	// Iterate over the authorised clients
 	for (i = m_authClients.begin(); i != m_authClients.end(); i++)
 	{
-		GetClient(*i)->UpdateLocalFormat();
+		vncClient *c = GetClient(*i);
+		if (c != NULL)
+			c->UpdateLocalFormat();
 			
 	}
 	return;

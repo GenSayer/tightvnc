@@ -40,8 +40,17 @@ void ClientConnection::ReadHextileRect(rfbFramebufferUpdateRectHeader *pfburh)
 	case 16:
 		HandleHextileEncoding16(pfburh->r.x, pfburh->r.y, pfburh->r.w, pfburh->r.h);
 		break;
+	case 24:
+		// Should not happen: SetupPixelFormat promotes 24 to 32.  Log and
+		// drop rather than silently drawing nothing (the old code had no
+		// case here at all, so a 24bpp server blanked every Hextile rect).
+		vnclog.Print(0, _T("Hextile: unexpected 24bpp format\n"));
+		break;
 	case 32:
 		HandleHextileEncoding32(pfburh->r.x, pfburh->r.y, pfburh->r.w, pfburh->r.h);
+		break;
+	default:
+		vnclog.Print(0, _T("Invalid number of bits per pixel: %d\n"), m_myFormat.bitsPerPixel);
 		break;
 	}
 }
@@ -77,7 +86,11 @@ void ClientConnection::HandleHextileEncoding##bpp(int rx, int ry, int rw, int rh
                                                                               \
             if (subencoding & rfbHextileRaw) {                                \
                 ReadExact(m_netbuf, w * h * (bpp / 8));                       \
-                SETPIXELS(m_netbuf, bpp, x,y,w,h)                             \
+                /* WIN32S: bulk DIB draw, not per-pixel SetPixel.  A raw     */\
+                /* hextile tile is at most 16x16 = 256 pixels, so this is    */\
+                /* less dramatic than the Raw/Zlib case, but a full screen   */\
+                /* of raw tiles is still the same 307,200 pixels.            */\
+                DrawPixelBlock(m_netbuf, bpp, x, y, w, h);                    \
                 continue;                                                     \
             }                                                                 \
                                                                               \

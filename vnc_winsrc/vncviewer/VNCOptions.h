@@ -24,9 +24,7 @@
 // whence you received this file, check http://www.uk.research.att.com/vnc or contact
 // the authors on vnc@uk.research.att.com for information on obtaining it.
 
-typedef int bool;
-#define false 0
-#define true 1
+// bool/true/false come from win32s_fix.h (force-included).  Do not redefine.
 
 #ifndef VNCOPTIONS_H__
 #define VNCOPTIONS_H__
@@ -49,6 +47,10 @@ typedef int bool;
 
 #define KEY_VNCVIEWER_HISTORI _T("Software\\ORL\\VNCviewer\\History")
 
+// WIN32S: vncviewer.ini section names (mirror winvnc's WINVNC.INI approach).
+#define VIEWER_INI_HISTORY "History"
+#define VIEWER_INI_SETTINGS "Settings"
+
 struct COMBOSTRING {
 		TCHAR NameString[20];
 		int rfbEncoding;
@@ -57,20 +59,27 @@ struct COMBOSTRING {
 class VNCOptions  
 {
 public:
-	VNCOptions();
-	VNCOptions& operator=(VNCOptions& s);
+	VNCOptions();	VNCOptions& operator=(VNCOptions& s);
 	virtual ~VNCOptions();
 	
 	// Save and load a set of options from a config file
 	void Save(char *fname);
 	void Load(char *fname);
 	void VNCOptions::LoadOpt(char subkey[256],char keyname[256]);
-	int VNCOptions::read(HKEY hkey,char *name,int retrn);
-	void VNCOptions::save(HKEY hkey,char *name, int value);
 	void VNCOptions::LoadGenOpt();
 	void VNCOptions::SaveGenOpt();
 	void VNCOptions::delkey(char subkey[256],char keyname[256]);
 	void VNCOptions::SaveOpt(char subkey[256],char keyname[256]);
+	// WIN32S: vncviewer.ini helpers (see VNCOptions.cpp).  Static so the
+	// session dialog and the connection history code can share them.
+	static int IniGetInt(const char *section, const char *name, int defVal);
+	static void IniSetInt(const char *section, const char *name, int value);
+	static void IniGetString(const char *section, const char *name,
+							 char *out, int outLen);
+	static void IniSetString(const char *section, const char *name,
+							 const char *value);
+	static void IniDeleteKey(const char *section, const char *name);
+	static void IniDeleteSection(const char *section);
 	// process options
 	bool	m_listening;
 	int		m_listenPort;

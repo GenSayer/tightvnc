@@ -39,10 +39,12 @@
 
 #ifdef UNDER_CE
 #include "omnithreadce.h"
-#define SD_BOTH 0x02
 #else
 #include "omnithread.h"
 #endif
+// SD_BOTH comes from win32s_fix.h (force-included).  It used to be defined
+// twice in this file - once as 0x02 in the UNDER_CE branch and once as 2 lower
+// down - which is harmless only because the values agree.
 
 #include "ClientConnection.h"
 #include "SessionDialog.h"
@@ -51,10 +53,53 @@
 #include "FileTransfer.h"
 #include "commctrl.h"
 #include "Exception.h"
+#include "Win32sApi.h"
 extern "C" {
 #include "vncauth.h"
 #include "d3des.h"
 }
+
+// ==========================================================================
+// WIN32S NOTE ON THE BLOCK THAT USED TO BE HERE
+//
+// This file previously declared missing APIs itself:
+//
+//     HBRUSH __stdcall GetSysColorBrush(int nIndex);
+//     int __stdcall SetScrollInfo(HWND, int, LPSCROLLINFO, BOOL);
+//
+// That satisfies the compiler but guarantees a load-time failure on Win32s:
+// the linker records "GetSysColorBrush" and "SetScrollInfo" as imports from
+// USER32, the Win32s USER32 does not export them, and the loader refuses to
+// start the process.  Nothing in the program ever runs, which is why the crash
+// produced no message and no log line.
+//
+// Both are now reached through Win32sApi.h (Win32sGetSysColorBrush /
+// Win32sSetScrollInfo), which resolves them at run time and falls back to
+// Windows 3.1 equivalents.
+//
+// SCROLLINFO/SIF_* and the NOTIFYICONDATA family also moved to Win32sApi.h so
+// there is only one definition of each.
+// ==========================================================================
+
+#ifndef WM_NOTIFY
+#define WM_NOTIFY            0x004E
+#endif
+
+// WM_MOUSEWHEEL is Win95+ (and only actually delivered by NT4/Win98 and later).
+// It was #define'd in the middle of a switch statement in WndProc; moved here
+// and guarded, because the MSVC 4.1 SDK headers may or may not define it
+// depending on WINVER, and redefinition is a warning-turned-noise.
+// Nothing sends this message on Win32s, so the case is simply never taken.
+#ifndef WM_MOUSEWHEEL
+#define WM_MOUSEWHEEL        0x020A
+#endif
+
+// SND_APPLICATION was needed only by the PlaySound call in ReadBell, which has
+// been replaced by Win32sPlayBell().  Kept (guarded) so that re-enabling the
+// original code does not break the build.
+#ifndef SND_APPLICATION
+#define SND_APPLICATION      0x0080
+#endif
 
 #ifndef TBSTYLE_FLAT
 #define TBSTYLE_FLAT 0x800
@@ -62,10 +107,6 @@ extern "C" {
 
 #ifndef TB_SETINDENT
 #define TB_SETINDENT (WM_USER + 71)
-#endif
-
-#ifndef SD_BOTH
-#define SD_BOTH 2
 #endif
 
 #define INITIALNETBUFSIZE 4096
@@ -88,17 +129,27 @@ extern "C" {
 			    (x.greenShift == y.greenShift) &&		\
 			    (x.blueShift == y.blueShift))))
 
-const rfbPixelFormat vnc8bitFormat = {8, 8, 0, 1, 7,7,3, 0,3,6,0,0};
-const rfbPixelFormat vnc16bitFormat = {16, 16, 0, 1, 63, 31, 31, 0,6,11,0,0};
+const rfbPixelFormat vnc8bitFormat = {8, 8, 0, 1, 7,7,3, 5,2,0,0,0};
+const rfbPixelFormat vnc16bitFormat = {16, 16, 0, 1, 31,63,31, 11,5,0,0,0};
 
 
 // *************************************************************************
-//  A Client connection involves two threads - the main one which sets up
-//  connections and processes window messages and inputs, and a 
-//  client-specific one which receives, decodes and draws output data 
-//  from the remote server.
-//  This first section contains bits which are generally called by the main
-//  program thread.
+//  WIN32S SINGLE-THREADED DESIGN
+//
+//  Originally a connection used two threads: the main one for windows and
+//  input, and a per-connection worker for receiving/decoding/drawing.  Win32s
+//  has no threads at all, so there is now exactly one thread:
+//
+//    * Run() does the blocking connect and handshake (as before).  While it
+//      runs, the modeless "Connecting..." dialog is pumped from SetStatus().
+//    * StartSession() replaces start_undetached(): it sends the first update
+//      request and flips m_sessionStarted/m_running.
+//    * PumpIdle() is called from the application idle loop and services at
+//      most one server message per call, only when data is actually waiting
+//      (SocketHasData()).  It never blocks, so the UI stays responsive.
+//    * Deletion is deferred: the window procedure only sets m_dead, and
+//      VNCviewerApp32::ReapDeadConnections() does the delete once we are back
+//      in the main loop and no longer inside a window procedure.
 // *************************************************************************
 
 ClientConnection::ClientConnection(VNCviewerApp *pApp) 
@@ -151,6 +202,8 @@ void ClientConnection::Init(VNCviewerApp *pApp)
 	m_pApp = pApp;
 	m_dormant = false;
 	m_hBitmapDC = NULL;
+	m_dibbuf = NULL;
+	m_dibbufsize = 0;
 	m_hBitmap = NULL;
 	m_hPalette = NULL;
 	m_passwdSet = false;
@@ -165,7 +218,13 @@ void ClientConnection::Init(VNCviewerApp *pApp)
 	m_opts = m_pApp->m_options;
 	
 	m_sock = INVALID_SOCKET;
+	m_inReadExact = false;
+	m_inWriteExact = false;
+	m_pendingHead = NULL;
+	m_pendingTail = NULL;
 	m_bKillThread = false;
+	m_dead = false;
+	m_sessionStarted = false;
 	m_threadStarted = true;
 	m_running = false;
 	m_pendingFormatChange = false;
@@ -186,6 +245,37 @@ void ClientConnection::Init(VNCviewerApp *pApp)
 	prevCursorSet = false;
 	rcCursorX = 0;
 	rcCursorY = 0;
+	// The rest of the soft-cursor state was never initialised here, yet
+	// SoftCursorLockArea/SoftCursorMove read it on the very first mouse move
+	// and pass it to BitBlt.  prevCursorSet==false guards most paths, but
+	// rcCursorHidden is also tested directly.
+	rcCursorHidden = false;
+	rcLockSet = false;
+	rcSource = NULL;
+	rcMask = NULL;
+	rcWidth = 0;
+	rcHeight = 0;
+	rcHotX = 0;
+	rcHotY = 0;
+	rcLockX = 0;
+	rcLockY = 0;
+	rcLockWidth = 0;
+	rcLockHeight = 0;
+	m_hSavedAreaBitmap = NULL;
+	m_hSavedAreaDC = NULL;
+
+	// Was uninitialised: SelectSecurityType/ReadServerInit and the toolbar code
+	// both consult these.
+	m_tightVncProtocol = false;
+	m_initialClipboardSeen = false;
+	m_cliwidth = 0;
+	m_cliheight = 0;
+	m_fullwinwidth = 0;
+	m_fullwinheight = 0;
+	m_winwidth = 0;
+	m_winheight = 0;
+	m_emulate3ButtonsTimer = 0;
+	m_hSess = NULL;
 
 	// Create a buffer for various network operations
 	CheckBufferSize(INITIALNETBUFSIZE);
@@ -260,7 +350,8 @@ void ClientConnection::InitCapabilities()
 
 // 
 // Run() creates the connection if necessary, does the initial negotiations
-// and then starts the thread running which does the output (update) processing.
+// and then makes the session live.  From that point on the session is driven
+// by PumpIdle() from the application's idle loop - there is no worker thread.
 // If Run throws an Exception, the caller must delete the ClientConnection object.
 //
 
@@ -277,7 +368,12 @@ void ClientConnection::Run()
 		}
 	}
 
-	// Show the "Connecting..." dialog box
+	// Show the "Connecting..." dialog box.
+	//
+	// Now a modeless dialog on this thread (see ConnectingDialog.cpp).  It is
+	// deleted in every exit path: on success below, and by ~ClientConnection if
+	// any of the steps that follow throws - the caller deletes the connection
+	// object on exception, which is what makes that safe.
 	m_connDlg = new ConnectingDialog(m_pApp->m_instance, m_opts.m_display);
 
 	// Connect if we're not already connected
@@ -322,9 +418,64 @@ void ClientConnection::Run()
 	
 	SetFormatAndEncodings();
 
-	// This starts the worker thread.
-	// The rest of the processing continues in run_undetached.
-	start_undetached();
+	// Make the session live.  Was: start_undetached() (a second thread).
+	StartSession();
+}
+
+//
+// StartSession - replaces the old worker-thread entry point.
+//
+// Everything that run_undetached() used to do before entering its receive
+// loop happens here, on the one and only thread.  The receive loop itself now
+// lives in PumpIdle().
+//
+void ClientConnection::StartSession()
+{
+	vnclog.Print(9, _T("Starting session (single-threaded)\n"));
+
+	m_threadStarted = true;
+
+	// Order matters here.  m_running must be true before the first update
+	// request, because DoBlit() (reached from the WM_PAINT that the request's
+	// reply triggers) returns immediately when !m_running - the original code
+	// set m_running after the request, which was harmless only because the
+	// reply could not arrive until the worker thread's loop began.  With one
+	// thread there is no such ordering guarantee.
+	m_running = true;
+	m_sessionStarted = true;
+
+	try {
+		SendFullFramebufferUpdateRequest();
+
+		RealiseFullScreenMode(false);
+
+		if (m_hwnd1 != NULL)
+			UpdateWindow(m_hwnd1);
+	} catch (WarningException &e) {
+		m_running = false;
+		m_sessionStarted = false;
+		e.Report();
+		if (m_hwnd1 != NULL)
+			PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+		else
+			m_dead = true;
+	} catch (QuietException &e) {
+		m_running = false;
+		m_sessionStarted = false;
+		e.Report();
+		if (m_hwnd1 != NULL)
+			PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+		else
+			m_dead = true;
+	} catch (Exception &e) {
+		m_running = false;
+		m_sessionStarted = false;
+		e.Report();
+		if (m_hwnd1 != NULL)
+			PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+		else
+			m_dead = true;
+	}
 }
 
 static WNDCLASS wndclass;	// FIXME!
@@ -343,7 +494,7 @@ void ClientConnection::CreateDisplay()
 	wndclass.hIcon			= (HICON)LoadIcon(m_pApp->m_instance,
 												MAKEINTRESOURCE(IDI_MAINICON));
 	wndclass.hCursor		= LoadCursor(NULL, IDC_ARROW);
-	wndclass.hbrBackground	= (HBRUSH) GetSysColorBrush(COLOR_BTNFACE);
+	wndclass.hbrBackground	= (HBRUSH) Win32sGetSysColorBrush(COLOR_BTNFACE);
     wndclass.lpszMenuName	= (LPCTSTR)NULL;
 	wndclass.lpszClassName	= VWR_WND_CLASS_NAME;
 
@@ -404,6 +555,14 @@ void ClientConnection::CreateDisplay()
 			      NULL,                // Menu handle
 			      m_pApp->m_instance,
 			      NULL);
+	// The original code never checked this.  If CreateWindow fails, the
+	// following SetWindowLong/GetSystemMenu calls operate on NULL and the
+	// viewer dies mid-connection with no diagnostic - which matches the
+	// "crashes when making a connection" report on every platform.
+	if (m_hwnd1 == NULL) {
+		vnclog.Print(0, _T("CreateWindow(main) failed: %d\n"), GetLastError());
+		throw ErrorException("Failed to create the viewer window.");
+	}
 	SetWindowLong(m_hwnd1, GWL_USERDATA, (LONG) this);
 	SetWindowLong(m_hwnd1, GWL_WNDPROC, (LONG)ClientConnection::WndProc1);
 	ShowWindow(m_hwnd1, SW_HIDE);
@@ -419,12 +578,23 @@ void ClientConnection::CreateDisplay()
 			      NULL,                // Menu handle
 			      m_pApp->m_instance,
 			      NULL);
+	if (m_hwndscroll == NULL) {
+		vnclog.Print(0, _T("CreateWindow(scroll) failed: %d\n"), GetLastError());
+		throw ErrorException("Failed to create the viewer scroll window.");
+	}
 	SetWindowLong(m_hwndscroll, GWL_USERDATA, (LONG) this);
 	ShowWindow(m_hwndscroll, SW_HIDE);
 	
 	// Create a memory DC which we'll use for drawing to
 	// the local framebuffer
 	m_hBitmapDC = CreateCompatibleDC(NULL);
+	if (m_hBitmapDC == NULL) {
+		// Win32s GDI has a small, fixed pool of DCs.  Every subsequent GDI call
+		// in the paint path takes this handle, so failing here must abort the
+		// connection rather than proceed with NULL.
+		vnclog.Print(0, _T("CreateCompatibleDC failed\n"));
+		throw ErrorException("Could not create a memory device context.");
+	}
 
 	// Set a suitable palette up
 	if (GetDeviceCaps(m_hBitmapDC, RASTERCAPS) & RC_PALETTE) {
@@ -507,6 +677,10 @@ void ClientConnection::CreateDisplay()
 			      NULL,                // Menu handle
 			      m_pApp->m_instance,
 			      NULL);
+	if (m_hwnd == NULL) {
+		vnclog.Print(0, _T("CreateWindow(child) failed: %d\n"), GetLastError());
+		throw ErrorException("Failed to create the viewer child window.");
+	}
 	m_opts.m_hWindow = m_hwnd;
 	hotkeys.SetWindow(m_hwnd1);
     ShowWindow(m_hwnd, SW_HIDE);
@@ -527,8 +701,15 @@ void ClientConnection::CreateDisplay()
 	// this will cause us to be notified immediately of
 	// the current state.
 	// We don't want to send that.
+	//
+	// This is now the ONLY place the viewer registers as a clipboard viewer
+	// (GetConnectDetails used to do it too, with m_hwnd still NULL).  Note that
+	// SetClipboardViewer legitimately returns NULL when we are the first viewer
+	// in the chain, so a NULL m_hwndNextViewer is not an error - it is checked
+	// wherever it is used (see ClientConnectionClipboard.cpp and WM_DESTROY).
 	m_initialClipboardSeen = false;
-	m_hwndNextViewer = SetClipboardViewer(m_hwnd);
+	if (!m_opts.m_DisableClipboard)
+		m_hwndNextViewer = SetClipboardViewer(m_hwnd);
 #endif
 }
 
@@ -608,16 +789,32 @@ HWND ClientConnection::CreateToolbar()
 	but[i++].fsStyle	= TBSTYLE_BUTTON;
 
 	int numButtons = i;
-	assert(numButtons <= MAX_TOOLBAR_BUTTONS);
+	// Was assert(): a debug-only bounds check on a stack array.
+	if (numButtons > MAX_TOOLBAR_BUTTONS)
+		numButtons = MAX_TOOLBAR_BUTTONS;
 
-	HWND hwndToolbar = CreateToolbarEx(m_hwnd1,
+	if (m_hwnd1 == NULL)
+		return NULL;
+
+	// Win32sCreateToolbarEx resolves CreateToolbarEx at run time and returns
+	// NULL when COMCTL32 is unavailable - which is the normal case on Windows
+	// 3.1.  All of the toolbar's commands are also on the window's system menu
+	// and on the accelerator table, so a missing toolbar costs no function.
+	//
+	// TBSTYLE_FLAT is IE3+/COMCTL32 4.70 and is silently ignored by older
+	// versions, so it is harmless to leave in.
+	HWND hwndToolbar = Win32sCreateToolbarEx(m_hwnd1,
 		WS_CHILD | TBSTYLE_TOOLTIPS | 
 		WS_CLIPSIBLINGS | TBSTYLE_FLAT,
 		ID_TOOLBAR, 12, m_pApp->m_instance,
-		IDB_BITMAP1, but, numButtons, 0, 0, 0, 0, sizeof(TBBUTTON));
+		IDB_BITMAP1, (void *)but, numButtons, 0, 0, 0, 0, sizeof(TBBUTTON));
 
-	if (hwndToolbar != NULL)
-		SendMessage(hwndToolbar, TB_SETINDENT, 4, 0);
+	if (hwndToolbar == NULL) {
+		vnclog.Print(2, _T("No toolbar (common controls unavailable)\n"));
+		return NULL;
+	}
+
+	SendMessage(hwndToolbar, TB_SETINDENT, 4, 0);
 
 	return hwndToolbar;
 }
@@ -628,54 +825,66 @@ void ClientConnection::SaveConnectionHistory()
 		return;
 	}
 
-	// Create or open the registry key for connection history.
-	HKEY hKey;
-	LONG result = RegCreateKeyEx(HKEY_CURRENT_USER, KEY_VNCVIEWER_HISTORI,
-								 0, NULL, REG_OPTION_NON_VOLATILE,
-								 KEY_ALL_ACCESS, NULL, &hKey, NULL);
-	if (result != ERROR_SUCCESS) {
-		return;
-	}
+	// Read the connection history list from vncviewer.ini ([History],
+	// values "0"..).
 
 	// Determine maximum number of connections to remember.
-	const int maxEntries = pApp->m_options.m_historyLimit;
+	// Guard the low end too: m_historyLimit comes from the ini file, and a 0
+	// or negative value made "new TCHAR[maxEntries*256]" a zero/negative-size
+	// allocation followed by writes through connList[] - silent heap
+	// corruption.  This runs on every connection, including the first.
+	int maxEntries = pApp->m_options.m_historyLimit;
 	if (maxEntries > 1024) {
 		return;
+	}
+	if (maxEntries < 1) {
+		maxEntries = 1;
 	}
 
 	// Allocate memory for the list of connections, 256 TCHARs an entry.
 	const int entryBufferSize = 256;
 	const int connListBufferSize = maxEntries * entryBufferSize;
 	TCHAR *connListBuffer = new TCHAR[connListBufferSize];
+	if (connListBuffer == NULL) {
+		return;
+	}
 	memset(connListBuffer, 0, connListBufferSize * sizeof(TCHAR));
 
 	// Index first characters of each entry for convenient access.
 	TCHAR **connList = new TCHAR*[maxEntries];
+	if (connList == NULL) {
+		delete [] connListBuffer;
+		return;
+	}
 	int i;
 	for (i = 0; i < maxEntries; i++) {
 		connList[i] = &connListBuffer[i * entryBufferSize];
 	}
 
-	// Read the list of connections and remove it from the registry.
+	// Read the list of connections and remove it from the ini file.
 	int numRead = 0;
 	for (i = 0; i < maxEntries; i++) {
-		TCHAR valueName[16];
-		_sntprintf(valueName, 16, "%d", i);
-		LPBYTE bufPtr = (LPBYTE)connList[numRead];
-		DWORD bufSize = (entryBufferSize - 1) * sizeof(TCHAR);
-		LONG err = RegQueryValueEx(hKey, valueName, 0, 0, bufPtr, &bufSize);
-		if (err == ERROR_SUCCESS) {
-			if (connList[numRead][0] != '\0') {
-				numRead++;
-			}
-			RegDeleteValue(hKey, valueName);
+		char valueName[16];
+		sprintf(valueName, "%d", i);
+		VNCOptions::IniGetString(VIEWER_INI_HISTORY, valueName,
+								 connList[numRead], entryBufferSize);
+		if (connList[numRead][0] != '\0') {
+			numRead++;
 		}
+		VNCOptions::IniDeleteKey(VIEWER_INI_HISTORY, valueName);
+	}
+
+	// An empty display string would write "0"="" and poison the history:
+	// every later launch would load an empty entry first.  There is nothing
+	// useful to remember for a connection with no name.
+	if (m_opts.m_display[0] == '\0') {
+		delete [] connList;
+		delete [] connListBuffer;
+		return;
 	}
 
 	// Save current connection first.
-	const BYTE *newConnPtr = (const BYTE *)m_opts.m_display;
-	DWORD newConnSize = (_tcslen(m_opts.m_display) + 1) * sizeof(TCHAR);
-	RegSetValueEx(hKey, _T("0"), 0, REG_SZ, newConnPtr, newConnSize);
+	VNCOptions::IniSetString(VIEWER_INI_HISTORY, "0", m_opts.m_display);
 
 	// Save the list of other connections.
 	// Don't forget to exclude duplicates of current connection and make
@@ -683,25 +892,32 @@ void ClientConnection::SaveConnectionHistory()
 	int numWritten = 1;
 	for (i = 0; i < numRead && numWritten < maxEntries; i++) {
 		if (_tcscmp(connList[i], m_opts.m_display) != 0) {
-			TCHAR keyName[16];
-			_sntprintf(keyName, 16, "%d", numWritten);
-			LPBYTE bufPtr = (LPBYTE)connList[i];
-			DWORD bufSize = (_tcslen(connList[i]) + 1) * sizeof(TCHAR);
-			RegSetValueEx(hKey, keyName, 0, REG_SZ, bufPtr, bufSize);
+			char keyName[16];
+			sprintf(keyName, "%d", numWritten);
+			VNCOptions::IniSetString(VIEWER_INI_HISTORY, keyName, connList[i]);
 			numWritten++;
 		}
 	}
 
-	// If not everything is written due to the maxEntries limitation, then
-	// delete settings for the connection that was not saved. But make sure
-	// we do not delete settings for the current connection.
-	if (i < numRead) {
+	// Prune every entry that did not fit, not just the first one.  The old
+	// "if (i < numRead)" deleted a single overflow section and left the rest
+	// plus their stale [section] option blocks behind.
+	for (; i < numRead; i++) {
 		if (_tcscmp(connList[i], m_opts.m_display) != 0) {
-			RegDeleteKey(hKey, connList[i]);
+			VNCOptions::IniDeleteSection(connList[i]);
 		}
 	}
+	// Also drop any leftover numbered values beyond what we wrote (they are
+	// from a time when the limit was higher).
+	for (int k = numWritten; k < maxEntries; k++) {
+		char keyName[16];
+		sprintf(keyName, "%d", k);
+		VNCOptions::IniDeleteKey(VIEWER_INI_HISTORY, keyName);
+	}
 
-	RegCloseKey(hKey);
+	// The original code leaked both of these on every single connection.
+	delete [] connList;
+	delete [] connListBuffer;
 
 	// Save connection options for current connection.
 	m_opts.SaveOpt(m_opts.m_display, KEY_VNCVIEWER_HISTORI);
@@ -727,29 +943,41 @@ void ClientConnection::EnableFullControlOptions()
 
 void ClientConnection::EnableAction(int id, bool enable)
 {
+	if (m_hwnd1 == NULL)
+		return;
+	// SendMessage(NULL, ...) is not harmless: it is an invalid-window call.
+	// m_hToolbar is NULL whenever the toolbar could not be created.
 	if (enable) {
 		EnableMenuItem(GetSystemMenu(m_hwnd1, FALSE), id,
 					   MF_BYCOMMAND | MF_ENABLED);
-		SendMessage(m_hToolbar, TB_SETSTATE, (WPARAM)id,
-					(LPARAM)MAKELONG(TBSTATE_ENABLED, 0));
+		if (m_hToolbar != NULL)
+			SendMessage(m_hToolbar, TB_SETSTATE, (WPARAM)id,
+						(LPARAM)MAKELONG(TBSTATE_ENABLED, 0));
 	} else {
 		EnableMenuItem(GetSystemMenu(m_hwnd1, FALSE), id,
 					   MF_BYCOMMAND | MF_GRAYED);
-		SendMessage(m_hToolbar, TB_SETSTATE, (WPARAM)id,
-					(LPARAM)MAKELONG(TBSTATE_INDETERMINATE, 0));
+		if (m_hToolbar != NULL)
+			SendMessage(m_hToolbar, TB_SETSTATE, (WPARAM)id,
+						(LPARAM)MAKELONG(TBSTATE_INDETERMINATE, 0));
 	}
 }
 
 void ClientConnection::SwitchOffKey()
 {
+	// WM_KILLFOCUS can arrive after the window has gone.
+	if (m_hwnd1 == NULL)
+		return;
+
 	CheckMenuItem(GetSystemMenu(m_hwnd1, FALSE),
 					ID_CONN_ALTDOWN, MF_BYCOMMAND|MF_UNCHECKED);
 	CheckMenuItem(GetSystemMenu(m_hwnd1, FALSE),
 					ID_CONN_CTLDOWN, MF_BYCOMMAND|MF_UNCHECKED);
-	SendMessage(m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_CTLDOWN,
-					(LPARAM)MAKELONG(TBSTATE_ENABLED, 0));
-	SendMessage(m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_ALTDOWN,
-					(LPARAM)MAKELONG(TBSTATE_ENABLED, 0));
+	if (m_hToolbar != NULL) {
+		SendMessage(m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_CTLDOWN,
+						(LPARAM)MAKELONG(TBSTATE_ENABLED, 0));
+		SendMessage(m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_ALTDOWN,
+						(LPARAM)MAKELONG(TBSTATE_ENABLED, 0));
+	}
 	SendKeyEvent(XK_Alt_L,     false);
 	SendKeyEvent(XK_Control_L, false);
 	SendKeyEvent(XK_Shift_L,   false);
@@ -762,7 +990,12 @@ void ClientConnection::GetConnectDetails()
 {
 	
 	if (m_opts.m_configSpecified) {
-		LoadConnection(m_opts.m_configFilename, false);
+		// LoadConnection returns -1 on failure.  The old code ignored the
+		// result and carried straight on to Connect() with an empty m_host and
+		// m_port == -1 - i.e. every bad/missing -config file turned into a
+		// failed connect at best.
+		if (LoadConnection(m_opts.m_configFilename, false) != 0)
+			throw QuietException("Could not read the configuration file.");
 	} else {
 		SessionDialog sessdlg(&m_opts, this);
 		if (!sessdlg.DoDialog()) {
@@ -783,15 +1016,14 @@ void ClientConnection::GetConnectDetails()
 	m_pApp->m_options.m_port = -1;
 	m_pApp->m_options.m_connectionSpecified = false;
 	m_pApp->m_options.m_configSpecified = false;
-#ifndef _WIN32_WCE
-	// We want to know when the clipboard changes, so
-	// insert ourselves in the viewer chain. But doing
-	// this will cause us to be notified immediately of
-	// the current state.
-	// We don't want to send that.
+
+	// NOTE: the original code called SetClipboardViewer(m_hwnd) here as well as
+	// in CreateDisplay().  At this point in the sequence m_hwnd is still NULL
+	// (CreateDisplay has not run yet), so this registered the *desktop* window
+	// as a clipboard viewer and stored a bogus m_hwndNextViewer, which is later
+	// used in ChangeClipboardChain and SendMessage.  Registration is done once,
+	// correctly, at the end of CreateDisplay().
 	m_initialClipboardSeen = false;
-	m_hwndNextViewer = SetClipboardViewer(m_hwnd); 	
-#endif
 }
 
 void ClientConnection::Connect()
@@ -802,34 +1034,89 @@ void ClientConnection::Connect()
 	if (m_connDlg != NULL)
 		m_connDlg->SetStatus("Connection initiated");
 
-	m_sock = socket(PF_INET, SOCK_STREAM, 0);
-	if (m_sock == INVALID_SOCKET) throw WarningException(_T("Error creating socket"));
-	int one = 1;
+	// Validate before touching the network.  m_host is filled from the command
+	// line, a .vnc file or the New Connection dialog; an empty value reached
+	// gethostbyname("") which behaves differently on every WinSock stack.
+	if (m_host[0] == '\0')
+		throw WarningException(_T("No VNC server host was specified."));
+	if (m_port <= 0 || m_port > 65535) {
+		char msg[128];
+		_snprintf(msg, sizeof(msg) - 1, "Invalid port number (%d)", m_port);
+		msg[sizeof(msg) - 1] = '\0';
+		throw WarningException(msg);
+	}
+
+	// AF_INET, not PF_INET.  They have the same value, but some WinSock 1.1
+	// stacks under Win32s validate the family constant strictly.
+	m_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (m_sock == INVALID_SOCKET) {
+		char msg[128];
+		_snprintf(msg, sizeof(msg) - 1, "Error creating socket (WinSock error %d)",
+				  WSAGetLastError());
+		msg[sizeof(msg) - 1] = '\0';
+		throw WarningException(msg);
+	}
 	
+	memset(&thataddr, 0, sizeof(thataddr));
+
 	// The host may be specified as a dotted address "a.b.c.d"
 	// Try that first
 	thataddr.sin_addr.s_addr = inet_addr(m_host);
 	
 	// If it wasn't one of those, do gethostbyname
 	if (thataddr.sin_addr.s_addr == INADDR_NONE) {
+		if (m_connDlg != NULL)
+			m_connDlg->SetStatus("Looking up host name");
+
 		LPHOSTENT lphost;
 		lphost = gethostbyname(m_host);
 		
 		if (lphost == NULL) { 
 			char msg[512];
-			sprintf(msg, "Failed to get server address (%s).\n"
+			// _snprintf and a bounded %.255s: m_host is MAX_HOST_NAME_LEN and
+			// the message also carries a fixed tail, so sprintf into 512 bytes
+			// was not provably safe.
+			_snprintf(msg, sizeof(msg) - 1,
+					"Failed to get server address (%.255s).\n"
 					"Did you type the host name correctly?", m_host);
+			msg[sizeof(msg) - 1] = '\0';
+			closesocket(m_sock);
+			m_sock = INVALID_SOCKET;
 			throw WarningException(msg);
 		};
-		thataddr.sin_addr.s_addr = ((LPIN_ADDR) lphost->h_addr)->s_addr;
+		// Check the address family and length before copying: a stack that
+		// returns an IPv6 or otherwise unexpected hostent would otherwise be
+		// copied blind.
+		if (lphost->h_addrtype != AF_INET || lphost->h_length < 4 ||
+			lphost->h_addr_list == NULL || lphost->h_addr_list[0] == NULL) {
+			closesocket(m_sock);
+			m_sock = INVALID_SOCKET;
+			throw WarningException("Server address is not an IPv4 address.");
+		}
+		memcpy(&thataddr.sin_addr, lphost->h_addr_list[0], 4);
 	};
 	
 	thataddr.sin_family = AF_INET;
-	thataddr.sin_port = htons(m_port);
+	thataddr.sin_port = htons((unsigned short)m_port);
+
+	if (m_connDlg != NULL)
+		m_connDlg->SetStatus("Connecting to server");
+
+	// NOTE: this is a blocking connect, and under Win32s a blocking WinSock
+	// call does not yield to other Windows tasks - the whole system appears
+	// frozen until the TCP connect completes or times out.  That is accepted
+	// here: making it asynchronous would mean restructuring the entire
+	// handshake into a state machine.  The "Connecting..." dialog is shown and
+	// updated around it so the user at least sees why.
 	res = connect(m_sock, (LPSOCKADDR) &thataddr, sizeof(thataddr));
 	if (res == SOCKET_ERROR) {
 		char msg[512];
-		sprintf(msg, "Failed to connect to server (%.255s)", m_opts.m_display);
+		_snprintf(msg, sizeof(msg) - 1,
+				  "Failed to connect to server (%.255s)\r\nWinSock error %d",
+				  m_opts.m_display, WSAGetLastError());
+		msg[sizeof(msg) - 1] = '\0';
+		closesocket(m_sock);
+		m_sock = INVALID_SOCKET;
 		throw WarningException(msg);
 	}
 	vnclog.Print(0, _T("Connected to %s port %d\n"), m_host, m_port);
@@ -839,10 +1126,20 @@ void ClientConnection::Connect()
 }
 
 void ClientConnection::SetSocketOptions() {
-	// Disable Nagle's algorithm
+	// Disable Nagle's algorithm.
+	//
+	// WIN32S: TCP_NODELAY is optional in WinSock 1.1 and several Windows 3.1
+	// stacks (and the Microsoft TCP/IP-32 stack for Win32s) reject it.  The
+	// original code threw a WarningException on failure, which aborted the
+	// connection outright - a plausible cause of "crashes/fails on connect"
+	// on those stacks.  Latency is worse without it, but the session works, so
+	// log and continue.
 	BOOL nodelayval = TRUE;
-	if (setsockopt(m_sock, IPPROTO_TCP, TCP_NODELAY, (const char *) &nodelayval, sizeof(BOOL)))
-		throw WarningException("Error disabling Nagle's algorithm");
+	if (setsockopt(m_sock, IPPROTO_TCP, TCP_NODELAY,
+				   (const char *) &nodelayval, sizeof(nodelayval)) == SOCKET_ERROR) {
+		vnclog.Print(1, _T("Could not disable Nagle's algorithm (WinSock error %d) - continuing\n"),
+					 WSAGetLastError());
+	}
 }
 
 
@@ -865,7 +1162,20 @@ void ClientConnection::NegotiateProtocolVersion()
 #else
 	int majorVersion, minorVersion;
 	if (sscanf(pv, rfbProtocolVersionFormat, &majorVersion, &minorVersion) != 2) {
-		throw WarningException(_T("Invalid protocol"));
+		// Log what we actually received: "Invalid protocol" with no detail is
+		// the message a user sees when they point the viewer at, say, an HTTP
+		// or SSH port, and it gives them nothing to work with.  pv is 12 bytes
+		// of possibly non-printable data, so sanitise it first.
+		char safe[sz_rfbProtocolVersionMsg + 1];
+		int si;
+		for (si = 0; si < sz_rfbProtocolVersionMsg; si++) {
+			unsigned char c = (unsigned char)pv[si];
+			safe[si] = (c >= 0x20 && c < 0x7f) ? (char)c : '.';
+		}
+		safe[sz_rfbProtocolVersionMsg] = '\0';
+		vnclog.Print(0, _T("Unrecognised server greeting: \"%s\"\n"), safe);
+		throw WarningException(_T("This does not look like a VNC server.\r\n"
+								  "(Unrecognised protocol version greeting.)"));
 	}
 	vnclog.Print(0, _T("RFB server supports protocol version 3.%d\n"),
 				 minorVersion);
@@ -880,6 +1190,9 @@ void ClientConnection::NegotiateProtocolVersion()
 
 	m_tightVncProtocol = false;
 
+	// pv is rfbProtocolVersionMsg = char[13] and the formatted output is
+	// exactly 12 characters plus a NUL, so this fits precisely.  Left as
+	// sprintf because the format and both arguments are fixed here.
     sprintf(pv, rfbProtocolVersionFormat, 3, m_minorVersion);
 #endif
 
@@ -967,7 +1280,12 @@ int ClientConnection::SelectSecurityType()
 	char *secTypeNames[] = {"None", "VncAuth"};
 	CARD8 knownSecTypes[] = {rfbSecTypeNone, rfbSecTypeVncAuth};
 	int nKnownSecTypes = sizeof(knownSecTypes);
-	CARD8 *secTypes = new CARD8[nSecTypes];
+
+	// Read the list into a fixed on-stack buffer instead of new[].  nSecTypes
+	// is a single byte, so 255 always suffices - and this removes two leaks:
+	// the original returned early on rfbSecTypeTight and threw on failure,
+	// never freeing secTypes in either path.
+	CARD8 secTypes[256];
 	ReadExact((char *)secTypes, nSecTypes);
 	CARD8 secType = rfbSecTypeInvalid;
 
@@ -1107,13 +1425,22 @@ void ClientConnection::Authenticate(CARD32 authScheme)
 		throw ErrorException("Unknown authentication scheme!");
 	}
 
-	vnclog.Print(0, _T("Authentication scheme: %s\n"),
-				 m_authCaps.GetDescription(authScheme));
+	// GetDescription returns NULL for a scheme that was never Add()ed - which
+	// is the normal case on the 3.3 path, where InitCapabilities() has not run.
+	// "%s" with NULL prints "(null)" on this CRT rather than crashing, but do
+	// not rely on that.
+	{
+		char *desc = m_authCaps.GetDescription(authScheme);
+		vnclog.Print(0, _T("Authentication scheme: %s\n"),
+					 (desc != NULL) ? desc : _T("(unnamed)"));
+	}
 
 	const int errorMsgSize = 256;
 	CheckBufferSize(errorMsgSize);
 	char *errorMsg = m_netbuf;
+	memset(errorMsg, 0, errorMsgSize);
 	bool wasError = !(this->*authFuncPtr)(errorMsg, errorMsgSize);
+	errorMsg[errorMsgSize - 1] = '\0';
 
 	// Report authentication error.
 	if (wasError) {
@@ -1150,8 +1477,12 @@ void ClientConnection::Authenticate(CARD32 authScheme)
 		errorMsg = "Authentication failure, too many tries";
 		break;
 	default:
-		_snprintf(m_netbuf, 256, "Unknown authentication result (%d)",
+		// m_netbuf is at least errorMsgSize (256) here because of the
+		// CheckBufferSize above, but _snprintf does not guarantee termination
+		// when it truncates.
+		_snprintf(m_netbuf, 255, "Unknown authentication result (%d)",
 				 (int)authResult);
+		m_netbuf[255] = '\0';
 		errorMsg = m_netbuf;
 		break;
 	}
@@ -1186,10 +1517,20 @@ bool ClientConnection::AuthenticateVNC(char *errBuf, int errBufSize)
 	ReadExact((char *)challenge, CHALLENGESIZE);
 
 	char passwd[MAXPWLEN + 1];
+	memset(passwd, 0, sizeof(passwd));
 	// Was the password already specified in a config file?
 	if (m_passwdSet) {
 		char *pw = vncDecryptPasswd(m_encPasswd);
-		strcpy(passwd, pw);
+		if (pw == NULL) {
+			_snprintf(errBuf, errBufSize, "Could not decrypt stored password");
+			return false;
+		}
+		// vncDecryptPasswd returns a MAXPWLEN buffer, but bound the copy
+		// anyway: strcpy into a MAXPWLEN+1 array from a library buffer is
+		// exactly the kind of thing that only bites on the small stacks Win32s
+		// gives you.
+		strncpy(passwd, pw, MAXPWLEN);
+		passwd[MAXPWLEN] = '\0';
 		free(pw);
 	} else {
 		LoginAuthDialog ad(m_opts.m_display, "Standard VNC Authentication");
@@ -1213,6 +1554,7 @@ bool ClientConnection::AuthenticateVNC(char *errBuf, int errBufSize)
 #endif
 		if (strlen(passwd) == 0) {
 			_snprintf(errBuf, errBufSize, "Empty password");
+			errBuf[errBufSize - 1] = '\0';
 			return false;
 		}
 		if (strlen(passwd) > 8) {
@@ -1225,7 +1567,7 @@ bool ClientConnection::AuthenticateVNC(char *errBuf, int errBufSize)
 	vncEncryptBytes(challenge, passwd);
 
 	/* Lose the plain-text password from memory */
-	memset(passwd, 0, strlen(passwd));
+	memset(passwd, 0, sizeof(passwd));
 
 	WriteExact((char *) challenge, CHALLENGESIZE);
 
@@ -1256,8 +1598,28 @@ void ClientConnection::ReadServerInit()
     m_si.format.greenMax = Swap16IfLE(m_si.format.greenMax);
     m_si.format.blueMax = Swap16IfLE(m_si.format.blueMax);
     m_si.nameLength = Swap32IfLE(m_si.nameLength);
+
+	// Sanity-check what the server told us before we allocate from it or size
+	// a bitmap with it.  A bogus nameLength here means a "new TCHAR[huge]"
+	// followed by a blocking read of that many bytes; a bogus geometry means
+	// CreateCompatibleBitmap for a framebuffer that cannot exist.  Neither was
+	// checked before, and on Win32s either one is an immediate hard failure at
+	// exactly the point the user reports the crash.
+	if (m_si.nameLength > 1024) {
+		vnclog.Print(0, _T("Bad desktop name length %u from server\n"),
+					 (unsigned int)m_si.nameLength);
+		throw ErrorException("Protocol error: implausible desktop name length.");
+	}
+	if (m_si.framebufferWidth == 0 || m_si.framebufferHeight == 0 ||
+		m_si.framebufferWidth > 4096 || m_si.framebufferHeight > 4096) {
+		vnclog.Print(0, _T("Bad framebuffer geometry %d x %d from server\n"),
+					 (int)m_si.framebufferWidth, (int)m_si.framebufferHeight);
+		throw ErrorException("Protocol error: implausible framebuffer size.");
+	}
 	
     m_desktopName = new TCHAR[m_si.nameLength + 2];
+	if (m_desktopName == NULL)
+		throw ErrorException("Out of memory reading desktop name.");
 
 #ifdef UNDER_CE
     char *deskNameBuf = new char[m_si.nameLength + 2];
@@ -1271,13 +1633,24 @@ void ClientConnection::ReadServerInit()
 #else
     ReadString(m_desktopName, m_si.nameLength);
 #endif
-    
-	SetWindowText(m_hwnd1, m_desktopName);	
+
+	// The desktop name is arbitrary server-supplied bytes; make sure it is a
+	// terminated, printable-ish string before it goes into a window title and a
+	// log line.  ReadString() terminates it, but embedded control characters
+	// (including a stray CR/LF) upset the 3.1 title bar.
+	m_desktopName[m_si.nameLength] = _T('\0');
+	for (unsigned int ni = 0; ni < m_si.nameLength; ni++) {
+		if ((unsigned char)m_desktopName[ni] < 0x20)
+			m_desktopName[ni] = _T(' ');
+	}
+
+	// One SetWindowText, not two (the original called it twice with the same
+	// argument, once before and once after the logging).
+	SetWindowText(m_hwnd1, m_desktopName);
 
 	vnclog.Print(0, _T("Desktop name \"%s\"\n"),m_desktopName);
 	vnclog.Print(1, _T("Geometry %d x %d depth %d\n"),
 		m_si.framebufferWidth, m_si.framebufferHeight, m_si.format.depth );
-	SetWindowText(m_hwnd1, m_desktopName);	
 
 	SizeWindow(true);
 }
@@ -1314,6 +1687,15 @@ void ClientConnection::ReadInteractionCaps()
 
 void ClientConnection::ReadCapabilityList(CapsContainer *caps, int count)
 {
+	// count comes straight off the wire (a 16-bit field).  Bound it: each
+	// iteration does a blocking ReadExact and a map insert, so a large value
+	// from a broken or hostile server means a long stall and a lot of
+	// allocation.  256 is far more than any real server sends.
+	if (count < 0 || count > 256) {
+		vnclog.Print(0, _T("Implausible capability count %d from server\n"), count);
+		throw ErrorException("Protocol error: bad capability list length.");
+	}
+
 	rfbCapabilityInfo msginfo;
 	for (int i = 0; i < count; i++) {
 		ReadExact((char *)&msginfo, sz_rfbCapabilityInfo);
@@ -1324,9 +1706,15 @@ void ClientConnection::ReadCapabilityList(CapsContainer *caps, int count)
 
 void ClientConnection::SizeWindow(bool centered)
 {
-	// Find how large the desktop work area is
+	if (m_hwnd1 == NULL || m_hwndscroll == NULL)
+		return;
+
+	// Find how large the desktop work area is.
+	// Win32sGetWorkArea() always fills the rect (screen size on Win32s, real
+	// work area elsewhere).  The old code passed an uninitialised RECT to
+	// SystemParametersInfo and used it even if the call failed.
 	RECT workrect;
-	SystemParametersInfo(SPI_GETWORKAREA, 0, &workrect, 0);
+	Win32sGetWorkArea(&workrect);
 	int workwidth = workrect.right -  workrect.left;
 	int workheight = workrect.bottom - workrect.top;
 	vnclog.Print(2, _T("Screen work area is %d x %d\n"),
@@ -1358,11 +1746,15 @@ void ClientConnection::SizeWindow(bool centered)
 			   GetWindowLong(m_hwnd1, GWL_STYLE ), 
 			   FALSE, GetWindowLong(m_hwnd1, GWL_EXSTYLE));
 
-	if (GetMenuState(GetSystemMenu(m_hwnd1, FALSE),
+	// m_hToolbar is NULL when the common controls library is unavailable
+	// (Win32s) - GetWindowRect would then leave rtb uninitialised and the
+	// window height would be computed from stack junk.
+	if (m_hToolbar != NULL &&
+		GetMenuState(GetSystemMenu(m_hwnd1, FALSE),
 					 ID_TOOLBAR, MF_BYCOMMAND) == MF_CHECKED) {
 		RECT rtb;
-		GetWindowRect(m_hToolbar, &rtb);
-		fullwinrect.bottom = fullwinrect.bottom + rtb.bottom - rtb.top - 3;
+		if (GetWindowRect(m_hToolbar, &rtb))
+			fullwinrect.bottom = fullwinrect.bottom + rtb.bottom - rtb.top - 3;
 	}
 
 	m_winwidth  = min(fullwinrect.right - fullwinrect.left,  workwidth);
@@ -1379,13 +1771,13 @@ void ClientConnection::SizeWindow(bool centered)
 	int x,y;
 	WINDOWPLACEMENT winplace;
 	winplace.length = sizeof(WINDOWPLACEMENT);
-	GetWindowPlacement(m_hwnd1, &winplace);
+	Win32sGetWindowPlacement(m_hwnd1, &winplace);
 	if (centered) {
 		x = (workwidth - m_winwidth) / 2;		
 		y = (workheight - m_winheight) / 2;		
 	} else {
 		// Try to preserve current position if possible
-		GetWindowPlacement(m_hwnd1, &winplace);
+		Win32sGetWindowPlacement(m_hwnd1, &winplace);
 		if ((winplace.showCmd == SW_SHOWMAXIMIZED) || (winplace.showCmd == SW_SHOWMINIMIZED)) {
 			x = winplace.rcNormalPosition.left;
 			y = winplace.rcNormalPosition.top;
@@ -1404,29 +1796,36 @@ void ClientConnection::SizeWindow(bool centered)
 	winplace.rcNormalPosition.left = x;
 	winplace.rcNormalPosition.right = x + m_winwidth;
 	winplace.rcNormalPosition.bottom = y + m_winheight;
-	SetWindowPlacement(m_hwnd1, &winplace);
-	SetForegroundWindow(m_hwnd1);
+	Win32sSetWindowPlacement(m_hwnd1, &winplace);
+	Win32sSetForegroundWindow(m_hwnd1);
 	PositionChildWindow();
 }
 
 void ClientConnection::PositionChildWindow()
 {	
+	// Called from WM_SIZE, which can also arrive while the window is being
+	// destroyed.
+	if (m_hwnd1 == NULL || m_hwndscroll == NULL)
+		return;
+
 	RECT rparent;
 	GetClientRect(m_hwnd1, &rparent);
 	
 	int parentwidth = rparent.right - rparent.left;
 	int parentheight = rparent.bottom - rparent.top; 
 				
-	if (GetMenuState(GetSystemMenu(m_hwnd1, FALSE),
+	if (m_hToolbar != NULL &&
+		GetMenuState(GetSystemMenu(m_hwnd1, FALSE),
 				ID_TOOLBAR, MF_BYCOMMAND) == MF_CHECKED) {
 		RECT rtb;
-		GetWindowRect(m_hToolbar, &rtb);
-		int rtbheight = rtb.bottom - rtb.top - 3;
-		SetWindowPos(m_hToolbar, HWND_TOP, rparent.left, rparent.top,
-					parentwidth, rtbheight, SWP_SHOWWINDOW);		
-		parentheight = parentheight - rtbheight;
-		rparent.top = rparent.top + rtbheight;
-	} else {
+		if (GetWindowRect(m_hToolbar, &rtb)) {
+			int rtbheight = rtb.bottom - rtb.top - 3;
+			SetWindowPos(m_hToolbar, HWND_TOP, rparent.left, rparent.top,
+						parentwidth, rtbheight, SWP_SHOWWINDOW);		
+			parentheight = parentheight - rtbheight;
+			rparent.top = rparent.top + rtbheight;
+		}
+	} else if (m_hToolbar != NULL) {
 		ShowWindow(m_hToolbar, SW_HIDE);
 	}
 	
@@ -1515,7 +1914,7 @@ void ClientConnection::PositionChildWindow()
 	}
 	RECT clichild;
 	GetClientRect(m_hwnd, &clichild);
-	ScrollWindowEx(m_hwnd, m_hScrollPos-newhpos, m_vScrollPos-newvpos,
+	Win32sScrollWindowEx(m_hwnd, m_hScrollPos-newhpos, m_vScrollPos-newvpos,
 					NULL, &clichild, NULL, NULL,  SW_INVALIDATE);
 								
 	m_hScrollPos = newhpos;
@@ -1531,10 +1930,18 @@ void ClientConnection::PositionChildWindow()
 void ClientConnection::CreateLocalFramebuffer() {
 	omni_mutex_lock l(m_bitmapdcMutex);
 
-	// Remove old bitmap object if it already exists
+	// Remove old bitmap object if it already exists.
+	//
+	// The ObjectSelector further down restores the previously selected bitmap
+	// when it goes out of scope, so m_hBitmap is not selected into m_hBitmapDC
+	// on entry and DeleteObject is safe here.  Clear the member as well: the
+	// original code left m_hBitmap pointing at a deleted GDI object across the
+	// CreateCompatibleBitmap call, so a failure there left a dangling handle
+	// that the destructor then deleted a second time.
 	bool bitmapExisted = false;
 	if (m_hBitmap != NULL) {
 		DeleteObject(m_hBitmap);
+		m_hBitmap = NULL;
 		bitmapExisted = true;
 	}
 
@@ -1542,11 +1949,24 @@ void ClientConnection::CreateLocalFramebuffer() {
 	// the local display, in the hope that blitting will be faster.
 	
 	TempDC hdc(m_hwnd);
+	if ((HDC)hdc == NULL)
+		throw WarningException("Could not obtain a device context.");
+
 	m_hBitmap = ::CreateCompatibleBitmap(hdc, m_si.framebufferWidth,
 										 m_si.framebufferHeight);
 	
-	if (m_hBitmap == NULL)
-		throw WarningException("Error creating local image of screen.");
+	// This is the single most likely failure point on a Win32s machine: the
+	// framebuffer bitmap for a 1024x768 24-bit remote desktop is over 2 MB of
+	// GDI memory, and Win32s GDI is still the 16-bit Windows 3.1 GDI with its
+	// limited heap.  Report it as a warning (which closes the connection
+	// cleanly) rather than continuing with m_hBitmap == NULL.
+	if (m_hBitmap == NULL) {
+		vnclog.Print(0, _T("CreateCompatibleBitmap(%d x %d) failed\n"),
+					 (int)m_si.framebufferWidth, (int)m_si.framebufferHeight);
+		throw WarningException("Error creating local image of screen.\r\n"
+							   "The remote desktop may be too large for the "
+							   "memory available on this system.");
+	}
 	
 	// Select this bitmap into the DC with an appropriate palette
 	ObjectSelector b(m_hBitmapDC, m_hBitmap);
@@ -1591,6 +2011,18 @@ void ClientConnection::SetupPixelFormat() {
 
 		// Normally we just use the sever's format suggestion
 		m_myFormat = m_si.format;
+
+		// WIN32S: never negotiate a 24bpp wire format.  bitsPerPixel 24 means
+		// 3 bytes per pixel on the wire, but every decoder below (Raw, Zlib,
+		// Hextile, Tight filter selection) only understands 8/16/32, and the
+		// old code silently treated 24 as 32 - reading one byte too many per
+		// pixel, which garbles Tight and blanks Raw/Zlib.  Promote 24 to
+		// padded 32 (same depth and masks); the server pads each pixel and
+		// everything downstream works unchanged.
+		if (m_myFormat.bitsPerPixel == 24) {
+			vnclog.Print(2, _T("Promoting 24bpp server format to 32bpp\n"));
+			m_myFormat.bitsPerPixel = 32;
+		}
 
 		// It's silly requesting more bits than our current display has, but
 		// in fact it doesn't usually amount to much on the network.
@@ -1648,6 +2080,13 @@ void ClientConnection::SetFormatAndEncodings()
 	m_minPixelBytes = (m_myFormat.bitsPerPixel + 7) >> 3;
 
 	// Set encodings
+	//
+	// NOTE ON THE BUFFER: buf holds at most MAX_ENCODINGS (20) entries and
+	// nothing below checks that bound.  Today the maximum actually written is
+	// 9 real encodings + 1 compress level + 3 cursor + 1 quality + 2
+	// (LastRect/NewFBSize) = 16, so it fits - but the count depends on
+	// LASTENCODING and on user options, so the assumption is worth stating and
+	// the writes are now bounded by ADD_ENC below.
 	char buf[sz_rfbSetEncodingsMsg + MAX_ENCODINGS * 4];
 	rfbSetEncodingsMsg *se = (rfbSetEncodingsMsg *)buf;
 	CARD32 *encs = (CARD32 *)(&buf[sz_rfbSetEncodingsMsg]);
@@ -1655,6 +2094,12 @@ void ClientConnection::SetFormatAndEncodings()
 
 	se->type = rfbSetEncodings;
 	se->nEncodings = 0;
+
+#define ADD_ENC(v) \
+	do { \
+		if (se->nEncodings < MAX_ENCODINGS) \
+			encs[se->nEncodings++] = Swap32IfLE(v); \
+	} while (0)
 
 	bool useCompressLevel = false;
 	int i;
@@ -1665,14 +2110,19 @@ void ClientConnection::SetFormatAndEncodings()
 	{
 		if (m_opts.m_PreferredEncoding == i) {
 			if (m_opts.m_UseEnc[i]) {
-				encs[se->nEncodings++] = Swap32IfLE(i);
+				ADD_ENC(i);
 				if ( i == rfbEncodingZlib ||
 					 i == rfbEncodingTight ||
 					 i == rfbEncodingZlibHex ) {
 					useCompressLevel = true;
 				}
 			} else {
-				m_opts.m_PreferredEncoding--;
+				// Step down to the next encoding.  Clamp at Raw: the loop runs
+				// downwards and this could otherwise take m_PreferredEncoding
+				// negative, which is then used to index m_UseEnc[] on the next
+				// connection.
+				if (m_opts.m_PreferredEncoding > rfbEncodingRaw)
+					m_opts.m_PreferredEncoding--;
 			}
 		}
 	}
@@ -1685,7 +2135,7 @@ void ClientConnection::SetFormatAndEncodings()
 		if ( (m_opts.m_PreferredEncoding != i) &&
 			 (m_opts.m_UseEnc[i]))
 		{
-			encs[se->nEncodings++] = Swap32IfLE(i);
+			ADD_ENC(i);
 			if ( i == rfbEncodingZlib ||
 				 i == rfbEncodingTight ||
 				 i == rfbEncodingZlibHex ) {
@@ -1698,29 +2148,29 @@ void ClientConnection::SetFormatAndEncodings()
 	if ( useCompressLevel && m_opts.m_useCompressLevel &&
 		 m_opts.m_compressLevel >= 0 &&
 		 m_opts.m_compressLevel <= 9) {
-		encs[se->nEncodings++] = Swap32IfLE( rfbEncodingCompressLevel0 +
-											 m_opts.m_compressLevel );
+		ADD_ENC( rfbEncodingCompressLevel0 + m_opts.m_compressLevel );
 	}
 
 	// Request cursor shape updates if enabled by user
 	if (m_opts.m_requestShapeUpdates) {
-		encs[se->nEncodings++] = Swap32IfLE(rfbEncodingXCursor);
-		encs[se->nEncodings++] = Swap32IfLE(rfbEncodingRichCursor);
+		ADD_ENC(rfbEncodingXCursor);
+		ADD_ENC(rfbEncodingRichCursor);
 		if (!m_opts.m_ignoreShapeUpdates)
-			encs[se->nEncodings++] = Swap32IfLE(rfbEncodingPointerPos);
+			ADD_ENC(rfbEncodingPointerPos);
 	}
 
 	// Request JPEG quality level if JPEG compression was enabled by user
 	if ( m_opts.m_enableJpegCompression &&
 		 m_opts.m_jpegQualityLevel >= 0 &&
 		 m_opts.m_jpegQualityLevel <= 9) {
-		encs[se->nEncodings++] = Swap32IfLE( rfbEncodingQualityLevel0 +
-											 m_opts.m_jpegQualityLevel );
+		ADD_ENC( rfbEncodingQualityLevel0 + m_opts.m_jpegQualityLevel );
 	}
 
 	// Notify the server that we support LastRect and NewFBSize encodings
-	encs[se->nEncodings++] = Swap32IfLE(rfbEncodingLastRect);
-	encs[se->nEncodings++] = Swap32IfLE(rfbEncodingNewFBSize);
+	ADD_ENC(rfbEncodingLastRect);
+	ADD_ENC(rfbEncodingNewFBSize);
+
+#undef ADD_ENC
 
 	len = sz_rfbSetEncodingsMsg + se->nEncodings * 4;
 
@@ -1730,16 +2180,33 @@ void ClientConnection::SetFormatAndEncodings()
 }
 
 // Closing down the connection.
-// Close the socket, kill the thread.
+// Close the socket and stop servicing the session.
+// (Named KillThread() for source compatibility; there is no thread now.)
 void ClientConnection::KillThread()
 {
+	// Set the flags BEFORE closing the socket.  m_running == false is what stops
+	// WM_REGIONUPDATED / WM_PAINT / the clipboard handlers from calling
+	// WriteExact() again, and those messages can be dispatched between the
+	// closesocket() and the next statement if anything below yields.
 	m_bKillThread = true;
 	m_running = false;
+	m_sessionStarted = false;
 
 	if (m_sock != INVALID_SOCKET) {
-		shutdown(m_sock, SD_BOTH);
-		closesocket(m_sock);
+		SOCKET s = m_sock;
+		// Clear the member first, so that a WriteExact() reached from a message
+		// dispatched during teardown sees INVALID_SOCKET and returns quietly
+		// instead of calling send() on a dying socket and throwing
+		// WarningException("WriteExact: Socket error while writing.") out of a
+		// window procedure.
 		m_sock = INVALID_SOCKET;
+
+		// Graceful close: shutdown(SD_SEND) tells the peer we are done writing
+		// and lets the stack flush.  Deliberately NOT SD_BOTH - see the long
+		// comment in the destructor about SD_BOTH + closesocket wedging the
+		// WinSock 1.1 stack under Win32s.
+		shutdown(s, SD_SEND);
+		closesocket(s);
 	}
 }
 
@@ -1751,28 +2218,105 @@ void ClientConnection::CopyOptions(ClientConnection *source)
 
 ClientConnection::~ClientConnection()
 {
-	if (m_hwnd1 != 0)
-		DestroyWindow(m_hwnd1);
+	// Stop servicing the session first.  Order matters on Win32s: DestroyWindow
+	// below dispatches WM_DESTROY synchronously, and that handler touches the
+	// socket and the clipboard chain.
+	m_running = false;
+	m_sessionStarted = false;
+	m_bKillThread = true;
 
-	if (m_connDlg != NULL)
+	if (m_hwnd1 != 0) {
+		HWND h = m_hwnd1;
+		// Clear the back-pointers BEFORE destroying, so that any message
+		// dispatched during destruction sees GWL_USERDATA == 0 and goes to
+		// DefWindowProc instead of into a half-destructed object.
+		SetWindowLong(h, GWL_USERDATA, (LONG)0);
+		if (m_hwndscroll != NULL)
+			SetWindowLong(m_hwndscroll, GWL_USERDATA, (LONG)0);
+		if (m_hwnd != NULL)
+			SetWindowLong(m_hwnd, GWL_USERDATA, (LONG)0);
+		m_hwnd1 = 0;
+		m_hwnd = 0;
+		m_hwndscroll = 0;
+		DestroyWindow(h);
+	}
+
+	if (m_connDlg != NULL) {
 		delete m_connDlg;
+		m_connDlg = NULL;
+	}
 
 	if (m_sock != INVALID_SOCKET) {
-		shutdown(m_sock, SD_BOTH);
+		// NOTE: no shutdown() here any more.
+		//
+		// shutdown(SD_BOTH) followed by closesocket() is what produced the
+		// "WriteExact: Socket error while writing" box on disconnect, and then
+		// wedged Windows 3.1 badly enough to need a restart.  The sequence was:
+		//
+		//   1. WM_CLOSE -> KillThread() already did shutdown + closesocket and
+		//      set m_sock = INVALID_SOCKET, OR the peer closed first;
+		//   2. some queued work (a WM_REGIONUPDATED repaint asking for the next
+		//      update, or the clipboard chain relay) then called WriteExact();
+		//   3. send() on a shut-down socket fails, WriteExact throws
+		//      WarningException, and that box appears from inside teardown.
+		//
+		// On a WinSock 1.1 stack under Win32s, calling shutdown() and then
+		// closesocket() on a socket the peer has already reset leaves the stack
+		// with a half-open connection it never reaps - which is why the machine
+		// needed a reboot rather than just showing an error.
+		//
+		// closesocket() alone is sufficient and is what the stack expects.
 		closesocket(m_sock);
 		m_sock = INVALID_SOCKET;
 	}
 
-	if (m_desktopName != NULL) delete [] m_desktopName;
-	delete [] m_netbuf;
-	delete m_pFileTransfer;
-	DeleteDC(m_hBitmapDC);
-	if (m_hBitmap != NULL)
+	if (m_desktopName != NULL) {
+		delete [] m_desktopName;
+		m_desktopName = NULL;
+	}
+	if (m_netbuf != NULL) {
+		delete [] m_netbuf;
+		m_netbuf = NULL;
+		m_netbufsize = 0;
+	}
+	// m_zlibbuf was leaked in the original code; CheckZlibBufferSize() may
+	// have allocated it.  Freeing it matters much more on Win32s, where the
+	// whole system shares one 16-bit-derived address space.
+	if (m_zlibbuf != NULL) {
+		delete [] m_zlibbuf;
+		m_zlibbuf = NULL;
+		m_zlibbufsize = 0;
+	}
+	if (m_dibbuf != NULL) {
+		delete [] m_dibbuf;
+		m_dibbuf = NULL;
+		m_dibbufsize = 0;
+	}
+	if (m_pFileTransfer != NULL) {
+		delete m_pFileTransfer;
+		m_pFileTransfer = NULL;
+	}
+
+	// Release the soft-cursor GDI objects (m_hSavedAreaDC/Bitmap and the
+	// rcSource/rcMask arrays).  These were never freed on this path.
+	SoftCursorFree();
+
+	if (m_hBitmapDC != NULL) {
+		DeleteDC(m_hBitmapDC);
+		m_hBitmapDC = NULL;
+	}
+	if (m_hBitmap != NULL) {
 		DeleteObject(m_hBitmap);
-	if (m_hPalette != NULL)
-		DeleteObject(m_hPalette);
-	
-	m_pApp->DeregisterConnection(this);
+		m_hBitmap = NULL;
+	}
+ 	if (m_hPalette != NULL) {
+ 		DeleteObject(m_hPalette);
+ 		m_hPalette = NULL;
+ 	}
+
+	DiscardPendingWrites();
+ 	
+ 	m_pApp->DeregisterConnection(this);
 }
 
 // You can specify a dx & dy outside the limits; the return value will
@@ -1790,7 +2334,7 @@ bool ClientConnection::ScrollScreen(int dx, int dy)
 		m_vScrollPos += dy;
 		RECT clirect;
 		GetClientRect(m_hwnd, &clirect);
-		ScrollWindowEx(m_hwnd, -dx, -dy,
+		Win32sScrollWindowEx(m_hwnd, -dx, -dy,
 				NULL, &clirect, NULL, NULL,  SW_INVALIDATE);
 		UpdateScrollbars();
 		UpdateWindow(m_hwnd);
@@ -1800,11 +2344,46 @@ bool ClientConnection::ScrollScreen(int dx, int dy)
 }
 
 // Process windows messages
+// ==========================================================================
+//  Window procedure wrappers.
+//
+//  Two jobs, both of them things the original code got wrong:
+//
+//  1. GWL_USERDATA is only set *after* CreateWindow returns, but Windows sends
+//     WM_NCCREATE/WM_CREATE/WM_GETMINMAXINFO/WM_NCCALCSIZE during the call.
+//     The old procedures dereferenced the resulting NULL '_this' - and on the
+//     child/scroll windows a stray WM_HSCROLL or WM_SIZE arriving at the wrong
+//     moment did the same.  Every wrapper now bails out to DefWindowProc when
+//     _this is NULL.
+//
+//  2. Exceptions must not escape into USER32.  MSVC 4.1 cannot unwind through
+//     the DispatchMessage frame, so a throw from a handler (for example
+//     WarningException from the clipboard code, or ErrorException from a decode
+//     path) is undefined behaviour rather than an error report.  Each wrapper
+//     catches everything and reports it here, on our own stack.
+// ==========================================================================
+
 LRESULT CALLBACK ClientConnection::ScrollProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
-{	// This is a static method, so we don't know which instantiation we're 
-	// dealing with.  But we've stored a 'pseudo-this' in the window data.
+{
 	ClientConnection *_this = (ClientConnection *) GetWindowLong(hwnd, GWL_USERDATA);
-		
+	if (_this == NULL)
+		return DefWindowProc(hwnd, iMsg, wParam, lParam);
+
+	try {
+		return ScrollProcImpl(_this, hwnd, iMsg, wParam, lParam);
+	} catch (WarningException &e) {
+		e.Report();
+	} catch (QuietException &e) {
+		e.Report();
+	} catch (Exception &e) {
+		e.Report();
+	}
+	return 0;
+}
+
+LRESULT ClientConnection::ScrollProcImpl(ClientConnection *_this, HWND hwnd,
+										 UINT iMsg, WPARAM wParam, LPARAM lParam)
+{
 	switch (iMsg) {
 	case WM_HSCROLL:
 		{				
@@ -1856,16 +2435,35 @@ LRESULT CALLBACK ClientConnection::ScrollProc(HWND hwnd, UINT iMsg, WPARAM wPara
 LRESULT CALLBACK ClientConnection::WndProc1(HWND hwnd, UINT iMsg, 
 					   WPARAM wParam, LPARAM lParam) 
 {
-	
-	// This is a static method, so we don't know which instantiation we're 
-	// dealing with.  But we've stored a 'pseudo-this' in the window data.
 	ClientConnection *_this = (ClientConnection *) GetWindowLong(hwnd, GWL_USERDATA);
-		
+	if (_this == NULL)
+		return DefWindowProc(hwnd, iMsg, wParam, lParam);
+
+	try {
+		return WndProc1Impl(_this, hwnd, iMsg, wParam, lParam);
+	} catch (WarningException &e) {
+		e.Report();
+	} catch (QuietException &e) {
+		e.Report();
+	} catch (Exception &e) {
+		e.Report();
+	}
+	return 0;
+}
+
+LRESULT ClientConnection::WndProc1Impl(ClientConnection *_this, HWND hwnd,
+									   UINT iMsg, WPARAM wParam, LPARAM lParam)
+{
 	switch (iMsg) {
 	
 	case WM_NOTIFY:
 	{		
+		// Only the toolbar sends us WM_NOTIFY, and there is no toolbar when
+		// COMCTL32 is unavailable (Win32s).  Guard the pointer as well: a
+		// WM_NOTIFY with lParam == 0 would fault on the first dereference.
 		LPTOOLTIPTEXT TTStr = (LPTOOLTIPTEXT)lParam;
+		if (TTStr == NULL)
+			return 0;
 		if (TTStr->hdr.code != TTN_NEEDTEXT)
 			return 0;
 
@@ -1944,7 +2542,14 @@ LRESULT CALLBACK ClientConnection::WndProc1(HWND hwnd, UINT iMsg,
 			return 0;			
 		case IDC_OPTIONBUTTON:
 			{
-				if (SetForegroundWindow(_this->m_opts.m_hParent) != 0) return 0;
+				// If the options dialog is already open, just raise it.
+				// NOTE: the original called SetForegroundWindow(m_hParent)
+				// unconditionally - and m_hParent is 0 when no dialog is open.
+				// SetForegroundWindow(NULL) returns 0 on NT so the code happened
+				// to fall through, but that is accidental.  RaiseDialog() does
+				// the check properly (and copes with a stale handle).
+				if (_this->m_opts.RaiseDialog())
+					return 0;
 				int prev_scale_num = _this->m_opts.m_scale_num;
 				int prev_scale_den = _this->m_opts.m_scale_den;
 				
@@ -2015,12 +2620,14 @@ LRESULT CALLBACK ClientConnection::WndProc1(HWND hwnd, UINT iMsg,
 				_this->SendKeyEvent(XK_Control_L, false);
 				CheckMenuItem(GetSystemMenu(_this->m_hwnd1, FALSE),
 					ID_CONN_CTLDOWN, MF_BYCOMMAND|MF_UNCHECKED);
-				SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_CTLDOWN,
+				if (_this->m_hToolbar != NULL)
+					SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_CTLDOWN,
 					(LPARAM)MAKELONG(TBSTATE_ENABLED, 0));
 			} else {
 				CheckMenuItem(GetSystemMenu(_this->m_hwnd1, FALSE),
 					ID_CONN_CTLDOWN, MF_BYCOMMAND|MF_CHECKED);
-				SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_CTLDOWN,
+				if (_this->m_hToolbar != NULL)
+					SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_CTLDOWN,
 					(LPARAM)MAKELONG(TBSTATE_CHECKED|TBSTATE_ENABLED, 0));
 				_this->SendKeyEvent(XK_Control_L, true);
 			}
@@ -2031,12 +2638,14 @@ LRESULT CALLBACK ClientConnection::WndProc1(HWND hwnd, UINT iMsg,
 				_this->SendKeyEvent(XK_Alt_L, false);
 				CheckMenuItem(GetSystemMenu(_this->m_hwnd1, FALSE),
 					ID_CONN_ALTDOWN, MF_BYCOMMAND|MF_UNCHECKED);
-				SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_ALTDOWN,
+				if (_this->m_hToolbar != NULL)
+					SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_ALTDOWN,
 					(LPARAM)MAKELONG(TBSTATE_ENABLED, 0));
 			} else {
 				CheckMenuItem(GetSystemMenu(_this->m_hwnd1, FALSE),
 					ID_CONN_ALTDOWN, MF_BYCOMMAND|MF_CHECKED);
-				SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_ALTDOWN,
+				if (_this->m_hToolbar != NULL)
+					SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_ALTDOWN,
 					(LPARAM)MAKELONG(TBSTATE_CHECKED|TBSTATE_ENABLED, 0));
 				_this->SendKeyEvent(XK_Alt_L, true);
 			}
@@ -2058,14 +2667,36 @@ LRESULT CALLBACK ClientConnection::WndProc1(HWND hwnd, UINT iMsg,
 		_this->PositionChildWindow();			
 		return 0;	
 	case WM_CLOSE:		
-		// Close the worker thread as well
+		// Stop servicing the session and close the socket.
+		//
+		// DO NOT try to drain this window's message queue here.
+		//
+		// An earlier version of this fix looped on
+		//     while (PeekMessage(&dmsg, hwnd, 0, 0, PM_REMOVE)) ;
+		// to discard messages queued before the disconnect.  That HANGS: a
+		// pending WM_PAINT is not removed from the queue by PeekMessage, because
+		// the window's update region is only cleared by BeginPaint/EndPaint (or
+		// ValidateRect).  PeekMessage keeps handing back the same WM_PAINT
+		// forever and the viewer freezes with no way out.
+		//
+		// The queued-message problem it was trying to solve is handled properly
+		// in WriteExact()/ReadExact(), which return silently once m_bKillThread
+		// is set - so a WM_REGIONUPDATED or clipboard message dispatched after
+		// this point does nothing instead of throwing.
 		_this->KillThread();
 		DestroyWindow(hwnd);
 		return 0;					  
 	case WM_DESTROY: 			
 #ifndef UNDER_CE
-		// Remove us from the clipboard viewer chain
-		BOOL res = ChangeClipboardChain( _this->m_hwnd, _this->m_hwndNextViewer);
+		// Remove us from the clipboard viewer chain.
+		// Only if we actually joined it - SetClipboardViewer may have failed,
+		// or returned NULL because we were the only viewer.  The declaration
+		// was also inside the switch without braces, which MSVC 4.1 accepts
+		// but which puts an initialised local in scope for the other labels.
+		if (_this->m_hwnd != NULL) {
+			ChangeClipboardChain(_this->m_hwnd, _this->m_hwndNextViewer);
+			_this->m_hwndNextViewer = NULL;
+		}
 #endif
 		if (_this->m_serverInitiated) {
 			_this->m_opts.SaveOpt(".listen", 
@@ -2083,15 +2714,11 @@ LRESULT CALLBACK ClientConnection::WndProc1(HWND hwnd, UINT iMsg,
 		_this->m_hwnd1 = 0;
 		_this->m_hwnd = 0;
 		_this->m_opts.m_hWindow = 0;
-		// We are currently in the main thread.
-		// The worker thread should be about to finish if
-		// it hasn't already. Wait for it.
-		try {
-			void *p;
-			_this->join(&p);  // After joining, _this is no longer valid
-		} catch (omni_thread_invalid) {
-		// The thread probably hasn't been started yet,
-		}	
+		// Single-threaded: there is no worker thread to join.  Flag ourselves
+		// for deletion; VNCviewerApp32::ReapDeadConnections() will free this
+		// object once we are back in the main message loop.  Deleting here
+		// would destroy the object whose window procedure we are inside.
+		_this->OnWindowDestroyed();
 		return 0;						 
 	}
 	return DefWindowProc(hwnd, iMsg, wParam, lParam);
@@ -2105,15 +2732,38 @@ LRESULT CALLBACK ClientConnection::Proc(HWND hwnd, UINT iMsg,
 
 LRESULT CALLBACK ClientConnection::WndProc(HWND hwnd, UINT iMsg, 
 					   WPARAM wParam, LPARAM lParam) 
-{	
-	// This is a static method, so we don't know which instantiation we're 
-	// dealing with.  But we've stored a 'pseudo-this' in the window data.
+{
 	ClientConnection *_this = (ClientConnection *) GetWindowLong(hwnd, GWL_USERDATA);
+	if (_this == NULL)
+		return DefWindowProc(hwnd, iMsg, wParam, lParam);
 
+	try {
+		return WndProcImpl(_this, hwnd, iMsg, wParam, lParam);
+	} catch (WarningException &e) {
+		e.Report();
+	} catch (QuietException &e) {
+		e.Report();
+	} catch (Exception &e) {
+		e.Report();
+	}
+	return 0;
+}
+
+LRESULT ClientConnection::WndProcImpl(ClientConnection *_this, HWND hwnd,
+									  UINT iMsg, WPARAM wParam, LPARAM lParam)
+{
 	switch (iMsg) {
 	case WM_REGIONUPDATED:
-		_this->DoBlit();
-		_this->SendAppropriateFramebufferUpdateRequest();		
+		// WIN32S: DoBlit() must NOT run here.  It paints with
+		// BeginPaint/EndPaint, which is only valid inside WM_PAINT: called
+		// from any other message it validates (clears) the update region
+		// while painting an empty rcPaint, so the real WM_PAINT that follows
+		// finds nothing to draw.  Result was exactly the reported symptom:
+		// decoders filled m_hBitmap (control worked, CopyRect BitBlts
+		// landed), but the screen stayed blank except when a window move
+		// generated a genuine WM_PAINT.  Each decoded rect already calls
+		// InvalidateScreenRect(), so the repaint arrives via WM_PAINT below.
+		_this->SendAppropriateFramebufferUpdateRequest();
 		return 0;
 	case WM_PAINT:
 		_this->DoBlit();		
@@ -2128,7 +2778,6 @@ LRESULT CALLBACK ClientConnection::WndProc(HWND hwnd, UINT iMsg,
 			 _this->m_waitingOnEmulateTimer = false;
 		}
 		return 0; 
-	#define WM_MOUSEWHEEL 0x020A
 	case WM_LBUTTONDOWN:
 	case WM_LBUTTONUP:
 	case WM_MBUTTONDOWN:
@@ -2186,12 +2835,14 @@ LRESULT CALLBACK ClientConnection::WndProc(HWND hwnd, UINT iMsg,
 				if (!down) {
 				CheckMenuItem(GetSystemMenu(_this->m_hwnd1, FALSE),
 						ID_CONN_CTLDOWN, MF_BYCOMMAND|MF_UNCHECKED);
-				SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_CTLDOWN,
+				if (_this->m_hToolbar != NULL)
+					SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_CTLDOWN,
 						(LPARAM)MAKELONG(TBSTATE_ENABLED, 0));
 				} else {
 				CheckMenuItem(GetSystemMenu(_this->m_hwnd1, FALSE),
 						ID_CONN_CTLDOWN, MF_BYCOMMAND|MF_CHECKED);
-				SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_CTLDOWN,
+				if (_this->m_hToolbar != NULL)
+					SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_CTLDOWN,
 						(LPARAM)MAKELONG(TBSTATE_CHECKED|TBSTATE_ENABLED, 0));
 				}
 			}
@@ -2199,12 +2850,14 @@ LRESULT CALLBACK ClientConnection::WndProc(HWND hwnd, UINT iMsg,
 				if (!down) {
 				CheckMenuItem(GetSystemMenu(_this->m_hwnd1, FALSE),
 					ID_CONN_ALTDOWN, MF_BYCOMMAND|MF_UNCHECKED);
-				SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_ALTDOWN,
+				if (_this->m_hToolbar != NULL)
+					SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_ALTDOWN,
 					(LPARAM)MAKELONG(TBSTATE_ENABLED, 0));
 				} else {
 					CheckMenuItem(GetSystemMenu(_this->m_hwnd1, FALSE),
 								ID_CONN_ALTDOWN, MF_BYCOMMAND|MF_CHECKED);
-					SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_ALTDOWN,
+					if (_this->m_hToolbar != NULL)
+						SendMessage(_this->m_hToolbar, TB_SETSTATE, (WPARAM)ID_CONN_ALTDOWN,
 								(LPARAM)MAKELONG(TBSTATE_CHECKED|TBSTATE_ENABLED, 0));
 				}
 			}
@@ -2247,7 +2900,7 @@ LRESULT CALLBACK ClientConnection::WndProc(HWND hwnd, UINT iMsg,
 			if (_this->InFullScreenMode()) {
 				// We must top being topmost, but we want to choose our
 				// position carefully.
-				HWND foreground = GetForegroundWindow();
+				HWND foreground = Win32sGetForegroundWindow();
 				HWND hwndafter = NULL;
 				if ((foreground == NULL) || 
 					(GetWindowLong(foreground, GWL_EXSTYLE) & WS_EX_TOPMOST)) {
@@ -2408,8 +3061,15 @@ ClientConnection::ProcessPointerEvent(int x, int y, DWORD keyflags, UINT msg)
 					NULL);
 				
 				if (!m_emulate3ButtonsTimer) {
-					vnclog.Print(0, _T("Failed to create timer for emulating 3 buttons"));
-					PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+					// Win32s/Windows 3.1 has a small, system-wide limit on
+					// timers and SetTimer genuinely fails when it is reached.
+					// Closing the whole connection over a mouse-emulation timer
+					// is disproportionate: fall back to sending the button event
+					// immediately, i.e. behave as if 3-button emulation were off.
+					vnclog.Print(0, _T("No timer available - disabling 3-button emulation\n"));
+					m_opts.m_Emul3Buttons = false;
+					m_waitingOnEmulateTimer = false;
+					SubProcessPointerEvent(x, y, keyflags);
 					return;
 				}
 				
@@ -2469,7 +3129,10 @@ ClientConnection::SubProcessPointerEvent(int x, int y, DWORD keyflags)
 		}
 	} catch (Exception &e) {
 		e.Report();
-		PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+		if (m_hwnd1 != NULL)
+			PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+		else
+			m_dead = true;
 	}
 }
 
@@ -2590,7 +3253,10 @@ inline void ClientConnection::ProcessKeyEvent(int virtkey, DWORD keyData)
 		}
 	} catch (Exception &e) {
 		e.Report();
-		PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+		if (m_hwnd1 != NULL)
+			PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+		else
+			m_dead = true;
 	}
 
 }
@@ -2635,12 +3301,18 @@ inline void ClientConnection::DoBlit()
 {
 	if (m_hBitmap == NULL) return;
 	if (!m_running) return;
+	// WM_PAINT can be delivered while the window is being torn down.
+	if (m_hwnd == NULL) return;
 				
-	// No other threads can use bitmap DC
+	// (No-op lock: single-threaded.  The bitmap DC is only touched from the
+	// one thread now, so the previous "no other threads can use bitmap DC"
+	// invariant is guaranteed structurally.)
 	omni_mutex_lock l(m_bitmapdcMutex);
 
 	PAINTSTRUCT ps;
 	HDC hdc = BeginPaint(m_hwnd, &ps);
+	if (hdc == NULL)
+		return;
 
 	// Select and realize hPalette
 	PaletteSelector p(hdc, m_hPalette);
@@ -2670,7 +3342,7 @@ inline void ClientConnection::DoBlit()
 		SetStretchBltMode(hdc, HALFTONE);
 		// The docs say that you should call SetBrushOrgEx after SetStretchBltMode, 
 		// but not what the arguments should be.
-		SetBrushOrgEx(hdc, 0,0, NULL);
+		Win32sSetBrushOrgEx(hdc, 0,0, NULL);
 		
 		if (!StretchBlt(
 			hdc, 
@@ -2688,45 +3360,68 @@ inline void ClientConnection::DoBlit()
 			vnclog.Print(0, _T("Blit error %d\n"), GetLastError());
 			// throw ErrorException("Error in blit!\n");
 		};
-	} else {
-		if (!BitBlt(hdc, ps.rcPaint.left, ps.rcPaint.top, 
-			ps.rcPaint.right-ps.rcPaint.left, ps.rcPaint.bottom-ps.rcPaint.top, 
-			m_hBitmapDC, ps.rcPaint.left+m_hScrollPos, ps.rcPaint.top+m_vScrollPos, SRCCOPY)) 
+ 	} else {
+		// TEMP-DIAG (Raw blank): prove paints run and with what region.
+		// Bounded to the first 3 so the log stays small.
 		{
-			vnclog.Print(0, _T("Blit error %d\n"), GetLastError());
-			// throw ErrorException("Error in blit!\n");
+			static int s_blitDiag = 0;
+			if (s_blitDiag < 3) {
+				s_blitDiag++;
+				vnclog.Print(0, _T("DIAG DoBlit %d: paint %d,%d %dx%d scroll %d,%d\n"),
+							 s_blitDiag,
+							 ps.rcPaint.left, ps.rcPaint.top,
+							 ps.rcPaint.right - ps.rcPaint.left,
+							 ps.rcPaint.bottom - ps.rcPaint.top,
+							 m_hScrollPos, m_vScrollPos);
+			}
 		}
-	}
-	
-	EndPaint(m_hwnd, &ps);
+ 		if (!BitBlt(hdc, ps.rcPaint.left, ps.rcPaint.top, 
+ 			ps.rcPaint.right-ps.rcPaint.left, ps.rcPaint.bottom-ps.rcPaint.top, 
+ 			m_hBitmapDC, ps.rcPaint.left+m_hScrollPos, ps.rcPaint.top+m_vScrollPos, SRCCOPY)) 
+ 		{
+ 			vnclog.Print(0, _T("Blit error %d\n"), GetLastError());
+ 			// throw ErrorException("Error in blit!\n");
+ 		}
+ 	}
+ 	
+ 	EndPaint(m_hwnd, &ps);
 }
 
 inline void ClientConnection::UpdateScrollbars() 
 {
+	if (m_hwndscroll == NULL)
+		return;
+
 	// We don't update the actual scrollbar info in full-screen mode
 	// because it causes them to flicker.
 	bool setInfo = !InFullScreenMode();
+	if (!setInfo)
+		return;
 
+	// SIF_ALL includes SIF_TRACKPOS, which is an *output-only* field for
+	// GetScrollInfo and is ignored by SetScrollInfo - harmless, but note it.
+	// nTrackPos was never initialised here; zero it so the whole structure is
+	// defined (Win32sSetScrollInfo reads fMask and may look at nPage).
 	SCROLLINFO scri;
+	memset(&scri, 0, sizeof(scri));
 	scri.cbSize = sizeof(scri);
-	scri.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
+	scri.fMask = SIF_RANGE | SIF_PAGE | SIF_POS | SIF_DISABLENOSCROLL;
 	scri.nMin = 0;
 	scri.nMax = m_hScrollMax; 
 	scri.nPage= m_cliwidth;
 	scri.nPos = m_hScrollPos; 
 	
-	if (setInfo) 
-		SetScrollInfo(m_hwndscroll, SB_HORZ, &scri, TRUE);
+	Win32sSetScrollInfo(m_hwndscroll, SB_HORZ, &scri, TRUE);
 	
+	memset(&scri, 0, sizeof(scri));
 	scri.cbSize = sizeof(scri);
-	scri.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
+	scri.fMask = SIF_RANGE | SIF_PAGE | SIF_POS | SIF_DISABLENOSCROLL;
 	scri.nMin = 0;
 	scri.nMax = m_vScrollMax;     
 	scri.nPage= m_cliheight;
 	scri.nPos = m_vScrollPos; 
 	
-	if (setInfo) 
-		SetScrollInfo(m_hwndscroll, SB_VERT, &scri, TRUE);
+	Win32sSetScrollInfo(m_hwndscroll, SB_VERT, &scri, TRUE);
 }
 
 
@@ -2734,13 +3429,22 @@ void ClientConnection::ShowConnInfo()
 {
 	TCHAR buf[2048];
 #ifndef UNDER_CE
-	char kbdname[9];
-	GetKeyboardLayoutName(kbdname);
+	// GetKeyboardLayoutName writes KL_NAMELENGTH (9) bytes including the NUL.
+	// Win32sGetKeyboardLayoutName writes "(n/a)" when the API is unavailable.
+	char kbdname[16];
+	memset(kbdname, 0, sizeof(kbdname));
+	Win32sGetKeyboardLayoutName(kbdname);
+	kbdname[sizeof(kbdname) - 1] = '\0';
 #else
 	TCHAR *kbdname = _T("(n/a)");
 #endif
-	_stprintf(
+	// m_desktopName is server-supplied and bounded to 1024 chars by
+	// ReadServerInit; with the fixed text and the numbers this fits 2048, but
+	// use _sntprintf so the bound is enforced rather than reasoned about.
+	buf[0] = _T('\0');
+	_sntprintf(
 		buf,
+		(sizeof(buf) / sizeof(TCHAR)) - 1,
 		_T("Connected to: %s\n\r")
 		_T("Host: %s port: %d\n\r\n\r")
 		_T("Desktop geometry: %d x %d x %d\n\r")
@@ -2752,96 +3456,193 @@ void ClientConnection::ShowConnInfo()
 		m_myFormat.depth,
 		m_minorVersion, (m_tightVncProtocol ? "tight" : ""),
 		kbdname);
-	MessageBox(NULL, buf, _T("VNC connection info"), MB_ICONINFORMATION | MB_OK);
+	buf[(sizeof(buf) / sizeof(TCHAR)) - 1] = _T('\0');
+	MessageBox(m_hwnd1, buf, _T("VNC connection info"), MB_ICONINFORMATION | MB_OK);
 }
 
 // ********************************************************************
-//  Methods after this point are generally called by the worker thread.
-//  They finish the initialisation, then chiefly read data from the server.
+//  Methods after this point used to run on the per-connection worker
+//  thread.  They now run on the single application thread, driven by
+//  PumpIdle() below.
 // ********************************************************************
 
+//
+// SocketHasData - non-blocking test for "is there at least one byte to read?"
+//
+// select() with a zero timeout is the one polling primitive that behaves the
+// same on WinSock 1.1 under Win32s/Win 3.1 (winsock.dll / trumpwsk / MS TCP)
+// as it does on Win9x and NT.  We deliberately do NOT use recv(MSG_PEEK) as
+// the loop condition any more: on a blocking socket recv() will block if no
+// data has arrived, and with a single thread that freezes the whole viewer.
+//
+bool ClientConnection::SocketHasData()
+{
+	if (m_sock == INVALID_SOCKET)
+		return false;
 
-void* ClientConnection::run_undetached(void* arg) {
+	fd_set fds;
+	struct timeval tv;
 
-	vnclog.Print(9, _T("Update-processing thread started\n"));
+	FD_ZERO(&fds);
+	FD_SET(m_sock, &fds);
+	tv.tv_sec = 0;
+	tv.tv_usec = 0;
 
-	m_threadStarted = true;
+	// nfds is ignored by WinSock (the fd_set is an array of handles, not a
+	// bitmask), so 0 is correct and portable across stacks.
+	int res = select(0, &fds, NULL, NULL, &tv);
+	if (res == SOCKET_ERROR) {
+		int err = WSAGetLastError();
+		// A real error here means the connection is gone.  Mark it so the main
+		// loop stops polling us; do not throw from the polling path.
+		if (err != WSAEINTR && err != WSAEINPROGRESS) {
+			vnclog.Print(2, _T("select() failed: %d - ending session\n"), err);
+			m_running = false;
+			m_bKillThread = true;
+			if (m_hwnd1 != NULL)
+				PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+			else
+				m_dead = true;
+		}
+		return false;
+	}
+
+	return (res > 0);
+}
+
+//
+// PumpIdle - service at most one server message.
+//
+// This is the single-threaded replacement for the body of the old
+// run_undetached() while-loop.  Contract:
+//   * never blocks: returns false immediately if nothing is pending
+//   * returns true if it processed something, so the caller can pump again
+//     before going back to sleep in GetMessage()
+//   * on protocol/socket failure it closes the window exactly as the worker
+//     thread used to, and marks the object dead if there is no window
+//
+bool ClientConnection::PumpIdle()
+{
+	if (!m_sessionStarted || m_bKillThread || m_dead)
+		return false;
+
+	if (m_sock == INVALID_SOCKET)
+		return false;
+
+	if (!SocketHasData())
+		return false;
 
 	try {
-
-		SendFullFramebufferUpdateRequest();
-
-		RealiseFullScreenMode(false);
-
-		m_running = true;
-		UpdateWindow(m_hwnd1);
-		
-		while (!m_bKillThread) {
-			
-			// Look at the type of the message, but leave it in the buffer 
-			CARD8 msgType;
-			{
-			  omni_mutex_lock l(m_readMutex);  // we need this if we're not using ReadExact
-			  int bytes = recv(m_sock, (char *) &msgType, 1, MSG_PEEK);
-			  if (bytes == 0) {
-                m_pFileTransfer->CloseUndoneFileTransfers();
-			    vnclog.Print(0, _T("Connection closed\n") );
-			    throw WarningException(_T("Connection closed"));
-			  }
-			  if (bytes < 0) {
-                m_pFileTransfer->CloseUndoneFileTransfers();
-			    vnclog.Print(3, _T("Socket error reading message: %d\n"), WSAGetLastError() );
-			    throw WarningException("Error while waiting for server message");
-			  }
-			}
-				
-			switch (msgType) {
-			case rfbFramebufferUpdate:
-				ReadScreenUpdate();
-				break;
-			case rfbSetColourMapEntries:
-				ReadSetColourMapEntries();
-				break;
-			case rfbBell:
-				ReadBell();
-				break;
-			case rfbServerCutText:
-				ReadServerCutText();
-				break;
-			case rfbFileListData:
-				m_pFileTransfer->ShowServerItems();
-				break;
-			case rfbFileDownloadData:
-				m_pFileTransfer->FileTransferDownload();
-				break;
-			case rfbFileUploadCancel:
-				m_pFileTransfer->ReadUploadCancel();
-				break;
-			case rfbFileDownloadFailed:
-				m_pFileTransfer->ReadDownloadFailed();
-				break;
-
-			default:
-				vnclog.Print(3, _T("Unknown message type x%02x\n"), msgType );
-				throw WarningException("Unhandled message type received!\n");
-			}
-
+		// Look at the type of the message, but leave it in the buffer.
+		// Safe here because select() has already told us a byte is waiting.
+		CARD8 msgType;
+		int bytes = recv(m_sock, (char *) &msgType, 1, MSG_PEEK);
+		if (bytes == 0) {
+			m_pFileTransfer->CloseUndoneFileTransfers();
+			vnclog.Print(0, _T("Connection closed\n"));
+			throw WarningException(_T("Connection closed"));
 		}
-        
-        vnclog.Print(4, _T("Update-processing thread finishing\n") );
+		if (bytes < 0) {
+			int err = WSAGetLastError();
+			if (err == WSAEWOULDBLOCK)
+				return false;			// spurious wakeup, try again later
+			m_pFileTransfer->CloseUndoneFileTransfers();
+			vnclog.Print(3, _T("Socket error reading message: %d\n"), err);
+			throw WarningException("Error while waiting for server message");
+		}
+
+		switch (msgType) {
+		case rfbFramebufferUpdate:
+			ReadScreenUpdate();
+			break;
+		case rfbSetColourMapEntries:
+			ReadSetColourMapEntries();
+			break;
+		case rfbBell:
+			ReadBell();
+			break;
+		case rfbServerCutText:
+			ReadServerCutText();
+			break;
+		case rfbFileListData:
+			m_pFileTransfer->ShowServerItems();
+			break;
+		case rfbFileDownloadData:
+			m_pFileTransfer->FileTransferDownload();
+			break;
+		case rfbFileUploadCancel:
+			m_pFileTransfer->ReadUploadCancel();
+			break;
+		case rfbFileDownloadFailed:
+			m_pFileTransfer->ReadDownloadFailed();
+			break;
+
+		default:
+			vnclog.Print(3, _T("Unknown message type x%02x\n"), msgType);
+			throw WarningException("Unhandled message type received!\n");
+		}
+
+		return true;
 
 	} catch (WarningException &e) {
+		// The original worker loop tested "if (!m_bKillThread)" before
+		// reporting, so that a disconnection we asked for is silent while an
+		// unexpected one is reported.  Sample the flag BEFORE setting it -
+		// setting it first (as an obvious transcription of that code would)
+		// suppresses every message, including real errors.
+		bool expected = m_bKillThread;
+
 		m_running = false;
-		PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
-		if (!m_bKillThread) {
+		m_bKillThread = true;
+		if (m_hwnd1 != NULL) {
+			PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+		} else {
+			m_dead = true;
+		}
+		if (!expected) {
 			e.Report();
 		}
 	} catch (QuietException &e) {
 		m_running = false;
+		m_bKillThread = true;
 		e.Report();
-		PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
-	} 
-	return this;
+		if (m_hwnd1 != NULL) {
+			PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+		} else {
+			m_dead = true;
+		}
+	} catch (Exception &e) {
+		// ErrorException and anything else: PumpIdle is called from the main
+		// loop, and an escape from here would unwind out of WinMain.
+		m_running = false;
+		m_bKillThread = true;
+		e.Report();
+		if (m_hwnd1 != NULL) {
+			PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+		} else {
+			m_dead = true;
+		}
+	}
+
+	return false;
+}
+
+//
+// OnWindowDestroyed - called from WndProc1 on WM_DESTROY.
+//
+// The old code called join() here to wait for the worker thread, and the
+// comment noted "after joining, _this is no longer valid" - join() deleted the
+// object from inside a window procedure.  With one thread there is nothing to
+// join, and deleting the object here would destroy the very window Windows is
+// currently dispatching to.  Instead we just flag ourselves; the app deletes
+// us from ReapDeadConnections() once control is back in the message loop.
+//
+void ClientConnection::OnWindowDestroyed()
+{
+	m_running = false;
+	m_bKillThread = true;
+	m_sessionStarted = false;
+	m_dead = true;
 }
 
 
@@ -2880,6 +3681,13 @@ inline void ClientConnection::SendFullFramebufferUpdateRequest()
 
 void ClientConnection::SendAppropriateFramebufferUpdateRequest()
 {
+	// Called from WM_REGIONUPDATED, so it can fire once more after the session
+	// has ended (the message is already in the queue when the socket dies).
+	// WriteExact would then run on INVALID_SOCKET; it checks, but the format
+	// renegotiation below does real work first.
+	if (!m_running || m_sock == INVALID_SOCKET)
+		return;
+
 	if (m_pendingFormatChange) {
 		vnclog.Print(3, _T("Requesting new pixel format\n") );
 		rfbPixelFormat oldFormat = m_myFormat;
@@ -2938,6 +3746,22 @@ void ClientConnection::ReadScreenUpdate() {
 			continue;
 		}
 
+		// Validate the rectangle against our framebuffer before handing it to a
+		// decoder.  Every decoder writes into m_hBitmap via SETPIXELS/BitBlt
+		// using these coordinates, and none of them re-check.  A rectangle that
+		// extends past the framebuffer is a straightforward out-of-bounds draw,
+		// and CopyRect additionally uses it as a *source*.
+		if ((int)surh.r.x < 0 || (int)surh.r.y < 0 ||
+			(int)surh.r.w < 0 || (int)surh.r.h < 0 ||
+			(int)surh.r.x + (int)surh.r.w > (int)m_si.framebufferWidth ||
+			(int)surh.r.y + (int)surh.r.h > (int)m_si.framebufferHeight) {
+			vnclog.Print(0, _T("Bad update rectangle %d,%d %dx%d (fb %dx%d)\n"),
+						 (int)surh.r.x, (int)surh.r.y,
+						 (int)surh.r.w, (int)surh.r.h,
+						 (int)m_si.framebufferWidth, (int)m_si.framebufferHeight);
+			throw ErrorException("Protocol error: update rectangle outside the framebuffer.");
+		}
+
 		// If *Cursor encoding is used, we should prevent collisions
 		// between framebuffer updates and cursor drawing operations.
 		SoftCursorLockArea(surh.r.x, surh.r.y, surh.r.w, surh.r.h);
@@ -2983,8 +3807,15 @@ void ClientConnection::ReadScreenUpdate() {
 		SoftCursorUnlockScreen();
 	}	
 
-	// Inform the other thread that an update is needed.
-	PostMessage(m_hwnd, WM_REGIONUPDATED, NULL, NULL);
+	// Ask the window to repaint the area we just decoded.
+	//
+	// (Was "inform the other thread"; there is one thread now.)  Keep it a
+	// PostMessage rather than calling DoBlit() directly: we are inside
+	// PumpIdle() here, and a synchronous repaint from the middle of a decode
+	// would re-enter the GDI state that the decoders are using.  The main loop
+	// picks the message up on its next pass.
+	if (m_hwnd != NULL)
+		PostMessage(m_hwnd, WM_REGIONUPDATED, 0, 0);
 }	
 
 void ClientConnection::SetDormant(bool newstate)
@@ -3004,6 +3835,22 @@ void ClientConnection::ReadServerCutText()
 	vnclog.Print(6, _T("Read remote clipboard change\n"));
 	ReadExact((char *) &sctm, sz_rfbServerCutTextMsg);
 	size_t len = Swap32IfLE(sctm.length);
+
+	// CheckBufferSize now rejects absurd sizes (see its Win32s note), but bound
+	// the clipboard specifically: UpdateLocalClipboard allocates len*2+1 on top
+	// of this, and GlobalAlloc on Win32s draws from the shared 16-bit heap.
+	if (len > 0x00100000) {			// 1 MB of clipboard text is already absurd
+		vnclog.Print(0, _T("Server sent %u bytes of clipboard text - ignoring\n"),
+					 (unsigned int)len);
+		// Still have to consume it to stay in sync with the protocol stream.
+		char discard[1024];
+		while (len > 0) {
+			int chunk = (len > sizeof(discard)) ? sizeof(discard) : (int)len;
+			ReadExact(discard, chunk);
+			len -= chunk;
+		}
+		return;
+	}
 
 	CheckBufferSize(len);
 	if (len == 0) {
@@ -3038,12 +3885,14 @@ void ClientConnection::ReadBell() {
 	MessageBeep( MB_OK );
 	#else
 
-	if (! ::PlaySound("VNCViewerBell", NULL, 
-		SND_APPLICATION | SND_ALIAS | SND_NODEFAULT | SND_ASYNC) ) {
-		::Beep(440, 125);
-	}
+	// Was PlaySound(... SND_APPLICATION|SND_ALIAS ...) plus Beep().  Both are
+	// problems on Win32s: PlaySound is a winmm import that resolves a registry
+	// sound scheme Windows 3.1 does not have, and Beep() is a no-op/absent on
+	// several Win32s builds.  Win32sPlayBell() uses MessageBeep, which works
+	// everywhere and needs no extra import.
+	Win32sPlayBell();
 	#endif
-	if (m_opts.m_DeiconifyOnBell) {
+	if (m_opts.m_DeiconifyOnBell && m_hwnd1 != NULL) {
 		if (IsIconic(m_hwnd1)) {
 			SetDormant(false);
 			ShowWindow(m_hwnd1, SW_SHOWNORMAL);
@@ -3055,32 +3904,97 @@ void ClientConnection::ReadBell() {
 
 // General utilities -------------------------------------------------
 
-// Reads the number of bytes specified into the buffer given
+// Reads the number of bytes specified into the buffer given.
+//
+// NOTE (single-threaded): this still blocks until the requested bytes arrive.
+// That is safe because PumpIdle() only calls into the protocol code after
+// select() has reported readable data, so we are always completing a message
+// that the server has already started sending.  Do not call ReadExact()
+// speculatively from the idle loop.
 void ClientConnection::ReadExact(char *inbuf, int wanted)
 {
-	if (m_sock == INVALID_SOCKET && m_bKillThread)
+	// Was "if (m_sock == INVALID_SOCKET && m_bKillThread)": the && meant that a
+	// read attempted on a closed socket while NOT shutting down fell through to
+	// recv(INVALID_SOCKET, ...).  Either condition alone means we must not read.
+	if (m_sock == INVALID_SOCKET || m_bKillThread)
 		throw QuietException("Connection closed.");
+	if (inbuf == NULL || wanted < 0)
+		throw QuietException("Bad read request.");
+	if (wanted == 0)
+		return;
 
 	omni_mutex_lock l(m_readMutex);
 
+	if (m_inWriteExact) {
+		static bool logged = false;
+		if (!logged) {
+			logged = true;
+			vnclog.Print(0, _T("ReadExact during WriteExact: OS dispatched input mid-write\n"));
+		}
+	}
+	m_inReadExact = true;
+
 	int offset = 0;
+	int wouldBlockRetries = 0;
     vnclog.Print(10, _T("  reading %d bytes\n"), wanted);
 	
 	while (wanted > 0) {
 
-		int bytes = recv(m_sock, inbuf+offset, wanted, 0);
-		if (bytes == 0) throw WarningException("Connection closed.");
+		// WIN32S: bound every recv() to 16K.  The 16-bit Winsock 1.1 thunk
+		// cannot marshal a large flat buffer (a full-screen Raw rect is
+		// megabytes in one call) and fails it with WSAEFAULT, which used to
+		// surface as an immediate disconnect on Raw/RRE and as random stalls
+		// on any big update.  Small reads were always fine - hence Tight and
+		// small Hextile tiles working while Raw never did.  Same root cause
+		// as the server-side send cap (winvnc VSocket::SendFromQueue).
+		int chunk = (wanted > 16384) ? 16384 : wanted;
+		int bytes = recv(m_sock, inbuf+offset, chunk, 0);
+		if (bytes == 0) { m_inReadExact = false; DiscardPendingWrites(); throw WarningException("Connection closed."); }
 		if (bytes == SOCKET_ERROR) {
-			int err = ::GetLastError();
-			vnclog.Print(1, _T("Socket error while reading %d\n"), err);
-			m_running = false;
-			throw WarningException("ReadExact: Socket error while reading.");
-		}
-		wanted -= bytes;
-		offset += bytes;
+			// Must be WSAGetLastError(), not GetLastError(): under Win32s the
+			// WinSock DLL does not funnel socket errors into the Win32 thread
+			// error value, so GetLastError() returns garbage here.
+			int err = WSAGetLastError();
 
-	}
-}
+		// See WriteExact: some WinSock 1.1 stacks return WSAEWOULDBLOCK
+		// transiently even on a blocking socket, and WSAEINPROGRESS while the
+		// stack is still draining a previous bulk transfer.  This matters much
+		// more here, mid-message, than it does for writes: dropping out would
+		// desynchronise the protocol stream.  Bounded, and waits with
+		// select() rather than Sleep() - see the note in WriteExact about
+		// Sleep(0) not yielding on Win32s.
+		if ((err == WSAEWOULDBLOCK || err == WSAEINPROGRESS) &&
+			wouldBlockRetries < 200) {
+				wouldBlockRetries++;
+				fd_set rfds;
+				struct timeval rtv;
+				FD_ZERO(&rfds);
+				FD_SET(m_sock, &rfds);
+				rtv.tv_sec = 0;
+				rtv.tv_usec = 50000;		// 50 ms
+				select(0, &rfds, NULL, NULL, &rtv);
+				continue;
+			}
+
+ 		vnclog.Print(1, _T("Socket error while reading %d\n"), err);
+ 		m_running = false;
+ 		m_inReadExact = false;
+		DiscardPendingWrites();
+ 		if (m_bKillThread)
+ 			throw QuietException("Connection closed.");
+ 			m_bKillThread = true;
+ 			throw WarningException("ReadExact: Socket error while reading.");
+		}
+ 		wanted -= bytes;
+ 		offset += bytes;
+ 
+ 	}
+ 	m_inReadExact = false;
+	// A full-screen Raw rect keeps recv() busy long enough for the OS to
+	// dispatch input mid-read; those writes were queued above - send them
+	// now that the socket is free, preserving order.
+	FlushPendingWrites();
+ }
 
 // Read the number of bytes and return them zero terminated in the buffer 
 inline void ClientConnection::ReadString(char *buf, int length)
@@ -3092,39 +4006,212 @@ inline void ClientConnection::ReadString(char *buf, int length)
 }
 
 
+void ClientConnection::DiscardPendingWrites()
+{
+	PendingWrite *pw = m_pendingHead;
+	m_pendingHead = NULL;
+	m_pendingTail = NULL;
+	while (pw != NULL) {
+		PendingWrite *next = pw->next;
+		if (pw->data != NULL)
+			delete [] pw->data;
+		delete pw;
+		pw = next;
+	}
+}
+
+// Sends everything WriteExact() deferred during the last ReadExact, in FIFO
+// order.  Runs with m_inReadExact already false, so the socket is free; each
+// item uses the same 16K-chunked send loop as WriteExact.
+void ClientConnection::FlushPendingWrites()
+{
+	if (m_pendingHead == NULL)
+		return;
+	// Never flush into teardown: WriteExact itself stays silent there.
+	if (m_sock == INVALID_SOCKET || m_bKillThread) {
+		DiscardPendingWrites();
+		return;
+	}
+	// Flag the drain: a send() below can itself dispatch input on Win32s, and
+	// the re-entrant WriteExact must enqueue (see below) rather than send on
+	// the busy socket.  The while() re-checks the head, so items queued
+	// mid-flush are picked up by this same drain.
+	m_inWriteExact = true;
+	while (m_pendingHead != NULL) {
+		PendingWrite *pw = m_pendingHead;
+		m_pendingHead = pw->next;
+		if (m_pendingHead == NULL)
+			m_pendingTail = NULL;
+		int i = 0;
+		int wouldBlockRetries = 0;
+		while (i < pw->len) {
+			int chunk = pw->len - i;
+			if (chunk > 16384)
+				chunk = 16384;
+			int j = send(m_sock, pw->data + i, chunk, 0);
+			if (j == SOCKET_ERROR || j == 0) {
+				int err = WSAGetLastError();
+				if ((err == WSAEWOULDBLOCK || err == WSAEINPROGRESS) &&
+					wouldBlockRetries < 64) {
+					wouldBlockRetries++;
+					fd_set wfds;
+					struct timeval wtv;
+					FD_ZERO(&wfds);
+					FD_SET(m_sock, &wfds);
+					wtv.tv_sec = 0;
+					wtv.tv_usec = 50000;
+					select(0, NULL, &wfds, NULL, &wtv);
+					continue;
+				}
+ 				vnclog.Print(1, _T("Socket error %d while writing deferred data\n"), err);
+ 				if (pw->data != NULL)
+ 					delete [] pw->data;
+ 				delete pw;
+ 				DiscardPendingWrites();
+ 				m_running = false;
+ 				m_bKillThread = true;
+				m_inWriteExact = false;
+ 				throw WarningException("WriteExact: Socket error while writing.");
+ 			}
+ 			i += j;
+ 		}
+ 		if (pw->data != NULL)
+ 			delete [] pw->data;
+ 		delete pw;
+ 	}
+	m_inWriteExact = false;
+}
+
 // Sends the number of bytes specified from the buffer
 inline void ClientConnection::WriteExact(char *buf, int bytes)
 {
-	if (bytes == 0 || m_sock == INVALID_SOCKET)
+	// Do nothing once the session is over.
+	//
+	// This is the fix for the "WriteExact: Socket error while writing" box on
+	// disconnect.  The old guard tested only m_sock, but there is a window
+	// during teardown in which m_sock is still valid and the peer has already
+	// gone: WM_CLOSE -> KillThread() runs, and any message still in the queue
+	// (WM_REGIONUPDATED asking for the next framebuffer update, WM_DRAWCLIPBOARD
+	// relaying a clipboard change, a queued key/mouse event) is dispatched
+	// afterwards and calls in here.  send() then fails, this threw
+	// WarningException from inside a window procedure, and the user got a modal
+	// error box during shutdown.
+	//
+	// Testing m_bKillThread as well makes the whole shutdown path silent, which
+	// is what the original multi-threaded code achieved with its
+	// "if (!m_bKillThread) e.Report()" check in the worker loop.
+	if (bytes == 0 || m_sock == INVALID_SOCKET || m_bKillThread)
+		return;
+	if (buf == NULL || bytes < 0)
 		return;
 
-	omni_mutex_lock l(m_writeMutex);
-	vnclog.Print(10, _T("  writing %d bytes\n"), bytes);
+  	// WIN32S: never touch the socket while it is busy.  Win32s dispatches
+	// window input from inside a blocking recv() - and also from inside a
+	// blocking send() - so this WriteExact may itself have been dispatched
+	// mid-read or mid-write; a re-entrant send() draws WSAEINPROGRESS and,
+	// after retries, kills the session (10036 -> 10038 in the logs).
+	// Enqueue a copy instead; the outer ReadExact (or WriteExact, or flush)
+	// drains it in order once the socket is free.  Logged once per session.
+  	if (m_inReadExact || m_inWriteExact) {
+ 		static bool logged = false;
+ 		if (!logged) {
+ 			logged = true;
+ 			vnclog.Print(0, _T("WriteExact during ReadExact: deferring %d bytes\n"), bytes);
+ 		}
+		PendingWrite *pw = new PendingWrite;
+		if (pw == NULL)
+			throw WarningException("WriteExact: out of memory queuing deferred write.");
+		pw->data = new char[bytes];
+		if (pw->data == NULL) {
+			delete pw;
+			throw WarningException("WriteExact: out of memory queuing deferred write.");
+		}
+		memcpy(pw->data, buf, bytes);
+		pw->len = bytes;
+		pw->next = NULL;
+		if (m_pendingTail != NULL)
+			m_pendingTail->next = pw;
+		else
+			m_pendingHead = pw;
+		m_pendingTail = pw;
+ 		return;
+ 	}
+ 
+ 	omni_mutex_lock l(m_writeMutex);
+ 	vnclog.Print(10, _T("  writing %d bytes\n"), bytes);
+ 
+ 	m_inWriteExact = true;
 
 	int i = 0;
     int j;
+	int wouldBlockRetries = 0;
 
     while (i < bytes) {
 
-		j = send(m_sock, buf+i, bytes-i, 0);
+		// WIN32S: bound every send() to 16K, mirroring ReadExact above and
+		// the server-side send cap.  A single large send (clipboard bulk,
+		// file-transfer blocks) faults the 16-bit thunk with WSAEFAULT and
+		// used to surface as the random "WriteExact: Socket error" box.
+		int chunk = bytes - i;
+		if (chunk > 16384)
+			chunk = 16384;
+		j = send(m_sock, buf+i, chunk, 0);
 		if (j == SOCKET_ERROR || j==0) {
-			LPVOID lpMsgBuf;
-			int err = ::GetLastError();
-			FormatMessage(     
-				FORMAT_MESSAGE_ALLOCATE_BUFFER | 
-				FORMAT_MESSAGE_FROM_SYSTEM |     
-				FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
-				err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Default language
-				(LPTSTR) &lpMsgBuf, 0, NULL ); // Process any inserts in lpMsgBuf.
-			vnclog.Print(1, _T("Socket error %d: %s\n"), err, lpMsgBuf);
-			LocalFree( lpMsgBuf );
-			m_running = false;
+			// Was: GetLastError() + FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER)
+			// + LocalFree().  Two problems on Win32s: socket errors do not
+			// appear in GetLastError(), and the allocate-buffer form of
+			// FormatMessage is unreliable there.  Log the WinSock error code.
+			int err = WSAGetLastError();
 
-			throw WarningException("WriteExact: Socket error while writing.");
+		// WSAEWOULDBLOCK should not happen on a blocking socket, but some
+		// WinSock 1.1 stacks return it transiently when their send buffer is
+		// full.  WSAEINPROGRESS is retried for the same reason: after a bulk
+		// transfer the 16-bit stack has been observed to report the socket
+		// busy once or twice before accepting the next call (a send issued
+		// while the stack is still draining).  Retry a BOUNDED number of times.
+		//
+		// The retry must be bounded and must yield properly: Sleep(0) on
+		// Win32s does not give other tasks a chance to run (scheduling is
+		// cooperative and Sleep is close to a no-op), so an unbounded
+		// "Sleep(0); continue;" spins the one thread forever and freezes the
+		// whole system - which is exactly the failure mode this function is
+		// supposed to be preventing.
+		if ((err == WSAEWOULDBLOCK || err == WSAEINPROGRESS) &&
+			wouldBlockRetries < 64) {
+			wouldBlockRetries++;
+			// select() for writability with a short timeout: this both waits
+			// and yields, unlike Sleep().
+			fd_set wfds;
+			struct timeval wtv;
+			FD_ZERO(&wfds);
+			FD_SET(m_sock, &wfds);
+			wtv.tv_sec = 0;
+			wtv.tv_usec = 50000;		// 50 ms
+			select(0, NULL, &wfds, NULL, &wtv);
+			continue;
 		}
-		i += j;
-    }
-}
+
+		vnclog.Print(1, _T("Socket error %d while writing\n"), err);
+		m_running = false;
+
+		// Mark the session dead and stay quiet if we are already shutting
+		// down; otherwise report as before.
+		if (m_bKillThread) {
+			m_inWriteExact = false;
+			return;
+		}
+
+ 		m_bKillThread = true;
+ 		m_inWriteExact = false;
+ 		throw WarningException("WriteExact: Socket error while writing.");
+ 		}
+ 		i += j;
+     }
+ 	m_inWriteExact = false;
+	// Drain anything dispatched (and deferred above) while this send held
+	// the socket.  No-op when nothing was queued.
+	FlushPendingWrites();
+ }
 
 // Read the string describing the reason for a connection failure.
 // This function reads the data into m_netbuf, and returns that pointer
@@ -3135,12 +4222,352 @@ char *ClientConnection::ReadFailureReason()
 	ReadExact((char *)&reasonLen, sizeof(reasonLen));
 	reasonLen = Swap32IfLE(reasonLen);
 
+	// A failing server is exactly the situation in which the length field is
+	// least trustworthy, and this string is handed to WarningException, which
+	// copies it with new[]/strcpy.  Cap it.
+	if (reasonLen > 1024)
+		reasonLen = 1024;
+
 	CheckBufferSize(reasonLen + 1);
 	ReadString(m_netbuf, reasonLen);
+
+	// Sanitise: this goes into a message box.
+	for (CARD32 ri = 0; ri < reasonLen; ri++) {
+		unsigned char c = (unsigned char)m_netbuf[ri];
+		if (c < 0x20 && c != '\r' && c != '\n' && c != '\t')
+			m_netbuf[ri] = ' ';
+	}
 
 	vnclog.Print(0, _T("RFB connection failed, reason: %s\n"), m_netbuf);
 	return m_netbuf;
 }
+
+// ==========================================================================
+//  BULK PIXEL DRAWING - the fix for "loading the screen takes forever"
+// ==========================================================================
+//
+//  The decoders used to draw through the SETPIXELS / SETPIXELS_NOCONV macros in
+//  ClientConnection.h, which expand to a nested loop calling SetPixel() (or
+//  SetPixelV()) once per pixel.  A 640x480 full-screen update is 307,200 GDI
+//  calls.
+//
+//  On Win32s every one of those is a 32->16 bit thunk into the 16-bit GDI, and
+//  the thunk layer - not the drawing - dominates: each call has to marshal
+//  arguments across the boundary, and Win32s cannot batch them.  That is why the
+//  first screen takes tens of seconds, and why Hextile "works best": Hextile
+//  paints most tiles with FillSolidRect (one ExtTextOut per rectangle) and only
+//  falls back to per-pixel work for the raw sub-rectangles, so it makes orders of
+//  magnitude fewer calls than Raw or Zlib do.
+//
+//  These two functions build a bottom-up 24-bit DIB from the decoded pixels and
+//  hand the whole rectangle to GDI in one SetDIBitsToDevice call.  That is one
+//  thunk per rectangle instead of one per pixel.
+//
+//  Notes:
+//   * SetDIBitsToDevice exists in Windows 3.0 onward, so there is no Win32s
+//     availability problem and no new import to resolve dynamically.
+//   * The DIB is 24bpp regardless of the remote format.  GDI converts to the
+//     display format (including dithering to a palette on an 8-bit display),
+//     which is exactly what PALETTERGB + SetPixel was relying on before.
+//   * DIB scanlines must be DWORD-aligned, and a bottom-up DIB stores the last
+//     row first - both handled below.
+//   * The buffer is reused across calls.  For a 4096-pixel-wide framebuffer a
+//     full-width band is 12 KB per row; we cap the buffer and draw in bands so
+//     that a large update does not need a large allocation.  Memory is the other
+//     scarce resource on these machines.
+//
+//  If a DIB cannot be allocated, both functions fall back to the old per-pixel
+//  loop so that drawing still works, just slowly.
+//
+// ==========================================================================
+
+// Rows per SetDIBitsToDevice call.  16 rows x 4096 px x 3 bytes = 192 KB worst
+// case; for a typical 1024-wide desktop it is 48 KB.
+#define DIB_BAND_ROWS 16
+
+bool ClientConnection::CheckDibBufferSize(size_t bufsize)
+{
+	if (m_dibbufsize >= bufsize && m_dibbuf != NULL)
+		return true;
+
+	if (bufsize > 0x00100000)		// 1 MB ceiling; we draw in bands
+		return false;
+
+	unsigned char *newbuf = new unsigned char[bufsize];
+	if (newbuf == NULL)
+		return false;
+
+	if (m_dibbuf != NULL)
+		delete [] m_dibbuf;
+	m_dibbuf = newbuf;
+	m_dibbufsize = bufsize;
+	return true;
+}
+
+//
+// DrawPixelBlock - draw w*h pixels of the remote format at (x,y).
+//
+// 'bpp' is the remote bits per pixel (8, 16 or 32); 'buffer' holds w*h pixels in
+// that format, row by row, top row first.
+//
+void ClientConnection::DrawPixelBlock(char *buffer, int bpp, int x, int y,
+									  int w, int h)
+{
+	if (buffer == NULL || w <= 0 || h <= 0)
+		return;
+	if (m_hBitmapDC == NULL || m_hBitmap == NULL)
+		return;
+
+	SETUP_COLOR_SHORTCUTS;
+
+	// DWORD-aligned 24bpp scanline.
+	int stride = ((w * 3) + 3) & ~3;
+	int bandRows = DIB_BAND_ROWS;
+	if (bandRows > h)
+		bandRows = h;
+
+	if (bpp == 24) {
+		// Defensive: SetupPixelFormat promotes 24 to 32 so this should not
+		// happen, but a server may send 24bpp anyway.  Convert 3-byte
+		// pixels here rather than misreading them as 4-byte (which is what
+		// produced blank/garbled Raw/Zlib rects).
+		bpp = 32;
+		// NOTE: true 3-byte wire data cannot be reinterpreted as 4-byte;
+		// callers must only reach here with padded data.  Fall through to
+		// the slow path which at least draws something instead of nothing.
+		SETPIXELS(buffer, 32, x, y, w, h)
+		return;
+	}
+
+	if (!CheckDibBufferSize((size_t)stride * (size_t)bandRows)) {
+		// Fall back to the slow path rather than not drawing at all.
+		switch (bpp) {
+		case 8:
+			SETPIXELS(buffer, 8, x, y, w, h)
+			break;
+		case 16:
+			SETPIXELS(buffer, 16, x, y, w, h)
+			break;
+		case 32:
+			SETPIXELS(buffer, 32, x, y, w, h)
+			break;
+		default:
+			vnclog.Print(0, _T("DrawPixelBlock: unsupported bpp %d\n"), bpp);
+			break;
+		}
+		return;
+	}
+
+	BITMAPINFOHEADER bih;
+	memset(&bih, 0, sizeof(bih));
+	bih.biSize        = sizeof(BITMAPINFOHEADER);
+	bih.biWidth       = w;
+	bih.biPlanes      = 1;
+	bih.biBitCount    = 24;
+	bih.biCompression = BI_RGB;
+
+	int rowsDone = 0;
+	while (rowsDone < h) {
+		int rows = h - rowsDone;
+		if (rows > bandRows)
+			rows = bandRows;
+
+		// Fill the DIB bottom-up: DIB row 0 is the LAST source row of the band.
+		int r;
+		for (r = 0; r < rows; r++) {
+			int srcRow = rowsDone + r;
+			unsigned char *dst = m_dibbuf + (size_t)(rows - 1 - r) * stride;
+			int j;
+
+			switch (bpp) {
+			case 8:
+				{
+					CARD8 *p = ((CARD8 *)buffer) + (size_t)srcRow * w;
+					for (j = 0; j < w; j++) {
+						CARD8 pix = *p++;
+						// Blue, green, red - DIB byte order.
+						*dst++ = (unsigned char)((((pix >> bs) & bm) * 255) / bm);
+						*dst++ = (unsigned char)((((pix >> gs) & gm) * 255) / gm);
+						*dst++ = (unsigned char)((((pix >> rs) & rm) * 255) / rm);
+					}
+				}
+				break;
+			case 16:
+				{
+					CARD16 *p = ((CARD16 *)buffer) + (size_t)srcRow * w;
+					for (j = 0; j < w; j++) {
+						CARD16 pix = *p++;
+						*dst++ = (unsigned char)((((pix >> bs) & bm) * 255) / bm);
+						*dst++ = (unsigned char)((((pix >> gs) & gm) * 255) / gm);
+						*dst++ = (unsigned char)((((pix >> rs) & rm) * 255) / rm);
+					}
+				}
+				break;
+			case 32:
+				{
+					CARD32 *p = ((CARD32 *)buffer) + (size_t)srcRow * w;
+					for (j = 0; j < w; j++) {
+						CARD32 pix = *p++;
+						*dst++ = (unsigned char)((((pix >> bs) & bm) * 255) / bm);
+						*dst++ = (unsigned char)((((pix >> gs) & gm) * 255) / gm);
+						*dst++ = (unsigned char)((((pix >> rs) & rm) * 255) / rm);
+					}
+				}
+				break;
+			default:
+				return;
+			}
+		}
+
+		bih.biHeight    = rows;
+		bih.biSizeImage = (DWORD)stride * (DWORD)rows;
+
+ 		// WIN32S: SetDIBitsToDevice to a memory DC always returns -1 here,
+		// so each band goes through a throwaway DDB instead: CreateDIBitmap
+		// (core Windows 3.0, CBM_INIT takes our bottom-up 24-bit DIB as-is)
+		// then BitBlt it into place.  BitBlt is proven working (DoBlit and
+		// CopyRect use it with no errors).  This also sidesteps the x-offset
+		// problem a direct SetDIBits would have (it writes full scanlines).
+		// TEMP-DIAG (Raw blank): report the first result and every
+		// fallback, bounded so the log stays small.
+		int y0 = y + rowsDone;
+		int dibScans = 0;
+		{
+			HBITMAP hb = CreateDIBitmap(m_hBitmapDC, &bih, CBM_INIT,
+										m_dibbuf, (BITMAPINFO *)&bih,
+										DIB_RGB_COLORS);
+			if (hb != NULL) {
+				HDC sdc = CreateCompatibleDC(m_hBitmapDC);
+				if (sdc != NULL) {
+					HGDIOBJ old = SelectObject(sdc, hb);
+					if (BitBlt(m_hBitmapDC, x, y0, w, rows,
+							   sdc, 0, 0, SRCCOPY))
+						dibScans = rows;
+					SelectObject(sdc, old);
+					DeleteDC(sdc);
+				}
+				DeleteObject(hb);
+			}
+		}
+		{
+			static int s_dibDiag = 0;
+			static int s_dibFallbacks = 0;
+			if (s_dibDiag < 3) {
+				s_dibDiag++;
+				vnclog.Print(0, _T("DIAG DrawPixelBlock %d: %dx%d at %d,%d bpp=%d scans=%d\n"),
+							 s_dibDiag, w, rows, x, y + rowsDone, bpp, dibScans);
+			}
+			if (dibScans != rows && s_dibFallbacks < 5) {
+				s_dibFallbacks++;
+				vnclog.Print(0, _T("DIAG DrawPixelBlock fallback %d (slow path)\n"),
+							 s_dibFallbacks);
+			}
+		}
+ 		if (dibScans != rows) {
+			char *slowBuf = buffer + (size_t)rowsDone * w *
+				((bpp == 8) ? 1 : (bpp == 16) ? 2 : 4);
+			switch (bpp) {
+			case 8:
+				SETPIXELS(slowBuf, 8, x, y + rowsDone, w, rows)
+				break;
+			case 16:
+				SETPIXELS(slowBuf, 16, x, y + rowsDone, w, rows)
+				break;
+			default:
+				SETPIXELS(slowBuf, 32, x, y + rowsDone, w, rows)
+				break;
+			}
+		}
+
+		rowsDone += rows;
+	}
+}
+
+//
+// DrawColorRefBlock - draw w*h pixels that are already COLORREFs at (x,y).
+//
+// This is the SETPIXELS_NOCONV case, used by the Tight decoder after JPEG
+// decompression.
+//
+void ClientConnection::DrawColorRefBlock(char *buffer, int x, int y, int w, int h)
+{
+	if (buffer == NULL || w <= 0 || h <= 0)
+		return;
+	if (m_hBitmapDC == NULL || m_hBitmap == NULL)
+		return;
+
+	int stride = ((w * 3) + 3) & ~3;
+	int bandRows = DIB_BAND_ROWS;
+	if (bandRows > h)
+		bandRows = h;
+
+	if (!CheckDibBufferSize((size_t)stride * (size_t)bandRows)) {
+		SETPIXELS_NOCONV(buffer, x, y, w, h)
+		return;
+	}
+
+	BITMAPINFOHEADER bih;
+	memset(&bih, 0, sizeof(bih));
+	bih.biSize        = sizeof(BITMAPINFOHEADER);
+	bih.biWidth       = w;
+	bih.biPlanes      = 1;
+	bih.biBitCount    = 24;
+	bih.biCompression = BI_RGB;
+
+	int rowsDone = 0;
+	while (rowsDone < h) {
+		int rows = h - rowsDone;
+		if (rows > bandRows)
+			rows = bandRows;
+
+		int r;
+		for (r = 0; r < rows; r++) {
+			int srcRow = rowsDone + r;
+			unsigned char *dst = m_dibbuf + (size_t)(rows - 1 - r) * stride;
+			CARD32 *p = ((CARD32 *)buffer) + (size_t)srcRow * w;
+			int j;
+			for (j = 0; j < w; j++) {
+				COLORREF c = (COLORREF)(*p++);
+				// A COLORREF is 0x00bbggrr; a DIB pixel is b,g,r.
+				*dst++ = (unsigned char)((c >> 16) & 0xFF);	// blue
+				*dst++ = (unsigned char)((c >> 8) & 0xFF);	// green
+				*dst++ = (unsigned char)(c & 0xFF);			// red
+			}
+		}
+
+		bih.biHeight    = rows;
+		bih.biSizeImage = (DWORD)stride * (DWORD)rows;
+
+		// WIN32S: SetDIBitsToDevice to a memory DC always returns -1 here,
+		// so bands go through a throwaway DDB (CreateDIBitmap + BitBlt,
+		// both proven working) exactly as in DrawPixelBlock above.
+		{
+			int dibScans = 0;
+			HBITMAP hb = CreateDIBitmap(m_hBitmapDC, &bih, CBM_INIT,
+										m_dibbuf, (BITMAPINFO *)&bih,
+										DIB_RGB_COLORS);
+			if (hb != NULL) {
+				HDC sdc = CreateCompatibleDC(m_hBitmapDC);
+				if (sdc != NULL) {
+					HGDIOBJ old = SelectObject(sdc, hb);
+					if (BitBlt(m_hBitmapDC, x, y + rowsDone, w, rows,
+							   sdc, 0, 0, SRCCOPY))
+						dibScans = rows;
+					SelectObject(sdc, old);
+					DeleteDC(sdc);
+				}
+				DeleteObject(hb);
+			}
+			if (dibScans != rows) {
+				SETPIXELS_NOCONV(buffer + (size_t)rowsDone * w * 4,
+								 x, y + rowsDone, w, rows)
+			}
+		}
+
+		rowsDone += rows;
+	}
+}
+
 
 // Makes sure netbuf is at least as big as the specified size.
 // Note that netbuf itself may change as a result of this call.
@@ -3154,6 +4581,15 @@ void ClientConnection::CheckBufferSize(size_t bufsize)
 		vnclog.Print(1, _T("Requested buffer size is too big (%u bytes)\n"),
 					 (unsigned int)bufsize);
 		throw WarningException("Requested buffer size is too big.");
+	}
+
+	// Win32s runs on a machine that may only have a few megabytes free, and a
+	// hostile or buggy server can ask for a very large rectangle.  Refuse
+	// anything absurd early rather than thrashing or failing mid-decode.
+	if (bufsize > 0x00800000) {		// 8 MB
+		vnclog.Print(1, _T("Refusing oversized buffer request (%u bytes)\n"),
+					 (unsigned int)bufsize);
+		throw WarningException("Server requested an unreasonably large buffer.");
 	}
 
 	omni_mutex_lock l(m_bufferMutex);
@@ -3209,6 +4645,9 @@ void ClientConnection::CheckZlibBufferSize(size_t bufsize)
 void ClientConnection::InvalidateScreenRect(const RECT *pRect) {
 	RECT rect;
 
+	if (m_hwnd == NULL || pRect == NULL)
+		return;
+
 	// If we're scaling, we transform the coordinates of the rectangle
 	// received into the corresponding window coords, and invalidate
 	// *that* region.
@@ -3217,6 +4656,12 @@ void ClientConnection::InvalidateScreenRect(const RECT *pRect) {
 		// First, we adjust coords to avoid rounding down when scaling.
 		int n = m_opts.m_scale_num;
 		int d = m_opts.m_scale_den;
+		// Divide-by-zero guard.  m_scale_den comes from the registry and from
+		// the /scale command line switch; FixScaling() clamps it, but this is
+		// on the hot path for every update and an integer divide by zero on
+		// Win32s faults the whole VM, not just this task.
+		if (d < 1) d = 1;
+		if (n < 1) n = 1;
 		int left   = (pRect->left / d) * d;
 		int top    = (pRect->top  / d) * d;
 		int right  = (pRect->right  + d - 1) / d * d; // round up
@@ -3244,8 +4689,21 @@ void ClientConnection::InvalidateScreenRect(const RECT *pRect) {
 
 void ClientConnection::ReadNewFBSize(rfbFramebufferUpdateRectHeader *pfburh)
 {
+	// Same sanity check as ReadServerInit: this reallocates the framebuffer
+	// bitmap from server-supplied dimensions, and every rectangle validated
+	// afterwards is checked against these values.
+	if (pfburh->r.w == 0 || pfburh->r.h == 0 ||
+		pfburh->r.w > 4096 || pfburh->r.h > 4096) {
+		vnclog.Print(0, _T("Bad NewFBSize %d x %d from server\n"),
+					 (int)pfburh->r.w, (int)pfburh->r.h);
+		throw ErrorException("Protocol error: implausible new framebuffer size.");
+	}
+
 	m_si.framebufferWidth = pfburh->r.w;
 	m_si.framebufferHeight = pfburh->r.h;
+
+	// Any cursor state refers to the old bitmap and the old saved-area bitmap.
+	SoftCursorFree();
 
 	CreateLocalFramebuffer();
 

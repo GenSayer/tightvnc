@@ -165,6 +165,31 @@ public:
   // and puts remaining bytes in a queue, to be sent later.
   VBool SendQueued(const char *buff, const VCard bufflen);
 
+  // ------------------------------------------------------------------
+  // WIN32S SINGLE-THREADED ADDITIONS
+  //
+  // The server no longer has a thread per client, so nothing may block
+  // waiting for data.  vncClient::PumpIdle() calls HasData() first and only
+  // enters the protocol code when a message has actually started to arrive.
+  // ------------------------------------------------------------------
+
+  // Non-blocking: is there at least one byte available to read?
+  // Uses select() with a zero timeout, which behaves identically on WinSock
+  // 1.1 under Win32s and on later stacks.
+  VBool HasData();
+
+  // TRUE if the socket has been closed (by Close(), or never created).
+  VBool IsClosed() { return (sock < 0); }
+
+  // Flush as much of the pending output queue as the stack will take, without
+  // blocking.  Called from the idle loop so that queued update data keeps
+  // moving even when the client is not sending anything.
+  // Returns VFalse on a fatal socket error.
+  VBool FlushQueued();
+
+  // TRUE if there is still unsent data in the output queue.
+  VBool HasQueuedData() { return (out_queue != NULL); }
+
   ////////////////////////////
   // Internal structures
 protected:

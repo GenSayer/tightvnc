@@ -1,8 +1,29 @@
 #ifndef DETECT_MAP_H
 #define DETECT_MAP_H
 
-// Place this directly inside namespace std if your files expect std::map, 
-// or simply keep it global if you strip the "std::" prefix.
+// Minimal std::map replacement for MSVC 4.1, whose bundled STL cannot compile
+// the real thing here.  This is a singly-linked list with map-like syntax; it is
+// O(n) per lookup, which is fine because the only user is CapsContainer with a
+// few dozen entries.
+//
+// WIN32S/MSVC 4.1 REVIEW NOTES (behaviour differences from real std::map that
+// callers must not rely on):
+//
+//   * Iteration order is reverse insertion order, not sorted key order.
+//     CapsContainer only iterates in its destructor, so this does not matter -
+//     but do not add code that assumes ordering.
+//   * operator[] inserts a default-constructed value when the key is absent,
+//     like std::map.  Note the consequence in CapsContainer::GetDescription
+//     and IsEnabled: they call operator[] on a map, so a *lookup* of an unknown
+//     code silently inserts an entry.  Both are guarded by IsKnown() first, so
+//     the behaviour is correct, but it is why those guards must stay.
+//   * find() is const but returns a mutable-through-pointer iterator; that is
+//     deliberate, because CapsContainer::Enable needs to write through it.
+//   * No erase(), no size(), no insert().  Nothing needs them.
+//   * Copying is disabled - see the private declarations below.
+//
+// Placing this in namespace std is technically illegal, but MSVC 4.1 accepts it
+// and the existing sources say std::map<...>.
 namespace std {
 
 template <class Key, class Value>
@@ -57,6 +78,28 @@ public:
     ~map() {
         clear();
     }
+
+private:
+    // Copying is NOT implemented.  The default compiler-generated copy
+    // constructor and operator= would copy 'head' verbatim, giving two maps
+    // that own the same node list - the second destructor then frees nodes
+    // that were already freed, and CapsContainer's destructor additionally
+    // does "delete[] iter->second" over them.
+    //
+    // Nothing in the viewer copies a map today (the four CapsContainer members
+    // of ClientConnection are never copied), so declaring these private and
+    // leaving them undefined turns any future copy into a link error instead of
+    // a heap corruption.  Do not "fix" this by defining them unless a deep copy
+    // is actually implemented.
+    // MSVC 4.1: the template parameter list is MANDATORY in type positions.
+    // Bare "map" inside the class template gives
+    //     error C2955: 'map' : class template name expecting parameter list
+    // because MSVC 4.1 predates the injected-class-name rule.  Constructor and
+    // destructor NAMES are fine unqualified; parameters and return types are not.
+    map(const map<Key, Value>&);
+    map<Key, Value>& operator=(const map<Key, Value>&);
+
+public:
 
     void clear() {
         Node* current = head;

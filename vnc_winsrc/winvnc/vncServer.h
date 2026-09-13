@@ -42,7 +42,9 @@ class vncServer;
 #if (!defined(_WINVNC_VNCSERVER))
 #define _WINVNC_VNCSERVER
 
-#include <list.h>
+// WIN32S: our own minimal list<> (see list.h).  MSVC 4.1's bundled STL cannot
+// compile list<HWND>/list<vncClientId> as members here.
+#include "list.h"
 
 // Custom
 #include "vncCORBAConnect.h"
@@ -103,6 +105,36 @@ public:
 
 	// Let a client remove itself
 	virtual void RemoveClient(vncClientId client);
+
+	// ---- WIN32S single-threaded driving --------------------------------
+	//
+	// The server used to be purely reactive: each client had a thread that read
+	// its socket, and the desktop had a thread that polled the screen.  With one
+	// thread, something must call into all of them from the application's idle
+	// loop.  WinVNCAppMain() calls PumpIdle().
+	//
+	// PumpIdle() does, in order:
+	//   1. accept pending incoming connections (vncSockConnect / vncHTTPConnect)
+	//   2. give every live client a chance to read one message
+	//   3. let the desktop look for screen changes
+	//   4. delete clients that have finished
+	//
+	// It returns TRUE if it did any work, so the caller can pump again before
+	// blocking in WaitMessage().
+
+	// Drive everything once.  Never blocks.
+	BOOL PumpIdle();
+
+	// Give each authenticated and unauthenticated client one chance to read.
+	BOOL PumpClients();
+
+	// Delete clients that marked themselves dead.  MUST be called only from
+	// PumpIdle(), never while iterating the client lists.
+	void ReapDeadClients();
+
+	// Accessors for the listeners, so PumpIdle can poll them.
+	vncSockConnect *GetSockConnect() { return m_socketConn; }
+	vncHTTPConnect *GetHTTPConnect() { return m_httpConn; }
 
 	// Connect/disconnect notification
 	virtual BOOL AddNotify(HWND hwnd);
@@ -411,10 +443,23 @@ protected:
 	char				*m_name;
 
 	// Blacklist structures
+	//
+	// WIN32S: _lastRefTime was a LARGE_INTEGER holding a FILETIME divided down to
+	// seconds, and every comparison used QuadPart - i.e. 64-bit arithmetic, which
+	// MSVC 4.1 implements with CRT helper calls on a 386.
+	//
+	// It is now a DWORD of GetTickCount() milliseconds.  That is a better fit for
+	// what this actually needs: the blacklist only ever asks "has 10 seconds
+	// elapsed since this entry was last touched?", which is a short relative
+	// interval, not an absolute time.
+	//
+	// GetTickCount wraps after 49.7 days.  Comparisons are written as
+	// "(long)(now - then) >= 0" so that they remain correct across the wrap,
+	// which is the standard idiom and is why the field is unsigned.
 	struct BlacklistEntry {
 		BlacklistEntry *_next;
 		char *_machineName;
-		LARGE_INTEGER _lastRefTime;
+		DWORD _lastRefTime;			// GetTickCount() ms, was LARGE_INTEGER
 		UINT _failureCount;
 		BOOL _blocked;
 	};

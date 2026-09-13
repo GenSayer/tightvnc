@@ -36,7 +36,9 @@
 #include "WinVNC.h"
 #include "vncService.h"
 #include "vncConnDialog.h"
-#include <lmcons.h>
+// WIN32S: <lmcons.h> removed - see the note in vncMenu.h.  UNLEN is defined
+// there instead.
+// #include <lmcons.h>
 
 // Header
 
@@ -69,27 +71,53 @@ vncMenu::vncMenu(vncServer *server)
 	// Set the initial user name to something sensible...
 	vncService::CurrentUser((char *)&m_username, sizeof(m_username));
 
-	// Create a dummy window to handle tray icon messages
-	WNDCLASSEX wndclass;
+	// WIN32S: is there a system tray at all?
+	//
+	// Windows 3.1 has no taskbar and no notification area.  Win32sIsWin32s()
+	// tells us, and Win32sShellNotifyIcon() will return FALSE anyway because
+	// SHELL32 does not export Shell_NotifyIcon there.
+	//
+	// Without a tray the user needs SOME way to reach the menu and to quit the
+	// server, so the "dummy" window becomes a real (minimised) window that
+	// responds to a click.  See the WM_RBUTTONUP / WM_LBUTTONDBLCLK handling in
+	// WndProc.
+	m_noTray = Win32sIsWin32s() ? TRUE : FALSE;
 
-	wndclass.cbSize			= sizeof(wndclass);
+	// Create the window to handle tray icon messages.
+	//
+	// WIN32S: plain WNDCLASS / RegisterClass, not WNDCLASSEX / RegisterClassEx.
+	// RegisterClassEx is Win95/NT only and is not exported by the Win32s USER32;
+	// because the linker records it as an import, its presence prevents the EXE
+	// from LOADING - the process never starts and there is no diagnostic.  The
+	// only field WNDCLASSEX adds here is hIconSm, which Windows 3.1 has no
+	// concept of.
+	WNDCLASS wndclass;
+
 	wndclass.style			= 0;
 	wndclass.lpfnWndProc	= vncMenu::WndProc;
 	wndclass.cbClsExtra		= 0;
 	wndclass.cbWndExtra		= 0;
 	wndclass.hInstance		= hAppInstance;
-	wndclass.hIcon			= LoadIcon(NULL, IDI_APPLICATION);
+	wndclass.hIcon			= LoadIcon(hAppInstance, MAKEINTRESOURCE(IDI_WINVNC));
+	if (wndclass.hIcon == NULL)
+		wndclass.hIcon		= LoadIcon(NULL, IDI_APPLICATION);
 	wndclass.hCursor		= LoadCursor(NULL, IDC_ARROW);
 	wndclass.hbrBackground	= (HBRUSH) GetStockObject(WHITE_BRUSH);
 	wndclass.lpszMenuName	= (const char *) NULL;
 	wndclass.lpszClassName	= MENU_CLASS_NAME;
-	wndclass.hIconSm		= LoadIcon(NULL, IDI_APPLICATION);
 
-	RegisterClassEx(&wndclass);
+	RegisterClass(&wndclass);
+
+	// On Win9x/NT this window is only a message sink for the tray icon and stays
+	// hidden.  With no tray it has to be visible (minimised) or the user has no
+	// way to reach the menu.
+	DWORD style = m_noTray
+		? (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX)
+		: WS_OVERLAPPEDWINDOW;
 
 	m_hwnd = CreateWindow(MENU_CLASS_NAME,
-				MENU_CLASS_NAME,
-				WS_OVERLAPPEDWINDOW,
+				"TightVNC Server",
+				style,
 				CW_USEDEFAULT,
 				CW_USEDEFAULT,
 				200, 200,
@@ -104,8 +132,13 @@ vncMenu::vncMenu(vncServer *server)
 		return;
 	}
 
-	// Timer to trigger icon updating
-	SetTimer(m_hwnd, 1, 5000, NULL);
+	// Timer to trigger icon updating.
+	//
+	// Pointless when there is no tray icon to update, and Windows 3.1 has a
+	// small system-wide timer limit that the polling timer and the main loop's
+	// idle timer also draw on - so do not consume one for nothing.
+	if (!m_noTray)
+		SetTimer(m_hwnd, 1, 5000, NULL);
 
 	// record which client created this window
 	SetWindowLong(m_hwnd, GWL_USERDATA, (LONG) this);
@@ -129,8 +162,14 @@ vncMenu::vncMenu(vncServer *server)
 		return;
 	}
 
-	// Install the tray icon!
-	AddTrayIcon();
+	// Install the tray icon, or show the window if there is no tray.
+	if (m_noTray) {
+		vnclog.Print(LL_STATE,
+			VNCLOG("no system tray on this platform - showing server window\n"));
+		ShowWindow(m_hwnd, SW_SHOWMINNOACTIVE);
+	} else {
+		AddTrayIcon();
+	}
 }
 
 vncMenu::~vncMenu()
@@ -150,6 +189,9 @@ vncMenu::~vncMenu()
 void
 vncMenu::AddTrayIcon()
 {
+	if (m_noTray)
+		return;
+
 	// If the user name is empty, then we consider no user is logged in.
 	if (strcmp(m_username, "") != 0) {
 		// Make sure the server has not been configured to
@@ -162,12 +204,16 @@ vncMenu::AddTrayIcon()
 void
 vncMenu::DelTrayIcon()
 {
+	if (m_noTray)
+		return;
 	SendTrayMsg(NIM_DELETE, FALSE);
 }
 
 void
 vncMenu::FlashTrayIcon(BOOL flash)
 {
+	if (m_noTray)
+		return;
 	SendTrayMsg(NIM_MODIFY, flash);
 }
 
@@ -241,8 +287,13 @@ vncMenu::SendTrayMsg(DWORD msg, BOOL flash)
 	if (flash)
 		m_nid.hIcon = m_flash_icon;
 
-	// Send the message
-	if (Shell_NotifyIcon(msg, &m_nid))
+	// Send the message.
+	//
+	// WIN32S: Win32sShellNotifyIcon resolves Shell_NotifyIconA at run time (see
+	// Win32sApi.cpp).  Declaring Shell_NotifyIcon directly - as the original did
+	// via shellapi.h - puts it in the import table, and SHELL32 on Win32s does
+	// not export it, so the EXE would not load.
+	if (Win32sShellNotifyIcon(msg, &m_nid))
 	{
 		// Set the enabled/disabled state of the menu items
 		vnclog.Print(LL_INTINFO, VNCLOG("tray icon updated ok\n"));
@@ -262,15 +313,73 @@ vncMenu::SendTrayMsg(DWORD msg, BOOL flash)
 		{
 			if (msg == NIM_ADD)
 			{
-				// The tray icon couldn't be created, so use the Properties dialog
-				// as the main program window
-				vnclog.Print(LL_INTINFO, VNCLOG("opening dialog box\n"));
-				m_properties.Show(TRUE, TRUE);
-				vnclog.Print(LL_INTERR, VNCLOG("unable to add tray icon\n"), GetLastError());
-				PostQuitMessage(0);
+				// The tray icon couldn't be created.
+				//
+				// WIN32S: the original opened the Properties dialog as a
+				// substitute main window and then called PostQuitMessage(0) -
+				// which quits the application as soon as that dialog closes.
+				// That is reasonable on Win9x, where a failed Shell_NotifyIcon
+				// means something is badly wrong, but here it would be the
+				// NORMAL path if m_noTray were not set first.
+				//
+				// AddTrayIcon() now returns early when there is no tray, so this
+				// branch only runs on a platform that should have had one.  Fall
+				// back to showing our own window rather than quitting, so the
+				// server stays usable either way.
+				vnclog.Print(LL_INTERR,
+					VNCLOG("unable to add tray icon (error %d) - showing window\n"),
+					GetLastError());
+				m_noTray = TRUE;
+				ShowWindow(m_hwnd, SW_SHOWMINNOACTIVE);
 			}
 		}
 	}
+}
+
+//
+// ShowPopupMenu - display the server menu at the cursor.
+//
+// Factored out of the WM_TRAYNOTIFY handler so that the Win32s path (a click in
+// the visible server window) and the tray path share one implementation.
+//
+// WIN32S notes on the two API calls:
+//
+//   SetMenuDefaultItem is Win95+ and absent from the Win32s USER32.
+//   Win32sSetMenuDefaultItem resolves it at run time and does nothing when it is
+//   unavailable - the first menu item simply is not bold.
+//
+//   SetForegroundWindow is likewise Win95+.  Win32sSetForegroundWindow falls
+//   back to BringWindowToTop + SetActiveWindow.  The call is the MSDN Q135788
+//   workaround: without it, TrackPopupMenu on Win95 leaves a menu that does not
+//   dismiss when the user clicks elsewhere.
+//
+void
+vncMenu::ShowPopupMenu()
+{
+	// Get the submenu to use as a pop-up menu
+	HMENU submenu = GetSubMenu(m_hmenu, 0);
+	if (submenu == NULL)
+	{
+		vnclog.Print(LL_INTERR, VNCLOG("no submenu available\n"));
+		return;
+	}
+
+	// Make the first menu item the default (bold font)
+	Win32sSetMenuDefaultItem(submenu, 0, TRUE);
+
+	// Get the current cursor position, to display the menu at
+	POINT mouse;
+	GetCursorPos(&mouse);
+
+	Win32sSetForegroundWindow(m_hwnd);
+
+	// Display the menu at the desired position.
+	//
+	// NOTE: the original passed m_nid.hWnd here.  That is the same handle as
+	// m_hwnd, but m_nid is only filled in by SendTrayMsg() - so on a platform
+	// where the tray icon was never added, m_nid.hWnd was uninitialised and
+	// TrackPopupMenu received garbage.  Use m_hwnd, which is always valid.
+	TrackPopupMenu(submenu, 0, mouse.x, mouse.y, 0, m_hwnd, NULL);
 }
 
 // Process window messages
@@ -281,8 +390,74 @@ LRESULT CALLBACK vncMenu::WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lP
 	// from a newsgroup to get the pseudo-this.
 	vncMenu *_this = (vncMenu *) GetWindowLong(hwnd, GWL_USERDATA);
 
+	// WIN32S: _this is NULL for every message delivered during CreateWindow -
+	// WM_NCCREATE, WM_CREATE, WM_GETMINMAXINFO, WM_NCCALCSIZE - because
+	// SetWindowLong(GWL_USERDATA) does not run until after CreateWindow returns.
+	// Every case below dereferences it.
+	//
+	// This matters much more on this platform than on Win9x/NT, because here the
+	// window is VISIBLE (there is no system tray), so it also receives
+	// WM_PAINT/WM_SIZE/WM_ERASEBKGND during creation.
+	if (_this == NULL)
+		return DefWindowProc(hwnd, iMsg, wParam, lParam);
+
 	switch (iMsg)
 	{
+
+	// ==================================================================
+	// WIN32S: paint the window.
+	//
+	// On Win9x/NT this window is never shown, so it never needed a WM_PAINT
+	// handler - DefWindowProc filling it with the class background brush was
+	// enough.  Here it IS shown (minimised, restorable), and with no handler the
+	// restored window is blank white, which is what "gives a blank screen instead
+	// of the user properties screen" describes: the properties DIALOG is separate
+	// and modal, and what remained on screen afterwards was this empty window.
+	//
+	// Draw something that tells the user what the window is and what to do with
+	// it.
+	// ==================================================================
+	case WM_PAINT:
+		if (_this->m_noTray) {
+			PAINTSTRUCT ps;
+			HDC hdc = BeginPaint(hwnd, &ps);
+			if (hdc != NULL) {
+				RECT rc;
+				GetClientRect(hwnd, &rc);
+
+				// Use the dialog font rather than the default System font, which
+				// on Windows 3.1 is large and clips.
+				HFONT hf = (HFONT)GetStockObject(ANSI_VAR_FONT);
+				HFONT hfOld = (HFONT)SelectObject(hdc, hf);
+				SetBkMode(hdc, TRANSPARENT);
+
+				char line1[128];
+				char line2[128];
+				int nClients = _this->m_server->AuthClientCount();
+
+				strcpy(line1, "TightVNC Server is running.");
+				if (nClients > 0) {
+					wsprintf(line2, "%d client%s connected.  Right-click for menu.",
+							 nClients, (nClients == 1) ? "" : "s");
+				} else {
+					strcpy(line2, "Right-click here for the menu.");
+				}
+
+				RECT rt = rc;
+				rt.top += 8;
+				DrawText(hdc, line1, strlen(line1), &rt,
+						 DT_CENTER | DT_TOP | DT_SINGLELINE);
+				rt.top += 20;
+				DrawText(hdc, line2, strlen(line2), &rt,
+						 DT_CENTER | DT_TOP | DT_SINGLELINE);
+
+				if (hfOld != NULL)
+					SelectObject(hdc, hfOld);
+				EndPaint(hwnd, &ps);
+			}
+			return 0;
+		}
+		break;
 
 		// Every five seconds, a timer message causes the icon to update
 	case WM_TIMER:
@@ -303,6 +478,9 @@ LRESULT CALLBACK vncMenu::WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lP
 	case WM_SRV_CLIENT_AUTHENTICATED:
 		_this->m_properties.ResetTabId();
 		_this->FlashTrayIcon(TRUE);
+		// WIN32S: the visible window shows the client count, so refresh it.
+		if (_this->m_noTray)
+			InvalidateRect(hwnd, NULL, TRUE);
 		return 0;
 
 	case WM_SRV_CLIENT_DISCONNECT:
@@ -311,6 +489,8 @@ LRESULT CALLBACK vncMenu::WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lP
 			_this->FlashTrayIcon(FALSE);
 			_this->m_wputils.RestoreWallpaper();
 		}
+		if (_this->m_noTray)
+			InvalidateRect(hwnd, NULL, TRUE);
 		return 0;
 
 	case WM_SRV_CLIENT_HIDEWALLPAPER:
@@ -387,36 +567,10 @@ LRESULT CALLBACK vncMenu::WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lP
 	case WM_TRAYNOTIFY:
 		// User has clicked on the tray icon or the menu
 		{
-			// Get the submenu to use as a pop-up menu
-			HMENU submenu = GetSubMenu(_this->m_hmenu, 0);
-
 			// What event are we responding to, RMB click?
 			if (lParam==WM_RBUTTONUP)
 			{
-				if (submenu == NULL)
-				{ 
-					vnclog.Print(LL_INTERR, VNCLOG("no submenu available\n"));
-					return 0;
-				}
-
-				// Make the first menu item the default (bold font)
-				SetMenuDefaultItem(submenu, 0, TRUE);
-				
-				// Get the current cursor position, to display the menu at
-				POINT mouse;
-				GetCursorPos(&mouse);
-
-				// There's a "bug"
-				// (Microsoft calls it a feature) in Windows 95 that requires calling
-				// SetForegroundWindow. To find out more, search for Q135788 in MSDN.
-				//
-				SetForegroundWindow(_this->m_nid.hWnd);
-
-				// Display the menu at the desired position
-				TrackPopupMenu(submenu,
-						0, mouse.x, mouse.y, 0,
-						_this->m_nid.hWnd, NULL);
-
+				_this->ShowPopupMenu();
 				return 0;
 			}
 			
@@ -424,14 +578,38 @@ LRESULT CALLBACK vncMenu::WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lP
 			if (lParam==WM_LBUTTONDBLCLK)
 			{
 				// double click: execute first menu item
-				SendMessage(_this->m_nid.hWnd,
-							WM_COMMAND, 
-							GetMenuItemID(submenu, 0),
-							0);
+				HMENU submenu = GetSubMenu(_this->m_hmenu, 0);
+				if (submenu != NULL)
+					SendMessage(hwnd, WM_COMMAND,
+								GetMenuItemID(submenu, 0), 0);
 			}
 
 			return 0;
 		}
+
+	// ==================================================================
+	// WIN32S: with no system tray, the server's own window is the user's
+	// only handle on it.  Right-click (or double-click) anywhere in it to
+	// get the same menu the tray icon would have shown.
+	//
+	// These messages are simply never sent on Win9x/NT, because the window
+	// stays hidden there.
+	// ==================================================================
+	case WM_RBUTTONUP:
+		if (!_this->m_noTray)
+			break;
+		_this->ShowPopupMenu();
+		return 0;
+
+	case WM_LBUTTONDBLCLK:
+		if (!_this->m_noTray)
+			break;
+		{
+			HMENU submenu = GetSubMenu(_this->m_hmenu, 0);
+			if (submenu != NULL)
+				SendMessage(hwnd, WM_COMMAND, GetMenuItemID(submenu, 0), 0);
+		}
+		return 0;
 
 	case WM_CLOSE:
 
@@ -657,8 +835,16 @@ LRESULT CALLBACK vncMenu::WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lP
 		}
     if (iMsg == fileTransferDownloadMessage) 
     {
+      // WIN32S: retained as an inert fallback - the download pump is now driven
+      // by vncClient::PumpIdle(), which removed the FindWindow + checkPointer
+      // round trip after it was observed to deliver exactly one pump per
+      // download and then go silent.  Nothing posts this message any more; if
+      // one ever arrives (stale post), the checkPointer guard still applies.
       vncClient *cl = (vncClient *) wParam;
+      vnclog.Print(LL_INTINFO, VNCLOG("fileTransferDownloadMessage received, cl=%p\n"), cl);
       if (_this->m_server->checkPointer(cl)) cl->SendFileDownloadPortion();
+      else vnclog.Print(LL_INTERR, VNCLOG("fileTransferDownloadMessage: checkPointer failed, cl=%p auth=%d\n"), cl, (int)_this->m_server->AuthClientCount());
+      return 0;
     }
 
 	}

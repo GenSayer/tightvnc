@@ -17,72 +17,84 @@
  * USA.
  */
 
+// ==========================================================================
+// TsSessions - WIN32S / WINDOWS 3.1 VERSION
+// ==========================================================================
+//
+// Terminal Services session discovery.  The original resolved four Windows XP
+// APIs dynamically through DynamicFn<>:
+//
+//     ProcessIdToSessionId          (kernel32)
+//     WTSGetActiveConsoleSessionId  (kernel32)
+//     WinStationConnectW            (winsta.dll)
+//     LockWorkStation               (user32)
+//
+// Because it used DynamicFn (LoadLibrary + GetProcAddress), it did NOT create
+// load-time imports, so unlike the mirror driver this file would have loaded
+// safely on Win32s.  It is still replaced, for three reasons:
+//
+//  1. It cannot do anything useful.  Windows 3.1 has no Terminal Services, no
+//     sessions and no console session; every API above is absent, so
+//     inConsoleSession() would take the "invalid" path.
+//
+//  2. THE ORIGINAL WOULD HAVE BROKEN STARTUP.  Look at the logic:
+//
+//         ProcessSessionId::ProcessSessionId(...) { id = 0; if (!valid) return; }
+//         ConsoleSessionId::ConsoleSessionId()   { ... else id = 0; }
+//         bool inConsoleSession() { return console.id == mySessionId.id; }
+//
+//     Both ids default to 0, so inConsoleSession() happens to return true.  That
+//     is the ONLY reason vncDesktop::Startup() would not have failed at its first
+//     line ("Console is not session zero - reconnect to restore Console
+//     session").  Relying on two independent failure paths coincidentally
+//     agreeing is not something to leave in place - especially since
+//     setConsoleSession() is called first, and on the original would log
+//     "WinSta APIs missing" on every single connection.
+//
+//  3. "ProcessSessionId mySessionId;" is a FILE-SCOPE OBJECT.  Its constructor
+//     runs before WinMain, and it called through a DynamicFn whose own
+//     constructor (also file-scope, in this same file) performs LoadLibrary.
+//     The relative initialisation order of two file-scope objects in the same
+//     translation unit is defined - declaration order - but this is exactly the
+//     pattern that killed the viewer at startup (omni_thread's init_t), and on
+//     Win32s a LoadLibrary before WinMain is worth avoiding on principle.
+//
+// Everything here is now a compile-time constant with no I/O and no dynamic
+// loading.  DynamicFn.h is no longer included.
+// ==========================================================================
+
+#include "stdhdrs.h"
 #include "TsSessions.h"
-#include "DynamicFn.h"
-#include <tchar.h>
 
-#ifdef ERROR_CTX_WINSTATION_BUSY
-#define RFB_HAVE_WINSTATION_CONNECT
-#else
-#pragma message("  NOTE: Not building WinStationConnect support.")
-#endif
-
-// Windows XP (and later) functions used to handle session Ids
-typedef BOOLEAN (WINAPI *_WinStationConnect_proto) (HANDLE,ULONG,ULONG,PCWSTR,ULONG);
-DynamicFn<_WinStationConnect_proto> _WinStationConnect(_T("winsta.dll"), "WinStationConnectW");
-typedef DWORD (WINAPI *_WTSGetActiveConsoleSessionId_proto) ();
-DynamicFn<_WTSGetActiveConsoleSessionId_proto> _WTSGetActiveConsoleSessionId(_T("kernel32.dll"), "WTSGetActiveConsoleSessionId");
-typedef BOOL (WINAPI *_ProcessIdToSessionId_proto) (DWORD, DWORD*);
-DynamicFn<_ProcessIdToSessionId_proto> _ProcessIdToSessionId(_T("kernel32.dll"), "ProcessIdToSessionId");
-typedef BOOL (WINAPI *_LockWorkStation_proto)();
-DynamicFn<_LockWorkStation_proto> _LockWorkStation(_T("user32.dll"), "LockWorkStation");
-
+// Session ids are always 0: there is exactly one "session", the machine itself.
 
 ProcessSessionId::ProcessSessionId(DWORD processId) {
-  id = 0;
-  if (!_ProcessIdToSessionId.isValid())
-    return;
-  if (processId == -1)
-    processId = GetCurrentProcessId();
-  if (!(*_ProcessIdToSessionId)(GetCurrentProcessId(), &id))
-    vnclog.Print(LL_INTERR, VNCLOG("ProcessIdToSessionId failed (error %d)"), GetLastError());
+	id = 0;
 }
 
 ProcessSessionId mySessionId;
 
 ConsoleSessionId::ConsoleSessionId() {
-  if (_WTSGetActiveConsoleSessionId.isValid())
-    id = (*_WTSGetActiveConsoleSessionId)();
-  else
-    id = 0;
+	id = 0;
 }
 
 bool inConsoleSession() {
-  ConsoleSessionId console;
-  return console.id == mySessionId.id;
+	// IMPORTANT: must return true.
+	//
+	// vncDesktop::Startup() begins with
+	//     if (!inConsoleSession()) { ...log...; return FALSE; }
+	// so returning false here would make every connection fail with a message
+	// about restoring the console session, which would be meaningless on this
+	// platform.
+	//
+	// The single Windows 3.1 desktop IS the console, so true is not a fudge - it
+	// is the correct answer.
+	return true;
 }
 
 void setConsoleSession(DWORD sessionId) {
-#ifdef RFB_HAVE_WINSTATION_CONNECT
-  if (!_WinStationConnect.isValid()) {
-    vnclog.Print(LL_INTERR, VNCLOG("WinSta APIs missing"));
-    return;
-  }
-  if (sessionId == -1)
-    sessionId = mySessionId.id;
-
-  // Try to reconnect our session to the console
-  ConsoleSessionId console;
-  vnclog.Print(LL_INTINFO, VNCLOG("Console session is %d"), console.id);
-  if (!(*_WinStationConnect)(0, sessionId, console.id, L"", 0)) {
-    vnclog.Print(LL_INTERR, VNCLOG("Unable to connect session to Console (error %d)"), GetLastError());
-    return;
-  }
-
-  // Lock the newly connected session, for security
-  if (_LockWorkStation.isValid())
-    (*_LockWorkStation)();
-#else
-  vnclog.Print(LL_INTERR, VNCLOG("setConsoleSession not implemented"));
-#endif
+	// Nothing to connect: there is only one session and we are already it.
+	//
+	// The original logged "WinSta APIs missing" here, which on this platform
+	// would appear on every connection attempt.  Deliberately silent.
 }

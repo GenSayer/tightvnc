@@ -17,44 +17,23 @@
 //
 //    You should have received a copy of the GNU Library General Public
 //    License along with this library; if not, write to the Free
-//    Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  
+//    Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 //    02111-1307, USA
 //
+
+// ==========================================================================
+// WIN32S / WINDOWS 3.1 SINGLE-THREADED BUILD
 //
-// OMNI thread implementation classes for NT threads.
-//
+// The NT implementation macros (CRITICAL_SECTION members, the thread wrapper
+// declaration, cond_semaphore/cond_next/cond_prev members, ...) are all gone;
+// omnithread.h no longer needs them because the classes it declares have no
+// platform-specific state.  The file is kept, and kept includable, only so
+// that "#include \"nt.h\"" in any leftover source or .dep file still works.
+// ==========================================================================
 
 #ifndef __omnithread_nt_h_
 #define __omnithread_nt_h_
 
 #include <windows.h>
 
-#define OMNI_THREAD_WRAPPER \
-    unsigned __stdcall omni_thread_wrapper(LPVOID ptr)
-
-extern "C" OMNI_THREAD_WRAPPER;
-
-#define OMNI_MUTEX_IMPLEMENTATION			\
-    CRITICAL_SECTION crit;
-
-#define OMNI_CONDITION_IMPLEMENTATION			\
-    CRITICAL_SECTION crit;				\
-    omni_thread* waiting_head;				\
-    omni_thread* waiting_tail;
-
-#define OMNI_SEMAPHORE_IMPLEMENTATION			\
-    HANDLE nt_sem;
-
-#define OMNI_THREAD_IMPLEMENTATION			\
-    HANDLE handle;					\
-    DWORD nt_id;					\
-    void* return_val;					\
-    HANDLE cond_semaphore;				\
-    omni_thread* cond_next;				\
-    omni_thread* cond_prev;				\
-    BOOL cond_waiting;					\
-    static int nt_priority(priority_t);			\
-    friend class omni_condition;			\
-    friend OMNI_THREAD_WRAPPER;
-
-#endif
+#endif // __omnithread_nt_h_

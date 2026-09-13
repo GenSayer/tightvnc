@@ -32,9 +32,7 @@
 #include "stdhdrs.h"
 #include "rfb.h"
 
-typedef int bool;
-#define false 0
-#define true 1
+// bool/true/false come from win32s_fix.h (force-included).  Do not redefine.
 
 //#include <map.h>
 

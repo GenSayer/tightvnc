@@ -44,6 +44,11 @@ class vncSockConnect;
 #include <omnithread.h>
 
 // The vncSockConnect class itself
+//
+// WIN32S: this no longer owns a thread.  Init() binds and listens; the
+// application idle loop calls PumpIdle(), which performs one non-blocking accept
+// attempt.  See the long note at the top of vncSockConnect.cpp for why polling
+// was chosen over WSAAsyncSelect here.
 class vncSockConnect
 {
 public:
@@ -54,6 +59,13 @@ public:
 	// Init
 	virtual VBool Init(vncServer *server, UINT port);
 
+	// Accept at most one pending connection.  Non-blocking.
+	// Returns TRUE if a connection was accepted.
+	BOOL PumpIdle();
+
+	// TRUE while the listening socket is usable.
+	BOOL IsListening() { return m_listening && !m_shutdown; }
+
 	// Implementation
 protected:
 	// The listening socket
@@ -62,8 +74,14 @@ protected:
 	// The port to listen on
 	UINT m_port;
 
-	// The in-coming accept thread
-	omni_thread *m_thread;
+	// The server to hand accepted connections to (was held by the thread).
+	vncServer *m_server;
+
+	// Was vncSockConnectThread::m_shutdown.
+	BOOL m_shutdown;
+
+	// TRUE once bind+listen have succeeded.
+	BOOL m_listening;
 };
 
 #endif // _WINVNC_VNCSOCKCONNECT

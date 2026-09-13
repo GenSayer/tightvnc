@@ -32,6 +32,41 @@
 #include <stdio.h>
 #include <crtdbg.h>
 
+// ==========================================================================
+// WIN32S / WINDOWS 3.1 PORT: THIS FILE IS NOT BUILT
+// ==========================================================================
+//
+// The VNCHooks project has been removed from the Win32s build.  Nothing in this
+// file is compiled or linked; winvnc/VNCHooksStub.cpp supplies the eight entry
+// points instead, all returning FALSE, and the server runs in full-screen
+// polling mode.
+//
+// The reasons are structural, not a matter of missing APIs:
+//
+//  1. GLOBAL HOOKS CANNOT REACH 16-BIT TASKS.  SetHook() below installs
+//     SetWindowsHookEx(WH_CALLWNDPROC, ..., hInstance, 0) - thread ID 0, i.e.
+//     system-wide.  Windows implements that by mapping this DLL into every
+//     hooked process.  Win32s runs all Win32 applications inside a single VM
+//     that shares the Windows 3.1 16-bit message queue, and a 32-bit Win32s DLL
+//     cannot be mapped into a 16-bit task.  On Windows 3.1 practically every
+//     application is 16-bit, so there is nothing to hook.
+//
+//  2. WH_SYSMSGFILTER IS NOT IN THE WIN32S SUBSET, and neither are
+//     WH_KEYBOARD_LL / WH_MOUSE_LL (those are NT 4.0+ even on real Win32).
+//
+//  3. THE SHARED DATA SEGMENT BELOW DOES NOT WORK EITHER.  The
+//     "#pragma data_seg(".SharedData")" block relies on a DLL data section that
+//     is shared between all processes that map the DLL - declared SHARED in
+//     VNCHooks.def.  Win32s has a single address space, so in a sense everything
+//     is already shared, but the mechanism the hooks depend on (per-process
+//     instance data plus one shared segment) has no meaning there.
+//
+// Keep this file in the tree for reference and for anyone building the NT
+// version from the same branch.  If you re-enable it, restore the DllExport
+// markers in VNCHooks.h and re-add VNCHooks.lib to WinVNC.mak.
+// ==========================================================================
+
+
 /////////////////////////////////////////////////////////////////////////////
 // Storage for the global data in the DLL
 // Note: For Borland C++ compilers, this data segment is defined in a

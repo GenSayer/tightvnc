@@ -32,6 +32,36 @@
 // This class provides access to service-oriented routines, under both
 // Windows NT and Windows 95.  Some routines only operate under one
 // OS, others operate under any OS.
+//
+// ==========================================================================
+// WIN32S / WINDOWS 3.1 PORT
+//
+// vncService.cpp has been rewritten for this target; the original NT version is
+// kept as vncService.cpp.nt-original.  The interface below is UNCHANGED so that
+// no call site needs editing, but the implementations differ:
+//
+//   STUBBED (the OS concept does not exist on Windows 3.1):
+//     WinVNCServiceMain, InstallService, ReinstallService, RemoveService
+//         - no service control manager
+//     SimulateCtrlAltDel, LockWorkstation
+//         - no Winlogon, no login session
+//     ProcessUserHelperMessage, PostUserHelperMessage
+//         - no security tokens to hand over
+//
+//   TRIVIALLY SUCCESSFUL (there is exactly one desktop, and we are on it):
+//     SelectHDESK, SelectDesktop  -> TRUE
+//     InputDesktopSelected        -> TRUE
+//     tryImpersonate              -> true
+//     undoImpersonate             -> no-op
+//
+//   Note that the last two MUST behave this way: every file-transfer handler
+//   in vncClient.cpp bails out when tryImpersonate() returns false, and
+//   vncClient's main loop disconnects the client when InputDesktopSelected()
+//   returns false.
+//
+//   UNCHANGED (pure FindWindow/PostMessage, works everywhere):
+//     PostToWinVNC and all the Post*/Show*/Kill* helpers, FindWindowByTitle.
+// ==========================================================================
 
 class vncService;
 
@@ -84,6 +114,10 @@ public:
 	// Routines to establish which OS we're running on
 	static BOOL IsWin95();
 	static BOOL IsWinNT();
+	// WIN32S: TRUE when running under Win32s on Windows 3.1x.  Several callers
+	// need this specifically rather than just "not NT" - the tray icon, the
+	// wallpaper handling and the screen-polling strategy all differ.
+	static BOOL IsWin32s();
 	static DWORD VersionMajor();
 	static DWORD VersionMinor();
 

@@ -33,6 +33,7 @@
 //#include "Htmlhelp.h"
 #include "commctrl.h"
 #include "AboutBox.h"
+#include "Win32sApi.h"
 
 #ifndef TCITEM
 #define TCITEM TC_ITEM
@@ -50,8 +51,137 @@
 #define LPNMUPDOWN LPNM_UPDOWN
 #endif
 
+// ==========================================================================
+// WIN32S: VNCVIEW.INI persistence (mirrors winvnc IniSettings.cpp).
+//
+// The registry is not a usable backing store on this target (per-user keys
+// may not exist and writes do not persist), so all viewer options and the
+// connection history live in VNCVIEW.INI via the profile API
+// (Get/WritePrivateProfileString - Windows 3.0 calls).  Layout:
+//
+//   [<connection display string>]  per-connection options (was HKCU\...\History\<name>)
+//   [History]                      connection history list, values "0".."N" (was HKCU\...\History)
+//   [Settings]                     global options (was HKCU\...\Settings)
+//
+// Shell integration (VNCOptions::Register) stays in the registry - that is
+// registration, not options.  Integers go through validated atol so that an
+// absent/corrupt entry yields the default rather than 0.
+// ==========================================================================
+
+static const char VIEWER_INI_LEAF[] = "VNCVIEW.INI";
+static char s_viewerIniPath[_MAX_PATH] = "";
+
+// Absolute path to VNCVIEW.INI, next to the EXE.
+//
+// WIN32S/Windows 3.1 note: the 16-bit profile API behind
+// Get/WritePrivateProfileString only understands 8.3 file names.  The old
+// leaf "vncviewer.ini" has a 9-character base, so EVERY write failed with
+// error 87 (ERROR_INVALID_PARAMETER) - see VNCVIEWE.LOG - and history and
+// options reverted to blank on each launch.  WINVNC.INI works for the
+// server for the same reason this works for the viewer: 6-7 char base.
+// Resolved once; falls back to the bare leaf if anything fails.
+static const char *ViewerIniPath()
+{
+	if (s_viewerIniPath[0] != '\0')
+		return s_viewerIniPath;
+	char mod[_MAX_PATH];
+	if (GetModuleFileName(NULL, mod, sizeof(mod) - 16) != 0) {
+		char *slash = strrchr(mod, '\\');
+		if (slash == NULL)
+			slash = strrchr(mod, '/');
+		if (slash != NULL) {
+			int dirLen = (int)(slash - mod) + 1;
+			if (dirLen > 0 && dirLen + (int)strlen(VIEWER_INI_LEAF) < _MAX_PATH) {
+				memcpy(s_viewerIniPath, mod, dirLen);
+				s_viewerIniPath[dirLen] = '\0';
+				strcat(s_viewerIniPath, VIEWER_INI_LEAF);
+				return s_viewerIniPath;
+			}
+		}
+	}
+	strcpy(s_viewerIniPath, VIEWER_INI_LEAF);
+	return s_viewerIniPath;
+}
+
+// Create the INI file at launch if missing, so the first
+// WritePrivateProfileString is an update, not a create, through the
+// 16-bit thunk.  Cheap (one CREATE_NEW) and MSVC 4.1 / Win32s safe.
+static void EnsureViewerIniExists()
+{
+	const char *iniFile = ViewerIniPath();
+	HANDLE h = CreateFile(iniFile, GENERIC_WRITE, FILE_SHARE_READ,
+						  NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h != INVALID_HANDLE_VALUE)
+		CloseHandle(h);
+}
+
+int VNCOptions::IniGetInt(const char *section, const char *name, int defVal)
+{
+	char buf[32];
+	const char *iniFile = ViewerIniPath();
+	if (GetPrivateProfileString(section, name, "",
+								buf, sizeof(buf), iniFile) == 0)
+		return defVal;
+	// Validate the whole string: atol() turns junk into 0, which is a valid
+	// value for several options.
+	const char *p = buf;
+	if (*p == '-' || *p == '+')
+		p++;
+	if (*p == '\0')
+		return defVal;
+	while (*p != '\0') {
+		if (*p < '0' || *p > '9')
+			return defVal;
+		p++;
+	}
+	return (int)atol(buf);
+}
+
+void VNCOptions::IniSetInt(const char *section, const char *name, int value)
+{
+	char buf[32];
+	wsprintf(buf, "%d", value);
+	// Log failures: silent write loss is exactly "options never stick".
+	const char *iniFile = ViewerIniPath();
+	if (!WritePrivateProfileString(section, name, buf, iniFile)) {
+		vnclog.Print(0, _T("Failed to write viewer option [%s] %s to %s (%d)\n"),
+					 section, name, iniFile, GetLastError());
+	}
+}
+
+void VNCOptions::IniGetString(const char *section, const char *name,
+							   char *out, int outLen)
+{
+	if (out == NULL || outLen <= 0)
+		return;
+	out[0] = '\0';
+	GetPrivateProfileString(section, name, "", out, outLen, ViewerIniPath());
+	out[outLen - 1] = '\0';
+}
+
+void VNCOptions::IniSetString(const char *section, const char *name,
+							   const char *value)
+{
+	const char *iniFile = ViewerIniPath();
+	if (!WritePrivateProfileString(section, name, value, iniFile)) {
+		vnclog.Print(0, _T("Failed to write viewer option [%s] %s to %s (%d)\n"),
+					 section, name, iniFile, GetLastError());
+	}
+}
+
+void VNCOptions::IniDeleteKey(const char *section, const char *name)
+{
+	WritePrivateProfileString(section, name, NULL, ViewerIniPath());
+}
+
+void VNCOptions::IniDeleteSection(const char *section)
+{
+	WritePrivateProfileString(section, NULL, NULL, ViewerIniPath());
+}
+
 VNCOptions::VNCOptions()
 {
+	EnsureViewerIniExists();
 	for (int i = rfbEncodingRaw; i<= LASTENCODING; i++)
 		m_UseEnc[i] = true;
 	
@@ -106,7 +236,15 @@ VNCOptions::VNCOptions()
 
 	LoadGenOpt();
 
+	// All dialog handles must start NULL.  m_hPageConnection/m_hPageGeneral/
+	// m_hTab were never initialised, and DlgProc's WM_DESTROY path calls
+	// DestroyWindow on the page handles - with garbage in them if the dialog
+	// was never opened, or if a copied VNCOptions object is destroyed.
 	m_hParent = 0;
+	m_hPageConnection = 0;
+	m_hPageGeneral = 0;
+	m_hTab = 0;
+	m_running = false;		// was uninitialised; read by DlgProcConnOptions
 
 #ifdef UNDER_CE
 	m_palmpc = false;
@@ -127,6 +265,12 @@ VNCOptions::VNCOptions()
 
 VNCOptions& VNCOptions::operator=(VNCOptions& s)
 {
+	// Guard against self-assignment: "opts = opts" is reachable now that the
+	// app copies options in and out of connections, and the m_hParent handling
+	// below is not self-assignment safe.
+	if (this == &s)
+		return *this;
+
 	for (int i = rfbEncodingRaw; i<= LASTENCODING; i++)
 		m_UseEnc[i] = s.m_UseEnc[i];
 	
@@ -147,23 +291,34 @@ VNCOptions& VNCOptions::operator=(VNCOptions& s)
 	m_scale_den			= s.m_scale_den;
 	m_localCursor		= s.m_localCursor;
 	m_toolbar			= s.m_toolbar;
-	strcpy(m_display, s.m_display);
-	strcpy(m_host, s.m_host);
+	m_skipprompt		= s.m_skipprompt;	// was not copied
+	m_historyLimit		= s.m_historyLimit;	// was not copied - and it is used
+											// as an array size in
+											// SaveConnectionHistory(), so a
+											// copied-to object had whatever
+											// value its own constructor left
+	strncpy(m_display, s.m_display, sizeof(m_display) - 1);
+	m_display[sizeof(m_display) - 1] = '\0';
+	strncpy(m_host, s.m_host, sizeof(m_host) - 1);
+	m_host[sizeof(m_host) - 1] = '\0';
 	m_port				= s.m_port;
 	m_hWindow			= s.m_hWindow;
 
-	strcpy(m_kbdname, s.m_kbdname);
+	strncpy(m_kbdname, s.m_kbdname, sizeof(m_kbdname) - 1);
+	m_kbdname[sizeof(m_kbdname) - 1] = '\0';
 	m_kbdSpecified		= s.m_kbdSpecified;
 	
 	m_logLevel			= s.m_logLevel;
 	m_logToConsole		= s.m_logToConsole;
 	m_logToFile			= s.m_logToFile;
-	strcpy(m_logFilename, s.m_logFilename);
+	strncpy(m_logFilename, s.m_logFilename, sizeof(m_logFilename) - 1);
+	m_logFilename[sizeof(m_logFilename) - 1] = '\0';
 
 	m_delay				= s.m_delay;
 	m_connectionSpecified = s.m_connectionSpecified;
 	m_configSpecified   = s.m_configSpecified;
-	strcpy(m_configFilename, s.m_configFilename);
+	strncpy(m_configFilename, s.m_configFilename, sizeof(m_configFilename) - 1);
+	m_configFilename[sizeof(m_configFilename) - 1] = '\0';
 
 	m_listening			= s.m_listening;
 	m_listenPort		= s.m_listenPort;
@@ -180,6 +335,15 @@ VNCOptions& VNCOptions::operator=(VNCOptions& s)
 	m_palmpc			= s.m_palmpc;
 	m_slowgdi			= s.m_slowgdi;
 #endif
+
+	// NOT copied, deliberately: m_hParent.
+	// It is the HWND of the *source* object's open options dialog.  Copying it
+	// meant two VNCOptions objects believed they owned the same dialog, and
+	// whichever was destroyed first called CloseDialog() -> EndDialog() on it,
+	// leaving the other with a dangling HWND that RaiseDialog()/CloseDialog()
+	// would then use.  A fresh copy owns no dialog.
+	m_hParent = 0;
+
 	return *this;
 }
 
@@ -629,22 +793,47 @@ void VNCOptions::Register()
 int VNCOptions::DoDialog(bool running)
 {
 	m_running = running;
-	return DialogBoxParam(pApp->m_instance, DIALOG_MAKEINTRESOURCE(IDD_PARENT), 
-							NULL, (DLGPROC) DlgProc, (LONG) this); 	
+
+	// DialogBoxParam returns -1 if the dialog could not be created.  Callers
+	// (SessionDialog's Options button, and the viewer's Connection options menu
+	// item) treated any non-zero value as "user pressed OK".  This mattered a
+	// great deal here, because IDD_PARENT was a DIALOGEX template that Win32s
+	// cannot instantiate at all - the options dialog silently "succeeded"
+	// without ever appearing.  The template is now plain DIALOG (see
+	// res/vncviewer.rc), but check the result regardless.
+	int res = DialogBoxParam(pApp->m_instance, DIALOG_MAKEINTRESOURCE(IDD_PARENT), 
+							NULL, (DLGPROC) DlgProc, (LONG) this);
+	if (res == -1) {
+		vnclog.Print(0, _T("Could not create the options dialog: %d\n"),
+					 GetLastError());
+		m_hParent = 0;
+		return 0;			// same as "cancelled"
+	}
+	return res;
 }
 
 BOOL VNCOptions::RaiseDialog()
 {
-	if (m_hParent == 0) {
+	// Returns TRUE only if there really is a dialog and it was brought forward.
+	// m_hParent can be stale (see CloseDialog), so verify the window still
+	// exists - otherwise SessionDialog's Options button would return early and
+	// appear to do nothing.
+	if (m_hParent == 0 || !IsWindow(m_hParent)) {
+		m_hParent = 0;
 		return FALSE;
 	}
-	return (SetForegroundWindow(m_hParent) != 0);
+	return (Win32sSetForegroundWindow(m_hParent) != 0);
 }
 
 void VNCOptions::CloseDialog()
 {
 	if (m_hParent != 0) {
-		EndDialog(m_hParent, FALSE);
+		// IsWindow check: CloseDialog is called from the destructor, and by
+		// then the dialog may already have ended by itself (OK/Cancel), leaving
+		// m_hParent stale.  EndDialog on a dead handle is an invalid-window
+		// call - benign on NT, not something to rely on under Win32s.
+		if (IsWindow(m_hParent))
+			EndDialog(m_hParent, FALSE);
 		m_hParent = 0;
 	}
 }
@@ -663,13 +852,18 @@ BOOL CALLBACK VNCOptions::DlgProc(HWND hwndDlg, UINT uMsg,
 			// to the calling VNCOptions object
 			SetWindowLong(hwndDlg, GWL_USERDATA, lParam);
 			VNCOptions *_this = (VNCOptions *) lParam;
-			InitCommonControls();
+			// Resolved at run time: COMCTL32 may be absent on Win32s.
+			Win32sInitCommonControls();
 			CentreWindow(hwndDlg);
 
 			_this->m_hParent = hwndDlg;
 			_this->m_hTab = GetDlgItem(hwndDlg, IDC_TAB);
 
+			// TCITEM must be fully initialised: TabCtrl_InsertItem reads the
+			// fields named by 'mask', but the control also copies the whole
+			// struct, and iImage/lParam were left as stack garbage here.
 			TCITEM item;
+			memset(&item, 0, sizeof(item));
 			item.mask = TCIF_TEXT; 
 			item.pszText="Connection";
 			TabCtrl_InsertItem(_this->m_hTab, 0, &item);
@@ -687,6 +881,32 @@ BOOL CALLBACK VNCOptions::DlgProc(HWND hwndDlg, UINT uMsg,
 				hwndDlg,
 				(DLGPROC)_this->DlgProcGlobalOptions,
 				(LONG)_this);
+
+			// If either page failed to create there is nothing usable to show.
+			// This is the expected outcome on a Win32s box without COMCTL32:
+			// both pages contain msctls_trackbar32 / msctls_updown32 controls,
+			// and a dialog whose control class cannot be found fails to create
+			// as a whole.  Report it and close, rather than displaying an empty
+			// frame and later SendMessage-ing to NULL page handles.
+			if (_this->m_hPageConnection == NULL || _this->m_hPageGeneral == NULL) {
+				vnclog.Print(0, _T("Could not create options pages (%d)\n"),
+							 GetLastError());
+				if (_this->m_hPageConnection != NULL) {
+					DestroyWindow(_this->m_hPageConnection);
+					_this->m_hPageConnection = NULL;
+				}
+				if (_this->m_hPageGeneral != NULL) {
+					DestroyWindow(_this->m_hPageGeneral);
+					_this->m_hPageGeneral = NULL;
+				}
+				MessageBox(hwndDlg,
+					"The options dialog needs the common controls library,\n"
+					"which is not available on this system.",
+					"TightVNC Viewer", MB_OK | MB_ICONINFORMATION);
+				_this->m_hParent = 0;
+				EndDialog(hwndDlg, FALSE);
+				return TRUE;
+			}
 
 			// Position child dialogs, to fit the Tab control's display area
 			RECT rc;
@@ -708,22 +928,43 @@ BOOL CALLBACK VNCOptions::DlgProc(HWND hwndDlg, UINT uMsg,
 		return 0;
 
 	case WM_COMMAND:
+		if (_this == NULL)
+			return FALSE;
 		switch (LOWORD(wParam))	{
 		case IDOK:
 			SetFocus(GetDlgItem(hwndDlg, IDOK));
-			SendMessage(_this->m_hPageConnection, WM_COMMAND, IDC_OK, 0);
-			SendMessage(_this->m_hPageGeneral, WM_COMMAND, IDC_OK, 0);
+			// The page dialogs may not exist: CreateDialogParam can fail, and
+			// on Win32s it certainly does if COMCTL32 is missing (both pages
+			// contain trackbar/updown controls).  SendMessage(NULL, ...) is an
+			// invalid-window call, and the OK handling would silently do
+			// nothing - so the user's settings vanished.
+			if (_this->m_hPageConnection != NULL)
+				SendMessage(_this->m_hPageConnection, WM_COMMAND, IDC_OK, 0);
+			if (_this->m_hPageGeneral != NULL)
+				SendMessage(_this->m_hPageGeneral, WM_COMMAND, IDC_OK, 0);
+			_this->m_hParent = 0;
 			EndDialog(hwndDlg, TRUE);
 			return TRUE;
 		case IDCANCEL:			
+			_this->m_hParent = 0;
 			EndDialog(hwndDlg, FALSE);
 			return TRUE;
 		}
 		return FALSE;
 
+	case WM_CLOSE:
+		if (_this != NULL)
+			_this->m_hParent = 0;
+		EndDialog(hwndDlg, FALSE);
+		return TRUE;
+
 	case WM_NOTIFY:
 		{
+			if (_this == NULL)
+				return FALSE;
 			LPNMHDR pn = (LPNMHDR)lParam;
+			if (pn == NULL)
+				return FALSE;
 			switch (pn->code) {		
 			case TCN_SELCHANGE:
 				switch (pn->idFrom) {
@@ -1232,25 +1473,22 @@ BOOL CALLBACK VNCOptions::DlgProcGlobalOptions(HWND hwnd, UINT uMsg,
 			return 0;
 		case IDC_BUTTON_CLEAR_LIST: 
 			{
-				HKEY hRegKey;
-				TCHAR value[80];
-				TCHAR data[80];
-				DWORD valuesize=80;
-				DWORD datasize=80;
-				DWORD index=0;
-				
-				RegOpenKey(HKEY_CURRENT_USER,
-					KEY_VNCVIEWER_HISTORI, &hRegKey);
-				
-				while (RegEnumValue(hRegKey, index, value, &valuesize,
-					NULL, NULL, (LPBYTE)data, &datasize) == ERROR_SUCCESS) {
+				// WIN32S: clear the [History] section of vncviewer.ini plus
+				// every per-connection settings section it names.  The profile
+				// API has no enumeration call, so probe values "0"... upward
+				// until a gap past the configured limit; the list is always
+				// densely packed 0..N by SaveConnectionHistory/setHistoryLimit.
+				for (int ci = 0; ci <= 1024; ci++) {
+					char valueName[16];
+					sprintf(valueName, "%d", ci);
+					char data[256];
+					IniGetString(VIEWER_INI_HISTORY, valueName,
+									   data, sizeof(data));
+					if (data[0] == '\0')
+						break;
 					pApp->m_options.delkey(data, KEY_VNCVIEWER_HISTORI);
-					RegDeleteValue(hRegKey, value);
-					valuesize = 80;
-					datasize = 80;
+					IniDeleteKey(VIEWER_INI_HISTORY, valueName);
 				}
-				
-				RegCloseKey(hRegKey);
 				return 0;
 			}
 		case IDC_OK:
@@ -1413,233 +1651,156 @@ void VNCOptions::Lim(HWND hwnd, int control, DWORD min, DWORD max)
 
 void VNCOptions::LoadOpt(char subkey[256], char keyname[256])
 {
-	HKEY RegKey;
-	TCHAR key[80];
-	_tcscpy(key, keyname);
-	_tcscat(key, "\\");
-	_tcscat(key, subkey);
-	 RegOpenKeyEx(HKEY_CURRENT_USER, key, 0,  
-		 KEY_ALL_ACCESS,  &RegKey);
+	// WIN32S: per-connection options live in vncviewer.ini under the
+	// connection display string (keyname, the old registry path, is unused).
+	// This also removes a latent overflow: the old code built keyname\subkey
+	// into TCHAR key[80].
 	for (int i = rfbEncodingRaw; i <= LASTENCODING; i++) {
 		char buf[128];
 		sprintf(buf, "use_encoding_%d", i);
-		m_UseEnc[i] =   read(RegKey, buf, m_UseEnc[i] ) != 0;
+		m_UseEnc[i] =   IniGetInt(subkey, buf, m_UseEnc[i] ) != 0;
 	}
-	m_PreferredEncoding =	read(RegKey, "preferred_encoding",m_PreferredEncoding    );
-	m_restricted =			read(RegKey, "restricted",        m_restricted           ) != 0;
-	m_ViewOnly =			read(RegKey, "viewonly",	      m_ViewOnly             ) != 0;
-	m_FullScreen =			read(RegKey, "fullscreen",        m_FullScreen           ) != 0;
-	m_Use8Bit =				read(RegKey, "8bit",	          m_Use8Bit              ) != 0;
-	m_Shared =				read(RegKey, "shared",            m_Shared               ) != 0;
-	m_SwapMouse =			read(RegKey, "swapmouse",         m_SwapMouse	         ) != 0;
-	m_DeiconifyOnBell =		read(RegKey, "belldeiconify",     m_DeiconifyOnBell      ) != 0;
-	m_Emul3Buttons =		read(RegKey, "emulate3",	      m_Emul3Buttons         ) != 0;
-	m_Emul3Timeout =		read(RegKey, "emulate3timeout",   m_Emul3Timeout         );
-	m_Emul3Fuzz =			read(RegKey, "emulate3fuzz",	  m_Emul3Fuzz            );
-	m_DisableClipboard =	read(RegKey, "disableclipboard",  m_DisableClipboard     ) != 0;
-	m_FitWindow =			read(RegKey, "fitwindow",		  m_FitWindow		     ) != 0;
-	m_scale_den =			read(RegKey, "scale_den",         m_scale_den	         );
-	m_scale_num =			read(RegKey, "scale_num",         m_scale_num	         );
-	m_requestShapeUpdates =	read(RegKey, "cursorshape",       m_requestShapeUpdates	 ) != 0;
-	m_ignoreShapeUpdates =	read(RegKey, "noremotecursor",    m_ignoreShapeUpdates   ) != 0;
-	int level		 =		read(RegKey, "compresslevel",     -1				     );
+	m_PreferredEncoding =	IniGetInt(subkey, "preferred_encoding",m_PreferredEncoding    );
+	m_restricted =			IniGetInt(subkey, "restricted",        m_restricted           ) != 0;
+	m_ViewOnly =			IniGetInt(subkey, "viewonly",	      m_ViewOnly             ) != 0;
+	m_FullScreen =			IniGetInt(subkey, "fullscreen",        m_FullScreen           ) != 0;
+	m_Use8Bit =				IniGetInt(subkey, "8bit",	          m_Use8Bit              ) != 0;
+	m_Shared =				IniGetInt(subkey, "shared",            m_Shared               ) != 0;
+	m_SwapMouse =			IniGetInt(subkey, "swapmouse",         m_SwapMouse	         ) != 0;
+	m_DeiconifyOnBell =		IniGetInt(subkey, "belldeiconify",     m_DeiconifyOnBell      ) != 0;
+	m_Emul3Buttons =		IniGetInt(subkey, "emulate3",	      m_Emul3Buttons         ) != 0;
+	m_Emul3Timeout =		IniGetInt(subkey, "emulate3timeout",   m_Emul3Timeout         );
+	m_Emul3Fuzz =			IniGetInt(subkey, "emulate3fuzz",	  m_Emul3Fuzz            );
+	m_DisableClipboard =	IniGetInt(subkey, "disableclipboard",  m_DisableClipboard     ) != 0;
+	m_FitWindow =			IniGetInt(subkey, "fitwindow",		  m_FitWindow		     ) != 0;
+	m_scale_den =			IniGetInt(subkey, "scale_den",         m_scale_den	         );
+	m_scale_num =			IniGetInt(subkey, "scale_num",         m_scale_num	         );
+	m_requestShapeUpdates =	IniGetInt(subkey, "cursorshape",       m_requestShapeUpdates	 ) != 0;
+	m_ignoreShapeUpdates =	IniGetInt(subkey, "noremotecursor",    m_ignoreShapeUpdates   ) != 0;
+	int level		 =		IniGetInt(subkey, "compresslevel",     -1				     );
 	m_useCompressLevel = false;
 	if (level != -1) {
 		m_compressLevel = level;
 		m_useCompressLevel = true;
 	}
-	m_scaling =				read(RegKey, "scaling",			  m_scaling  ) != 0;	
+	m_scaling =				IniGetInt(subkey, "scaling",			  m_scaling  ) != 0;	
 		
 	m_enableJpegCompression = true;
-	level =					read(RegKey, "quality",			  6);
+	level =					IniGetInt(subkey, "quality",			  6);
 	if (level == -1) {
 		m_enableJpegCompression = false;
 	} else {
 		m_jpegQualityLevel = level;
 	}
-	RegCloseKey(RegKey);
-}
 
-int VNCOptions::read(HKEY hkey, char *name, int retrn)
-{
-	DWORD buflen = 4;
-	DWORD buf = 0;
-	if(RegQueryValueEx(hkey ,(LPTSTR)name , 
-            NULL, NULL, 
-            (LPBYTE) &buf, (LPDWORD) &buflen) != ERROR_SUCCESS) {
-		return retrn;
-	} else {
-		return buf;
+	// WIN32S black-screen guard: with every use_encoding_* off the server is
+	// never sent a usable encoding and the window stays black forever.  The
+	// options dialog cannot produce this state through normal use, but a
+	// corrupt/foreign ini section can - fall back to defaults rather than a
+	// permanently black session.
+	{
+		bool anyEnc = false;
+		for (int e = rfbEncodingRaw; e <= LASTENCODING; e++) {
+			if (m_UseEnc[e]) {
+				anyEnc = true;
+				break;
+			}
+		}
+		if (!anyEnc) {
+			vnclog.Print(0, _T("No encodings enabled in [%s], restoring defaults\n"),
+						 subkey);
+			for (int e = rfbEncodingRaw; e <= LASTENCODING; e++)
+				m_UseEnc[e] = true;
+		}
 	}
 }
 
 void VNCOptions::SaveOpt(char subkey[256], char keyname[256])
 {
-	DWORD dispos;
-	HKEY RegKey;
-	TCHAR key[80];
-	_tcscpy(key, keyname);
-	_tcscat(key, "\\");
-	_tcscat(key, subkey);
-	RegCreateKeyEx(HKEY_CURRENT_USER, key, 0, NULL, 
-		REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &RegKey, &dispos);
+	// WIN32S: see LoadOpt - writes go to vncviewer.ini.
 	for (int i = rfbEncodingRaw; i <= LASTENCODING; i++) {
 		char buf[128];
 		sprintf(buf, "use_encoding_%d", i);
-		save(RegKey, buf, m_UseEnc[i] );
+		IniSetInt(subkey, buf, m_UseEnc[i] );
 	}
-	save(RegKey, "preferred_encoding",	m_PreferredEncoding);
-	save(RegKey, "restricted",			m_restricted		);
-	save(RegKey, "viewonly",			m_ViewOnly			);
-	save(RegKey, "fullscreen",			m_FullScreen		);
-	save(RegKey, "scaling",				m_scaling			);
-	save(RegKey, "8bit",				m_Use8Bit			);
-	save(RegKey, "shared",				m_Shared			);
-	save(RegKey, "swapmouse",			m_SwapMouse			);
-	save(RegKey, "belldeiconify",		m_DeiconifyOnBell	);
-	save(RegKey, "emulate3",			m_Emul3Buttons		);
-	save(RegKey, "emulate3timeout",		m_Emul3Timeout		);
-	save(RegKey, "emulate3fuzz",		m_Emul3Fuzz			);
-	save(RegKey, "disableclipboard",	m_DisableClipboard  );
-	save(RegKey, "fitwindow",			m_FitWindow			);
-	save(RegKey, "scale_den",			m_scale_den			);
-	save(RegKey, "scale_num",			m_scale_num			);
-	save(RegKey, "cursorshape",			m_requestShapeUpdates );
-	save(RegKey, "noremotecursor",		m_ignoreShapeUpdates );	
-	save(RegKey, "compresslevel", m_useCompressLevel ? m_compressLevel : -1);	
-	save(RegKey, "quality",	m_enableJpegCompression ? m_jpegQualityLevel : -1);
-	
-	
-	RegCloseKey(RegKey);
+	IniSetInt(subkey, "preferred_encoding",	m_PreferredEncoding);
+	IniSetInt(subkey, "restricted",			m_restricted		);
+	IniSetInt(subkey, "viewonly",			m_ViewOnly			);
+	IniSetInt(subkey, "fullscreen",			m_FullScreen		);
+	IniSetInt(subkey, "scaling",				m_scaling			);
+	IniSetInt(subkey, "8bit",				m_Use8Bit			);
+	IniSetInt(subkey, "shared",				m_Shared			);
+	IniSetInt(subkey, "swapmouse",			m_SwapMouse			);
+	IniSetInt(subkey, "belldeiconify",		m_DeiconifyOnBell	);
+	IniSetInt(subkey, "emulate3",			m_Emul3Buttons		);
+	IniSetInt(subkey, "emulate3timeout",		m_Emul3Timeout		);
+	IniSetInt(subkey, "emulate3fuzz",		m_Emul3Fuzz			);
+	IniSetInt(subkey, "disableclipboard",	m_DisableClipboard  );
+	IniSetInt(subkey, "fitwindow",			m_FitWindow			);
+	IniSetInt(subkey, "scale_den",			m_scale_den			);
+	IniSetInt(subkey, "scale_num",			m_scale_num			);
+	IniSetInt(subkey, "cursorshape",			m_requestShapeUpdates );
+	IniSetInt(subkey, "noremotecursor",		m_ignoreShapeUpdates );	
+	IniSetInt(subkey, "compresslevel", m_useCompressLevel ? m_compressLevel : -1);	
+	IniSetInt(subkey, "quality",	m_enableJpegCompression ? m_jpegQualityLevel : -1);
 }
 
 void VNCOptions::delkey(char subkey[256], char keyname[256])
 {
-		
-	TCHAR key[80];
-	_tcscpy(key, keyname);
-	_tcscat(key, "\\");
-	_tcscat(key, subkey);
-	RegDeleteKey (HKEY_CURRENT_USER, key);
-}
-
-void VNCOptions::save(HKEY hkey, char *name, int value) 
-{
-	RegSetValueEx( hkey, name, 
-            NULL, REG_DWORD, 
-            (CONST BYTE *)&value, 4);
+	// WIN32S: delete the whole per-connection section from vncviewer.ini.
+	IniDeleteSection(subkey);
 }
 
 void VNCOptions::LoadGenOpt()
 {
-	HKEY hRegKey;
-		
-	if ( RegOpenKey(HKEY_CURRENT_USER,
-					SETTINGS_KEY_NAME, &hRegKey) != ERROR_SUCCESS ) {
-		hRegKey = NULL;
-	} else {
-		DWORD buffer;
-		DWORD buffersize = sizeof(buffer);
-		DWORD valtype;
-		if ( RegQueryValueEx( hRegKey, "SkipFullScreenPrompt", NULL, &valtype, 
-				(LPBYTE)&buffer, &buffersize) == ERROR_SUCCESS) {			
-			m_skipprompt = buffer == 1;				
-		}		
-		if ( RegQueryValueEx( hRegKey, "NoToolbar", NULL, &valtype, 
-				(LPBYTE)&buffer, &buffersize) == ERROR_SUCCESS) {
-			m_toolbar = buffer == 1;
+	// WIN32S: global options live in the [Settings] section of vncviewer.ini.
+	// Absent entries leave the constructor defaults in place, as before.
+	m_skipprompt = IniGetInt(VIEWER_INI_SETTINGS, "SkipFullScreenPrompt", m_skipprompt ? 1 : 0) == 1;
+	m_toolbar = IniGetInt(VIEWER_INI_SETTINGS, "NoToolbar", m_toolbar ? 1 : 0) == 1;
+	m_logToFile = IniGetInt(VIEWER_INI_SETTINGS, "LogToFile", m_logToFile ? 1 : 0) == 1;
+	{
+		// Clamp: this value is used as an array dimension in
+		// ClientConnection::SaveConnectionHistory().  A corrupt entry must
+		// not turn into a bad allocation.
+		int limit = IniGetInt(VIEWER_INI_SETTINGS, "HistoryLimit", m_historyLimit);
+		if (limit < 1)    limit = 1;
+		if (limit > 1024) limit = 1024;
+		m_historyLimit = limit;
+	}
+	{
+		// Used in a switch that selects a cursor resource; keep it in range.
+		int cursor = IniGetInt(VIEWER_INI_SETTINGS, "LocalCursor", m_localCursor);
+		if (cursor >= NOCURSOR && cursor <= SMALLCURSOR)
+			m_localCursor = cursor;
+	}
+	m_logLevel = IniGetInt(VIEWER_INI_SETTINGS, "LogLevel", m_logLevel);
+	{
+		int port = IniGetInt(VIEWER_INI_SETTINGS, "ListenPort", m_listenPort);
+		if (port > 0 && port <= 65535)
+			m_listenPort = port;
+	}
+	{
+		char buf[_MAX_PATH];
+		IniGetString(VIEWER_INI_SETTINGS, "LogFileName", buf, sizeof(buf));
+		if (buf[0] != '\0') {
+			strncpy(m_logFilename, buf, sizeof(m_logFilename) - 1);
+			m_logFilename[sizeof(m_logFilename) - 1] = '\0';
 		}
-		if ( RegQueryValueEx( hRegKey, "LogToFile", NULL, &valtype, 
-				(LPBYTE)&buffer, &buffersize) == ERROR_SUCCESS) {
-				m_logToFile = buffer == 1;
-		}
-		if ( RegQueryValueEx( hRegKey, "HistoryLimit", NULL, &valtype, 
-				(LPBYTE)&buffer, &buffersize) == ERROR_SUCCESS) {
-			m_historyLimit = buffer;
-		}
-		if ( RegQueryValueEx( hRegKey, "LocalCursor", NULL, &valtype, 
-				(LPBYTE)&buffer, &buffersize) == ERROR_SUCCESS) {
-			m_localCursor = buffer;
-		}
-		if ( RegQueryValueEx( hRegKey, "LogLevel", NULL, &valtype, 
-				(LPBYTE)&buffer, &buffersize) == ERROR_SUCCESS) {
-			m_logLevel = buffer;
-		}
-		if ( RegQueryValueEx( hRegKey, "ListenPort", NULL, &valtype, 
-				(LPBYTE)&buffer, &buffersize) == ERROR_SUCCESS) {
-			m_listenPort = buffer;
-		}
-		TCHAR buf[_MAX_PATH];
-		buffersize=_MAX_PATH;
-		if (RegQueryValueEx( hRegKey, "LogFileName", NULL, &valtype, 
-				(LPBYTE) &buf, &buffersize) == ERROR_SUCCESS) {
-			strcpy(m_logFilename, buf);
-		}
-		RegCloseKey(hRegKey);
-	}	
+	}
 }
 
 void VNCOptions::SaveGenOpt()
 {
-	HKEY hRegKey;
-	DWORD buffer;
-	TCHAR buf[80];
-
-	RegCreateKey(HKEY_CURRENT_USER,
-					SETTINGS_KEY_NAME, &hRegKey);
-	RegSetValueEx( hRegKey, "LocalCursor", 
-					NULL, REG_DWORD, 
-					(CONST BYTE *)&m_localCursor,
-					4);
-				
-	RegSetValueEx( hRegKey, "HistoryLimit", 
-					NULL, REG_DWORD, 
-					(CONST BYTE *)&m_historyLimit,
-					4);
-				
-	RegSetValueEx( hRegKey, "LogLevel", 
-					NULL, REG_DWORD, 
-					(CONST BYTE *)&m_logLevel,
-					4);
-				
-	strcpy(buf, m_logFilename);
-	RegSetValueEx( hRegKey, "LogFileName", 
-					NULL, REG_SZ , 
-					(CONST BYTE *)buf, (_tcslen(buf)+1));				
-				
-	RegSetValueEx( hRegKey, "ListenPort", 
-					NULL, REG_DWORD, 
-					(CONST BYTE *)&m_listenPort,
-					4);
-	if (m_logToFile) {
-		buffer = 1;
-	} else {
-		buffer = 0;
-	}
-	RegSetValueEx( hRegKey, "LogToFile" , 
-					NULL, REG_DWORD, 
-					(CONST BYTE *)&buffer,
-					4);
-	if (m_skipprompt) {
-		buffer = 1;
-	} else {
-		buffer = 0;
-	}
-	RegSetValueEx( hRegKey, "SkipFullScreenPrompt", 
-					NULL,REG_DWORD, 
-					(CONST BYTE *)&buffer,
-					4);
-	if (m_toolbar) {
-		buffer = 1;
-	} else {
-		buffer = 0;
-	}
-	RegSetValueEx( hRegKey, "NoToolbar", 
-					NULL, REG_DWORD, 
-					(CONST BYTE *)&buffer,
-					4);
-				
-	RegCloseKey(hRegKey);
+	// WIN32S: see LoadGenOpt - writes go to the [Settings] section of
+	// vncviewer.ini.
+	IniSetInt(VIEWER_INI_SETTINGS, "LocalCursor", m_localCursor);
+	IniSetInt(VIEWER_INI_SETTINGS, "HistoryLimit", m_historyLimit);
+	IniSetInt(VIEWER_INI_SETTINGS, "LogLevel", m_logLevel);
+	IniSetString(VIEWER_INI_SETTINGS, "LogFileName", m_logFilename);
+	IniSetInt(VIEWER_INI_SETTINGS, "ListenPort", m_listenPort);
+	IniSetInt(VIEWER_INI_SETTINGS, "LogToFile", m_logToFile ? 1 : 0);
+	IniSetInt(VIEWER_INI_SETTINGS, "SkipFullScreenPrompt", m_skipprompt ? 1 : 0);
+	IniSetInt(VIEWER_INI_SETTINGS, "NoToolbar", m_toolbar ? 1 : 0);
 }
 
 void VNCOptions::BrowseLogFile()
@@ -1687,37 +1848,24 @@ void VNCOptions::setHistoryLimit(int newLimit)
 	pApp->m_options.m_historyLimit = newLimit;
 
 	if (newLimit < oldLimit) {
-		// Open the registry key of connection history.
-		HKEY hKey;
-		LONG result = RegOpenKeyEx(HKEY_CURRENT_USER, KEY_VNCVIEWER_HISTORI,
-								   0, KEY_ALL_ACCESS,  &hKey);
-		if (result != ERROR_SUCCESS) {
-			return;
-		}
-
-		// Read the list of connections and remove everything exceeding
-		// new limit.
+		// WIN32S: prune the [History] section of vncviewer.ini.  Values are
+		// "0".."N" connection display strings; entries past the new limit go,
+		// along with their per-connection settings sections.
 		int numRead = 0;
 		for (int i = 0; i < oldLimit; i++) {
-			TCHAR valueName[16];
-			_sntprintf(valueName, 16, "%d", i);
-			TCHAR valueData[256];
-			memset(valueData, 0, 256 * sizeof(TCHAR));
-			LPBYTE bufPtr = (LPBYTE)valueData;
-			DWORD bufSize = 255 * sizeof(TCHAR);
-			LONG err = RegQueryValueEx(hKey, valueName, 0, 0, bufPtr, &bufSize);
-			if (err == ERROR_SUCCESS) {
-				if (valueData[0] != '\0') {
-					numRead++;
-				}
+			char valueName[16];
+			sprintf(valueName, "%d", i);
+			char valueData[256];
+			IniGetString(VIEWER_INI_HISTORY, valueName,
+							   valueData, sizeof(valueData));
+			if (valueData[0] != '\0') {
+				numRead++;
 				if (numRead > newLimit) {
 					// Delete both the list entry and the corresponding settings.
-					RegDeleteValue(hKey, valueName);
-					RegDeleteKey(hKey, valueData);
+					IniDeleteKey(VIEWER_INI_HISTORY, valueName);
+					IniDeleteSection(valueData);
 				}
 			}
 		}
-
-		RegCloseKey(hKey);
 	}
 }

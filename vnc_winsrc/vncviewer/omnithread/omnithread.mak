@@ -50,7 +50,9 @@ CLEAN :
 "$(INTDIR)" :
     if not exist "$(INTDIR)/$(NULL)" mkdir "$(INTDIR)"
 
-CPP_PROJ=/nologo /MT /W3 /GX /O2 /I "D:\MSTOOLS\Include" /D "NDEBUG" /D "WIN32" /D "_WINDOWS" /D "__NT__" /D "_WINSTATIC" /D "__WIN32__" /Fp"$(INTDIR)\omnithread.pch" /YX /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
+#CPP_PROJ=/nologo /MT /W3 /GX /O2 /I "C:\MSTOOLS\Include" /D "NDEBUG" /D "WIN32" /D "_WINDOWS" /D "_WINSTATIC" /D "__WIN32__" /Fp"$(INTDIR)\omnithread.pch" /YX /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
+CPP_PROJ=/nologo /ML /W3 /GX /O2 /FI"win32s_fix.h" /I "C:\MSTOOLS\Include"  /D "NDEBUG" /D "WIN32" /D "_WINDOWS" /D "_WINSTATIC" /D "__WIN32__" /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c
+
 BSC32=bscmake.exe
 BSC32_FLAGS=/nologo /o"$(OUTDIR)\omnithread.bsc" 
 BSC32_SBRS= \
@@ -87,7 +89,8 @@ CLEAN :
 "$(INTDIR)" :
     if not exist "$(INTDIR)/$(NULL)" mkdir "$(INTDIR)"
 
-CPP_PROJ=/nologo /MTd /W3 /GX /Z7 /Od /I "D:\MSTOOLS\Include" /D "_DEBUG" /D "WIN32" /D "_WINDOWS" /D "__NT__" /D "_WINSTATIC" /D "__WIN32__" /Fp"$(INTDIR)\omnithread.pch" /YX /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
+#CPP_PROJ=/nologo /MTd /W3 /GX /Z7 /Od /I "C:\MSTOOLS\Include" /D "_DEBUG" /D "WIN32" /D "_WINDOWS" /D "_WINSTATIC" /D "__WIN32__" /Fp"$(INTDIR)\omnithread.pch" /YX /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
+CPP_PROJ=/nologo /MLd /W3 /GX /Z7 /Od /FI"win32s_fix.h" /I "C:\MSTOOLS\Include" /D "_DEBUG" /D "WIN32" /D "_WINDOWS" /D "_WINSTATIC" /D "__WIN32__" /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
 BSC32=bscmake.exe
 BSC32_FLAGS=/nologo /o"$(OUTDIR)\omnithread.bsc" 
 BSC32_SBRS= \

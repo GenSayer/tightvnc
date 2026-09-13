@@ -1,4 +1,3 @@
-//  Copyright (C) 2002 RealVNC Ltd. All Rights Reserved.
 //  Copyright (C) 1999 AT&T Laboratories Cambridge. All Rights Reserved.
 //  Copyright (C) 2009 GlavSoft LLC. All Rights Reserved.
 //
@@ -21,26 +20,110 @@
 //
 // TightVNC distribution homepage on the Web: http://www.tightvnc.com/
 //
-// If the source code for the VNC system is not available from the place 
+// If the source code for the VNC system is not available from the place
 // whence you received this file, check http://www.uk.research.att.com/vnc or contact
 // the authors on vnc@uk.research.att.com for information on obtaining it.
 
-
-// vncService
-
-// Implementation of service-oriented functionality of WinVNC
+// ==========================================================================
+// vncService - WIN32S / WINDOWS 3.1 VERSION
+// ==========================================================================
+//
+// The original of this file is 1426 lines of Windows NT service and
+// desktop-switching code.  The full NT version is preserved as
+// vncService.cpp.nt-original for reference; this is a deliberate rewrite for
+// the Win32s target.
+//
+// WHAT WAS REMOVED, AND WHY IT CANNOT BE WRAPPED
+//
+// These are not missing-API problems that a GetProcAddress shim can paper over.
+// The underlying operating-system concepts do not exist on Windows 3.1:
+//
+//  1. SERVICES.  OpenSCManager, CreateService, DeleteService,
+//     StartServiceCtrlDispatcher, SetServiceStatus, RegisterServiceCtrlHandler.
+//     Windows 3.1 has no service control manager and no notion of a background
+//     process that outlives the logged-on session.  WinVNCServiceMain,
+//     InstallService, ReinstallService, RemoveService and the whole
+//     ServiceMain/ServiceCtrl/ReportStatus machinery are stubs that report the
+//     feature is unavailable.
+//
+//  2. WINDOW STATIONS AND DESKTOPS.  OpenDesktop, CloseDesktop,
+//     OpenInputDesktop, GetThreadDesktop, SetThreadDesktop, SwitchDesktop,
+//     GetUserObjectInformation, GetProcessWindowStation.  Windows 3.1 has
+//     exactly one desktop and no window stations.  SelectDesktop/SelectHDESK
+//     succeed trivially, and InputDesktopSelected always returns TRUE - which
+//     is correct, because the one desktop always IS the input desktop.  This
+//     matters: vncClient's main loop calls InputDesktopSelected() on every
+//     iteration and disconnects the client if it returns FALSE.
+//
+//  3. SECURITY TOKENS AND IMPERSONATION.  ImpersonateLoggedOnUser,
+//     RevertToSelf, OpenProcessToken, DuplicateToken.  Windows 3.1 is
+//     single-user with no security model at all.  tryImpersonate() returns
+//     true (meaning "proceed"), undoImpersonate() does nothing.  This is
+//     load-bearing for FILE TRANSFER: every file-transfer message handler in
+//     vncClient.cpp begins with "if (!vncService::tryImpersonate()) { ...send
+//     failure... }", so a tryImpersonate() that returned false would break file
+//     transfer entirely while appearing to be a permissions problem.
+//
+//  4. CTRL+ALT+DEL SIMULATION.  Requires the NT winlogon desktop.  Stub.
+//
+//  5. WORKSTATION LOCKING.  LockWorkstation is NT 4.0+; Windows 3.1 has
+//     nothing to lock.  Stub returning FALSE.
+//
+//  6. GetUserName.  Present in the Win32s ADVAPI32 stub set but returns
+//     nothing useful on a single-user system, and it is one more import to
+//     resolve.  Replaced with a fixed "Default", which is exactly what
+//     CurrentUser() already substituted when GetCurrentUser returned an empty
+//     string.  The registry per-user settings path therefore resolves the same
+//     way it did before.
+//
+// WHAT IS KEPT AND STILL FUNCTIONAL
+//
+//   PostToWinVNC and every Post*/Show*/Kill* helper.  These are pure
+//   FindWindow + PostMessage, work identically on Win32s, and are how the
+//   command-line switches (-showstatus, -connect, -killclients, ...) reach a
+//   running instance.
+//
+//   IsWin95/IsWinNT/VersionMajor/VersionMinor, plus a new IsWin32s().  Several
+//   callers branch on these; see the note on the constructor about how the
+//   platform is detected without GetVersionEx.
+//
+//   FindWindowByTitle, for the -sharewindow switch.
+//
+//   KillRunningCopy, with its sleep loop replaced by a bounded message pump.
+// ==========================================================================
 
 #include "stdhdrs.h"
 
-// Header
+// WIN32S: <lmcons.h> is the LAN Manager header, included by the original solely
+// for UNLEN (the maximum user name length).  It is not part of the MSVC 4.1
+// core SDK and pulls in netapi declarations we do not want.  UNLEN is defined
+// locally below instead.
+// #include <lmcons.h>
 
+// vncService.h declares the class this file implements.  It MUST be included -
+// omitting it was my mistake when rewriting this file, and it produced a wall of
+//     error C2653: 'vncService' : is not a class or namespace name
+// plus, at the "vncService init;" line, C2501/C2239/C2061 - MSVC parses an
+// unknown type name in a declaration as an implicit int, so "vncService init;"
+// became "int init;" with a stray identifier after it.
+//
+// Nothing else in this file's include chain pulls it in transitively (checked:
+// stdhdrs.h, WinVNC.h, vncMenu.h, vncTimedMsgBox.h, Win32sApi.h).
 #include "vncService.h"
 
-#include <lmcons.h>
 #include "omnithread.h"
 #include "WinVNC.h"
 #include "vncMenu.h"
 #include "vncTimedMsgBox.h"
+#include "Win32sApi.h"
+
+#ifndef UNLEN
+#define UNLEN 256
+#endif
+
+#ifndef VER_PLATFORM_WIN32s
+#define VER_PLATFORM_WIN32s 0
+#endif
 
 // Error message logging
 void LogErrorMsg(char *message);
@@ -48,8 +131,13 @@ void LogErrorMsg(char *message);
 // OS-SPECIFIC ROUTINES
 
 // Create an instance of the vncService class to cause the static fields to be
-// initialised properly
-
+// initialised properly.
+//
+// NOTE: this is a file-scope object, so its constructor runs BEFORE WinMain.
+// On Win32s that is dangerous territory - it is what killed the viewer at
+// startup.  The constructor below is therefore restricted to GetVersion(),
+// which is safe: it is in every Win32 implementation, takes no arguments, and
+// allocates nothing.
 vncService init;
 
 DWORD	g_platform_id;
@@ -57,6 +145,7 @@ BOOL	g_impersonating_user = FALSE;
 HANDLE	g_impersonation_token = 0;
 DWORD	g_version_major;
 DWORD	g_version_minor;
+BOOL	g_is_win32s = FALSE;
 
 #ifdef HORIZONLIVE
 BOOL	g_nosettings_flag;
@@ -64,26 +153,57 @@ BOOL	g_nosettings_flag;
 
 vncService::vncService()
 {
-    OSVERSIONINFO osversioninfo;
-    osversioninfo.dwOSVersionInfoSize = sizeof(osversioninfo);
+	// Platform detection WITHOUT GetVersionEx.
+	//
+	// The original called GetVersionEx(&osversioninfo) and used dwPlatformId.
+	// Two problems on this target:
+	//
+	//  * GetVersionEx is a Windows NT 3.5 / Windows 95 addition.  Win32s 1.30
+	//    does export it, but earlier Win32s does not, and an unresolvable
+	//    import stops the EXE loading before WinMain - with no diagnostic.
+	//
+	//  * The original also had a real bug: "if (!GetVersionEx(...))
+	//    g_platform_id = 0;" and then unconditionally overwrote g_platform_id
+	//    from the (uninitialised) structure on the next line, so the failure
+	//    path did nothing.
+	//
+	// GetVersion() has existed since the first Win32 and encodes everything we
+	// need:  bit 31 set => not NT (i.e. Win32s or Win9x); low word => the
+	// Windows version, which is 3.10/3.11 under Win32s and 4.x under Win9x.
+	DWORD dwVersion = GetVersion();
+	DWORD major = (DWORD)(LOBYTE(LOWORD(dwVersion)));
+	DWORD minor = (DWORD)(HIBYTE(LOWORD(dwVersion)));
 
-    // Get the current OS version
-    if (!GetVersionEx(&osversioninfo))
-	    g_platform_id = 0;
-    g_platform_id = osversioninfo.dwPlatformId;
-	g_version_major = osversioninfo.dwMajorVersion;
-	g_version_minor = osversioninfo.dwMinorVersion;
+	g_version_major = major;
+	g_version_minor = minor;
+
+	if ((dwVersion & 0x80000000) == 0) {
+		// Windows NT family.
+		g_platform_id = VER_PLATFORM_WIN32_NT;
+		g_is_win32s = FALSE;
+	} else if (major < 4) {
+		// Windows 3.1x hosting Win32s.
+		g_platform_id = VER_PLATFORM_WIN32s;
+		g_is_win32s = TRUE;
+	} else {
+		// Windows 95 or later 9x.
+		g_platform_id = VER_PLATFORM_WIN32_WINDOWS;
+		g_is_win32s = FALSE;
+	}
+
 #ifdef HORIZONLIVE
 	g_nosettings_flag = false;
 #endif
-
 }
 
 vncService::~vncService()
 {
+	// No impersonation token is ever acquired on this platform, but keep the
+	// teardown symmetrical in case the NT paths are ever restored.
 	if (g_impersonating_user) {
 		g_impersonating_user = FALSE;
-		CloseHandle(g_impersonation_token);
+		if (g_impersonation_token != 0)
+			CloseHandle(g_impersonation_token);
 		g_impersonation_token = 0;
 	}
 }
@@ -95,7 +215,8 @@ vncService::SetNoSettings(bool flag)
 	g_nosettings_flag = flag;
 }
 
-BOOL vncService::GetNoSettings()
+BOOL
+vncService::GetNoSettings()
 {
 	return g_nosettings_flag;
 }
@@ -103,103 +224,41 @@ BOOL vncService::GetNoSettings()
 #endif
 
 
-// GetCurrentUser - fills a buffer with the name of the current user!
+// GetCurrentUser - fills a buffer with the name of the current user.
+//
+// WIN32S: Windows 3.1 is single-user and has no security database, so there is
+// no user name to report.  The original walked a maze of NT window-station and
+// impersonation checks and then called GetUserName().
+//
+// We return "Default" directly.  That is not a placeholder chosen at random: it
+// is exactly what CurrentUser() below already substituted whenever
+// GetCurrentUser() produced an empty string, and it is the name vncProperties
+// uses to build the per-user registry path.  So the settings written and read
+// on Win32s land in the same place they always did for an unidentified user.
 BOOL
 vncService::GetCurrentUser(char *buffer, UINT size)
 {
-	// How to obtain the name of the current user depends upon the OS being used
-	if ((g_platform_id == VER_PLATFORM_WIN32_NT) && vncService::RunningAsService())
-	{
-		// Windows NT, service-mode
+	if (buffer == NULL || size == 0)
+		return FALSE;
 
-		// -=- FIRSTLY - verify that a user is logged on
+	const char *name = "Default";
+	if (strlen(name) >= size)
+		return FALSE;
 
-		// Get the current Window station
-		HWINSTA station = GetProcessWindowStation();
-		if (station == NULL)
-			return FALSE;
-
-		// Get the current user SID size
-		DWORD usersize;
-		GetUserObjectInformation(station,
-			UOI_USER_SID, NULL, 0, &usersize);
-
-		// Check the required buffer size isn't zero
-		if (usersize == 0)
-		{
-			// No user is logged in - ensure we're not impersonating anyone
-			RevertToSelf();
-			g_impersonating_user = FALSE;
-			CloseHandle(g_impersonation_token);
-			g_impersonation_token = 0;
-
-			// Return "" as the name...
-			if (strlen("") >= size)
-				return FALSE;
-			strcpy(buffer, "");
-
-			return TRUE;
-		}
-
-		// -=- SECONDLY - a user is logged on but if we're not impersonating
-		//     them then we can't continue!
-		if (!g_impersonating_user) {
-			// Return "" as the name...
-			if (strlen("") >= size)
-				return FALSE;
-			strcpy(buffer, "");
-			return TRUE;
-		}
-	}
-		
-	// -=- When we reach here, we're either running under Win9x, or we're running
-	//     under NT as an application or as a service impersonating a user
-	// Either way, we should find a suitable user name.
-
-	switch (g_platform_id)
-	{
-
-	case VER_PLATFORM_WIN32_WINDOWS:
-	case VER_PLATFORM_WIN32_NT:
-		{
-			// Just call GetCurrentUser
-			DWORD length = size;
-
-			if (GetUserName(buffer, &length) == 0)
-			{
-				UINT error = GetLastError();
-
-				if (error == ERROR_NOT_LOGGED_ON)
-				{
-					// No user logged on
-					if (strlen("") >= size)
-						return FALSE;
-					strcpy(buffer, "");
-					return TRUE;
-				}
-				else
-				{
-					// Genuine error...
-					vnclog.Print(LL_INTERR, VNCLOG("GetUserName() failed, error=%d\n"), GetLastError());
-					return FALSE;
-				}
-			}
-		}
-		return TRUE;
-	};
-
-	// OS was not recognised!
-	return FALSE;
+	strcpy(buffer, name);
+	return TRUE;
 }
 
 BOOL
 vncService::CurrentUser(char *buffer, UINT size)
 {
-  BOOL result = GetCurrentUser(buffer, size);
-  if (result && (strcmp(buffer, "") == 0) && !vncService::RunningAsService()) {
-    strncpy(buffer, "Default", size);
-  }
-  return result;
+	BOOL result = GetCurrentUser(buffer, size);
+	if (result && (strcmp(buffer, "") == 0) && !vncService::RunningAsService()) {
+		strncpy(buffer, "Default", size);
+		if (size > 0)
+			buffer[size - 1] = '\0';
+	}
+	return result;
 }
 
 // IsWin95 - returns a BOOL indicating whether the current OS is Win95
@@ -216,6 +275,17 @@ vncService::IsWinNT()
 	return (g_platform_id == VER_PLATFORM_WIN32_NT);
 }
 
+// IsWin32s - TRUE when running under Win32s on Windows 3.1x.
+//
+// New in this port.  Several places need to know this specifically rather than
+// just "not NT": the tray icon, the wallpaper handling, and the polling
+// strategy all differ.
+BOOL
+vncService::IsWin32s()
+{
+	return g_is_win32s;
+}
+
 // Version info
 DWORD
 vncService::VersionMajor()
@@ -230,8 +300,12 @@ vncService::VersionMinor()
 }
 
 // Internal routine to find the WinVNC menu class window and
-// post a message to it!
-
+// post a message to it.
+//
+// Works unchanged on Win32s: FindWindow and PostMessage are core Windows 3.0
+// APIs.  This is the mechanism behind every command-line switch that talks to a
+// running instance, and behind vncClient's file-transfer completion
+// notification (vncClient.cpp:2531).
 BOOL
 PostToWinVNC(UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -245,309 +319,177 @@ PostToWinVNC(UINT message, WPARAM wParam, LPARAM lParam)
 	return TRUE;
 }
 
-// Static routines only used on Windows NT to ensure we're in the right desktop
-// These routines are generally available to any thread at any time.
-
-// - SelectDesktop(HDESK)
-// Switches the current thread into a different desktop by desktop handle
-// This call takes care of all the evil memory management involved
+// ==========================================================================
+// DESKTOP SELECTION
+//
+// Windows 3.1 has exactly one desktop and no window stations, so all of these
+// succeed trivially.  Do not make them return FALSE: vncClient's main loop
+// tests InputDesktopSelected() on every pass and drops the client if it is
+// false, and vncDesktop::InitDesktop refuses to start if SelectDesktop fails.
+// ==========================================================================
 
 BOOL
 vncService::SelectHDESK(HDESK new_desktop)
 {
-	// Are we running on NT?
-	if (IsWinNT())
-	{
-		HDESK old_desktop = GetThreadDesktop(GetCurrentThreadId());
-
-		DWORD dummy;
-		char new_name[256];
-
-		if (!GetUserObjectInformation(new_desktop, UOI_NAME, &new_name, 256, &dummy)) {
-			vnclog.Print(LL_INTERR, VNCLOG("GetUserObjectInformation() failed\n"));
-			return FALSE;
-		}
-
-		vnclog.Print(LL_INTINFO, VNCLOG("SelectHDESK() to %s (%x) from %x\n"),
-					 new_name, new_desktop, old_desktop);
-
-		// Switch the desktop
-		if(!SetThreadDesktop(new_desktop)) {
-			vnclog.Print(LL_INTERR, VNCLOG("unable to SetThreadDesktop(), error=%d\n"), GetLastError());
-			return FALSE;
-		}
-
-		// Switched successfully - destroy the old desktop
-		if (!CloseDesktop(old_desktop))
-			vnclog.Print(LL_INTERR, VNCLOG("SelectHDESK failed to close old desktop %x, error=%d\n"), old_desktop, GetLastError());
-
-		return TRUE;
-	}
-
+	// Nothing to switch to.  Returning TRUE means "we are where we should be".
 	return TRUE;
 }
-
-// - SelectDesktop(char *)
-// Switches the current thread into a different desktop, by name
-// Calling with a valid desktop name will place the thread in that desktop.
-// Calling with a NULL name will place the thread in the current input desktop.
 
 BOOL
 vncService::SelectDesktop(char *name)
 {
-	// Are we running on NT?
-	if (IsWinNT())
-	{
-		HDESK desktop;
-
-		if (name != NULL)
-		{
-			// Attempt to open the named desktop
-			desktop = OpenDesktop(name, 0, FALSE,
-				DESKTOP_CREATEMENU | DESKTOP_CREATEWINDOW |
-				DESKTOP_ENUMERATE | DESKTOP_HOOKCONTROL |
-				DESKTOP_WRITEOBJECTS | DESKTOP_READOBJECTS |
-				DESKTOP_SWITCHDESKTOP | GENERIC_WRITE);
-		}
-		else
-		{
-			// No, so open the input desktop
-			desktop = OpenInputDesktop(0, FALSE,
-				DESKTOP_CREATEMENU | DESKTOP_CREATEWINDOW |
-				DESKTOP_ENUMERATE | DESKTOP_HOOKCONTROL |
-				DESKTOP_WRITEOBJECTS | DESKTOP_READOBJECTS |
-				DESKTOP_SWITCHDESKTOP | GENERIC_WRITE);
-		}
-
-		// Did we succeed?
-		if (desktop == NULL) {
-			vnclog.Print(LL_INTERR, VNCLOG("unable to open desktop, error=%d\n"), GetLastError());
-			return FALSE;
-		}
-
-		// Switch to the new desktop
-		if (!SelectHDESK(desktop)) {
-			// Failed to enter the new desktop, so free it!
-			vnclog.Print(LL_INTERR, VNCLOG("SelectDesktop() failed to select desktop\n"));
-			if (!CloseDesktop(desktop))
-				vnclog.Print(LL_INTERR, VNCLOG("SelectDesktop failed to close desktop, error=%d\n"), GetLastError());
-			return FALSE;
-		}
-
-		// We successfully switched desktops!
-		return TRUE;
-	}
-
-	return (name == NULL);
+	// There is only one desktop; we are always on it.
+	return TRUE;
 }
-
-// NT only function to establish whether we're on the current input desktop
 
 BOOL
 vncService::InputDesktopSelected()
 {
-	// Are we running on NT?
-	if (IsWinNT())
-	{
-		// Get the input and thread desktops
-		HDESK threaddesktop = GetThreadDesktop(GetCurrentThreadId());
-		HDESK inputdesktop = OpenInputDesktop(0, FALSE,
-				DESKTOP_CREATEMENU | DESKTOP_CREATEWINDOW |
-				DESKTOP_ENUMERATE | DESKTOP_HOOKCONTROL |
-				DESKTOP_WRITEOBJECTS | DESKTOP_READOBJECTS |
-				DESKTOP_SWITCHDESKTOP | GENERIC_WRITE);
-
-		if (inputdesktop == NULL) {
-			// Returning TRUE on ERROR_BUSY fixes the bug #1109102.
-			// FIXME: Probably this is not the most correct way to do it.
-			return (GetLastError() == ERROR_BUSY) ? TRUE : FALSE;
-		}
-
-		DWORD dummy;
-		char threadname[256];
-		char inputname[256];
-
-		if (!GetUserObjectInformation(threaddesktop, UOI_NAME, &threadname, 256, &dummy)) {
-			if (!CloseDesktop(inputdesktop))
-				vnclog.Print(LL_INTWARN, VNCLOG("failed to close input desktop\n"));
-			return FALSE;
-		}
-		_ASSERT(dummy <= 256);
-		if (!GetUserObjectInformation(inputdesktop, UOI_NAME, &inputname, 256, &dummy)) {
-			if (!CloseDesktop(inputdesktop))
-				vnclog.Print(LL_INTWARN, VNCLOG("failed to close input desktop\n"));
-			return FALSE;
-		}
-		_ASSERT(dummy <= 256);
-
-		if (!CloseDesktop(inputdesktop))
-			vnclog.Print(LL_INTWARN, VNCLOG("failed to close input desktop\n"));
-
-		if (strcmp(threadname, inputname) != 0)
-			return FALSE;
-	}
-
+	// The single desktop always is the input desktop.
 	return TRUE;
 }
 
-// Static routine used to fool Winlogon into thinking CtrlAltDel was pressed
-
-void *
-SimulateCtrlAltDelThreadFn(void *context)
-{
-	HDESK old_desktop = GetThreadDesktop(GetCurrentThreadId());
-
-	// Switch into the Winlogon desktop
-	if (!vncService::SelectDesktop("Winlogon"))
-	{
-		vnclog.Print(LL_INTERR, VNCLOG("failed to select logon desktop\n"));
-		return FALSE;
-	}
-
-	vnclog.Print(LL_ALL, VNCLOG("generating ctrl-alt-del\n"));
-
-	HWND hwndCtrlAltDel = FindWindow("SAS window class", "SAS window");
-	if (hwndCtrlAltDel == NULL) {
-		vnclog.Print(LL_INTERR, VNCLOG("\"SAS window\" not found\n"));
-		hwndCtrlAltDel = HWND_BROADCAST;
-	}
-
-	PostMessage(hwndCtrlAltDel, WM_HOTKEY, 0, MAKELONG(MOD_ALT | MOD_CONTROL, VK_DELETE));
-
-	// Switch back to our original desktop
-	if (old_desktop != NULL)
-		vncService::SelectHDESK(old_desktop);
-
-	return NULL;
-}
-
-// Static routine to simulate Ctrl-Alt-Del locally
-
+// ==========================================================================
+// CTRL+ALT+DEL
+//
+// The NT implementation opened the Winlogon desktop and posted a hot-key
+// message to it.  There is no equivalent on Windows 3.1 (Ctrl+Alt+Del is
+// handled by the BIOS/DOS layer and reboots the machine), and simulating a
+// reboot on a remote user's behalf would be actively harmful.
+// ==========================================================================
 BOOL
 vncService::SimulateCtrlAltDel()
 {
-	vnclog.Print(LL_ALL, VNCLOG("preparing to generate ctrl-alt-del\n"));
-
-	// Are we running on NT?
-	if (IsWinNT())
-	{
-		vnclog.Print(LL_ALL, VNCLOG("spawn ctrl-alt-del thread...\n"));
-
-		// We simulate Ctrl+Alt+Del by posting a WM_HOTKEY message to the
-		// "SAS window" on the Winlogon desktop.
-		// This requires that the current thread is part of the Winlogon desktop.
-		// But the current thread has hooks set & a window open, so it can't
-		// switch desktops, so I instead spawn a new thread & let that do the work...
-
-		omni_thread *thread = omni_thread::create(SimulateCtrlAltDelThreadFn);
-		if (thread == NULL)
-			return FALSE;
-		thread->join(NULL);
-
-		return TRUE;
-	}
-
-	return TRUE;
+	vnclog.Print(LL_INTWARN,
+		VNCLOG("Ctrl+Alt+Del is not supported on this platform\n"));
+	return FALSE;
 }
 
-// Static routine to lock a 2K or above workstation
-
+// ==========================================================================
+// WORKSTATION LOCKING
+//
+// LockWorkstation is NT 4.0 and later.  Windows 3.1 has no login session to
+// lock.
+// ==========================================================================
 BOOL
 vncService::LockWorkstation()
 {
-	if (!IsWinNT()) {
-		vnclog.Print(LL_INTERR, VNCLOG("unable to lock workstation - not NT\n"));
-		return FALSE;
-	}
-
-	vnclog.Print(LL_ALL, VNCLOG("locking workstation\n"));
-
-	// Load the user32 library
-	HMODULE user32 = LoadLibrary("user32.dll");
-	if (!user32) {
-		vnclog.Print(LL_INTERR, VNCLOG("unable to load User32 DLL (%u)\n"), GetLastError());
-		return FALSE;
-	}
-
-	// Get the LockWorkstation function
-	typedef BOOL (*LWProc) ();
-	LWProc lockworkstation = (LWProc)GetProcAddress(user32, "LockWorkStation");
-	if (!lockworkstation) {
-		vnclog.Print(LL_INTERR, VNCLOG("unable to locate LockWorkStation - requires Windows 2000 or above (%u)\n"), GetLastError());
-		FreeLibrary(user32);
-		return FALSE;
-	}
-	
-	// Attempt to lock the workstation
-	BOOL result = (lockworkstation)();
-
-	if (!result) {
-		vnclog.Print(LL_INTERR, VNCLOG("call to LockWorkstation failed\n"));
-		FreeLibrary(user32);
-		return FALSE;
-	}
-
-	FreeLibrary(user32);
-	return result;
+	vnclog.Print(LL_INTWARN,
+		VNCLOG("Workstation locking is not supported on this platform\n"));
+	return FALSE;
 }
 
-// Static routine to show the Properties dialog for a currently-running
-// copy of WinVNC, (usually a servicified version.)
+// ==========================================================================
+// MESSAGE-POSTING HELPERS
+//
+// All unchanged in behaviour - they only use FindWindow/PostMessage.
+// ==========================================================================
 
 BOOL
 vncService::ShowProperties()
 {
-	// Post to the WinVNC menu window
 	if (!PostToWinVNC(MENU_PROPERTIES_SHOW, 0, 0))
 	{
-		MessageBox(NULL, "No existing instance of WinVNC could be contacted", szAppName, MB_ICONEXCLAMATION | MB_OK);
+		MessageBox(NULL, "No existing instance of WinVNC could be contacted",
+				   szAppName, MB_ICONEXCLAMATION | MB_OK);
 		return FALSE;
 	}
 
 	return TRUE;
 }
 
-// Static routine to find a window by its title substring (case-insensitive).
-// Window titles and search substrings will be truncated at length 255.
+// Helper for the -sharewindow switch: find a top-level window whose title
+// contains the given substring.
+//
+// The enumeration callback and its context struct are unchanged from the
+// original; EnumWindows (not EnumDesktopWindows) is used, which exists on
+// Win32s.
+typedef struct _FindWindowByTitleData {
+	char *substr;
+	HWND hwnd;
+} FindWindowByTitleData;
+
+static BOOL CALLBACK
+FindWindowByTitleEnumProc(HWND hwnd, LPARAM lParam)
+{
+	FindWindowByTitleData *pData = (FindWindowByTitleData *)lParam;
+	if (pData == NULL)
+		return FALSE;
+
+	char title[256];
+	title[0] = '\0';
+	if (GetWindowText(hwnd, title, sizeof(title) - 1) > 0) {
+		title[sizeof(title) - 1] = '\0';
+
+		// Case-insensitive substring search.  The original lowercased both
+		// strings in place; doing it on a copy avoids modifying the caller's
+		// buffer, which the -sharewindow parser still owns.
+		char lower[256];
+		strcpy(lower, title);
+		int i;
+		for (i = 0; lower[i] != '\0'; i++)
+			lower[i] = (char)tolower((unsigned char)lower[i]);
+
+		if (strstr(lower, pData->substr) != NULL) {
+			pData->hwnd = hwnd;
+			return FALSE;		// stop enumerating
+		}
+	}
+	return TRUE;
+}
 
 HWND
 vncService::FindWindowByTitle(char *substr)
 {
-	char l_substr[256];
-	strncpy(l_substr, substr, 255);
-	l_substr[255] = 0;
-	int i;
-	for (i = 0; i < (int)strlen(substr); i++) {
-		l_substr[i] = tolower(l_substr[i]);
-	}
+	if (substr == NULL)
+		return NULL;
 
-	char title[256];
-	HWND hWindow = GetForegroundWindow();
-	while (hWindow != NULL) {
-		int len = GetWindowText(hWindow, title, 256);
-		for (i = 0; i < len; i++) {
-			title[i] = tolower(title[i]);
-		}
-		DWORD style = GetWindowLong(hWindow, GWL_STYLE);
-		if ((style & WS_VISIBLE) != 0 && strstr(title, l_substr) != NULL) {
-			if (IsIconic(hWindow))
-				SendMessage(hWindow, WM_SYSCOMMAND, SC_RESTORE, 0);
-			SetForegroundWindow(hWindow);
-			break;
-		}
-		hWindow = GetNextWindow(hWindow, GW_HWNDNEXT);
-	}
-	if (hWindow == NULL) {
+	// Lowercase the search string once (the command line is already lowercased
+	// by WinMain, but do not depend on that).
+	char lowerSubstr[256];
+	strncpy(lowerSubstr, substr, sizeof(lowerSubstr) - 1);
+	lowerSubstr[sizeof(lowerSubstr) - 1] = '\0';
+	int i;
+	for (i = 0; lowerSubstr[i] != '\0'; i++)
+		lowerSubstr[i] = (char)tolower((unsigned char)lowerSubstr[i]);
+
+	FindWindowByTitleData data;
+	data.substr = lowerSubstr;
+	data.hwnd = NULL;
+
+	// MSVC 4.1: the callback needs an explicit cast.
+	//
+	// This produced
+	//   error C2664: 'EnumWindows' : cannot convert parameter 1 from
+	//   'int (void *,long)' to 'int (__stdcall *)(void)'
+	//
+	// Two things are going on:
+	//
+	//  * The 4.1 SDK declares EnumWindows' first parameter as a PARAMETERLESS
+	//    __stdcall function pointer in a non-STRICT build - the same FARPROC-style
+	//    declaration that made CallWindowProc need a cast in
+	//    SharedDesktopArea.cpp.  C++ will not implicitly convert between
+	//    function-pointer types, so the cast has to be explicit.
+	//
+	//  * The reported source type in the diagnostic is "int (void *, long)" -
+	//    HWND is void* and LPARAM is long in a non-STRICT build, so that is the
+	//    callback's own signature.  The mismatch is purely the parameter list of
+	//    the DESTINATION type, not a calling-convention problem.
+	//
+	// vncDesktop.cpp:1741 already casts its EnumWindows callback to WNDENUMPROC
+	// for exactly this reason; this call site was written without one.
+	EnumWindows((WNDENUMPROC)FindWindowByTitleEnumProc, (LPARAM)&data);
+
+	if (data.hwnd == NULL) {
 		MessageBox(NULL, "Unable to find a window with the specified title.",
 				   szAppName, MB_ICONEXCLAMATION | MB_OK);
 	}
-	return hWindow;
+	return data.hwnd;
 }
 
 BOOL
 vncService::PostShareAll()
 {
-	// Post to the WinVNC menu window
 	if (!PostToWinVNC(MENU_SERVER_SHAREALL, 0, 0))
 	{
 		MessageBox(NULL, "No existing instance of WinVNC could be contacted", szAppName, MB_ICONEXCLAMATION | MB_OK);
@@ -560,7 +502,6 @@ vncService::PostShareAll()
 BOOL
 vncService::PostSharePrimary()
 {
-	// Post to the WinVNC menu window
 	if (!PostToWinVNC(MENU_SERVER_SHAREPRIMARY, 0, 0))
 	{
 		MessageBox(NULL, "No existing instance of WinVNC could be contacted", szAppName, MB_ICONEXCLAMATION | MB_OK);
@@ -574,7 +515,6 @@ BOOL
 vncService::PostShareArea(unsigned short x, unsigned short y,
 						  unsigned short w, unsigned short h)
 {
-	// Post to the WinVNC menu window
 	if (!PostToWinVNC(MENU_SERVER_SHAREAREA,
 					  MAKEWPARAM(x,y), MAKELPARAM(w,h))) {
 		MessageBox(NULL, "No existing instance of WinVNC could be contacted", szAppName, MB_ICONEXCLAMATION | MB_OK);
@@ -587,7 +527,6 @@ vncService::PostShareArea(unsigned short x, unsigned short y,
 BOOL
 vncService::PostShareWindow(HWND hwnd)
 {
-	// Post to the WinVNC menu window
 	if (!PostToWinVNC(MENU_SERVER_SHAREWINDOW, (WPARAM)hwnd, 0))
 	{
 		MessageBox(NULL, "No existing instance of WinVNC could be contacted", szAppName, MB_ICONEXCLAMATION | MB_OK);
@@ -597,13 +536,9 @@ vncService::PostShareWindow(HWND hwnd)
 	return TRUE;
 }
 
-// Static routine to show the Default Properties dialog for a currently-running
-// copy of WinVNC, (usually a servicified version.)
-
 BOOL
 vncService::ShowDefaultProperties()
 {
-	// Post to the WinVNC menu window
 	if (!PostToWinVNC(MENU_DEFAULT_PROPERTIES_SHOW, 0, 0))
 	{
 		MessageBox(NULL, "No existing instance of WinVNC could be contacted", szAppName, MB_ICONEXCLAMATION | MB_OK);
@@ -613,13 +548,9 @@ vncService::ShowDefaultProperties()
 	return TRUE;
 }
 
-// Static routine to show the About dialog for a currently-running
-// copy of WinVNC, (usually a servicified version.)
-
 BOOL
 vncService::ShowAboutBox()
 {
-	// Post to the WinVNC menu window
 	if (!PostToWinVNC(MENU_ABOUTBOX_SHOW, 0, 0))
 	{
 		MessageBox(NULL, "No existing instance of WinVNC could be contacted", szAppName, MB_ICONEXCLAMATION | MB_OK);
@@ -629,13 +560,9 @@ vncService::ShowAboutBox()
 	return TRUE;
 }
 
-// Static routine to tell a locally-running instance of the server
-// to connect out to a new client
-
 BOOL
 vncService::PostAddNewClient(unsigned long ipaddress, unsigned short port)
 {
-	// Post to the WinVNC menu window
 	if (!PostToWinVNC(MENU_ADD_CLIENT_MSG, (WPARAM)port, (LPARAM)ipaddress))
 	{
 		MessageBox(NULL, "No existing instance of WinVNC could be contacted", szAppName, MB_ICONEXCLAMATION | MB_OK);
@@ -645,13 +572,9 @@ vncService::PostAddNewClient(unsigned long ipaddress, unsigned short port)
 	return TRUE;
 }
 
-// Static routine to tell a locally-running instance of the server
-// to disconnect all connected clients.
-
 BOOL
 vncService::KillAllClients()
 {
-	// Post to the WinVNC menu window
 	if (!PostToWinVNC(MENU_KILL_ALL_CLIENTS_MSG, 0, 0))
 	{
 		MessageBox(NULL, "No existing instance of WinVNC could be contacted", szAppName, MB_ICONEXCLAMATION | MB_OK);
@@ -661,766 +584,168 @@ vncService::KillAllClients()
 	return TRUE;
 }
 
-// SERVICE-MODE ROUTINES
-
-// Service-mode defines:
-
-// Executable name
-#define VNCAPPNAME            "winvnc"
-
-// Internal service name
-#define VNCSERVICENAME        "winvnc"
-
-// Displayed service name
-#define VNCSERVICEDISPLAYNAME "VNC Server"
-
-// List of other required services ("dependency 1\0dependency 2\0\0")
-// *** These need filling in properly
-#define VNCDEPENDENCIES       ""
-
-// Internal service state
-SERVICE_STATUS          g_srvstatus;       // current status of the service
-SERVICE_STATUS_HANDLE   g_hstatus;
-DWORD                   g_error = 0;
-DWORD					g_servicethread = NULL;
-char*                   g_errortext[256];
-
-// Forward defines of internal service functions
-void WINAPI ServiceMain(DWORD argc, char **argv);
-
-void ServiceWorkThread(void *arg);
-void ServiceStop();
-void WINAPI ServiceCtrl(DWORD ctrlcode);
-
-bool WINAPI CtrlHandler (DWORD ctrltype);
-
-BOOL ReportStatus(DWORD state, DWORD exitcode, DWORD waithint);
-
-// ROUTINE TO QUERY WHETHER THIS PROCESS IS RUNNING AS A SERVICE OR NOT
+// ==========================================================================
+// SERVICE MODE - ALL STUBBED
+//
+// Windows 3.1 has no service control manager.  Every one of these reported
+// success or did real SCM work in the original; they now tell the user the
+// feature is unavailable and return failure, so that "winvnc -install" does
+// something explicable rather than silently appearing to work.
+// ==========================================================================
 
 BOOL	g_servicemode = FALSE;
 
 BOOL
 vncService::RunningAsService()
 {
-	return g_servicemode;
+	// Never a service on this platform.
+	return FALSE;
 }
 
 BOOL
 vncService::KillRunningCopy()
 {
-	// Locate the hidden WinVNC menu window
+	// Post WM_CLOSE to every running instance and wait for it to go away.
+	//
+	// The original looped "PostMessage(...); omni_thread::sleep(1);" until
+	// FindWindow returned NULL.  Two changes:
+	//
+	//  * omni_thread::sleep pumps messages in this build (see omnithread.h),
+	//    which is necessary - the instance being killed is in the SAME process
+	//    address space under Win32s in the -kill case, and in any case a bare
+	//    Sleep on a cooperatively scheduled system prevents the target from
+	//    processing the WM_CLOSE we just posted.
+	//
+	//  * The loop is now bounded.  Unbounded was an infinite hang if the target
+	//    ignored WM_CLOSE.
 	HWND hservwnd;
+	int attempts = 0;
 
 	while ((hservwnd = FindWindow(MENU_CLASS_NAME, NULL)) != NULL)
 	{
-		// Post the message to WinVNC
-		PostMessage(hservwnd, WM_CLOSE, 0, 0);
+		if (attempts++ >= 10) {
+			vnclog.Print(LL_INTERR,
+				VNCLOG("running copy did not exit after %d attempts\n"), attempts);
+			return FALSE;
+		}
 
+		PostMessage(hservwnd, WM_CLOSE, 0, 0);
 		omni_thread::sleep(1);
 	}
 
 	return TRUE;
 }
 
-
-// ROUTINE TO POST THE HANDLE OF THE CURRENT USER TO THE RUNNING WINVNC, IN ORDER
-// THAT IT CAN LOAD THE APPROPRIATE SETTINGS.  THIS IS USED ONLY BY THE SVCHELPER
-// OPTION, WHEN RUNNING UNDER NT
 BOOL
 vncService::PostUserHelperMessage()
 {
-	// - Check the platform type
-	if (!IsWinNT())
-		return TRUE;
-
-	// - Get the current process ID
-	DWORD processId = GetCurrentProcessId();
-
-	// - Post it to the existing WinVNC
-	int retries = 6;
-	while (!PostToWinVNC(MENU_SERVICEHELPER_MSG, 0, (LPARAM)processId) && retries--)
-		omni_thread::sleep(10);
-
-	// - Wait until it's been used
-	omni_thread::sleep(5);
-
-	return retries;
+	// NT service-helper mechanism: the helper process posts its process ID to
+	// the running service so the service can duplicate its user token.  There
+	// are no tokens and no services here.
+	return TRUE;
 }
 
 BOOL
 vncService::PostReloadMessage()
 {
-	// - Check the platform type
-	if (!IsWinNT())
-		return TRUE;
-
-	// - Get the current process ID
-	DWORD processId = GetCurrentProcessId();
-
-	// - Post it to the existing WinVNC
-	// FIXME: Code duplication, see PostUserHelperMessage().
-	int retries = 6;
-	while (!PostToWinVNC(MENU_RELOAD_MSG, 0, (LPARAM)processId) && retries--)
-		omni_thread::sleep(10);
-
-	// - Wait until it's been used
-	omni_thread::sleep(5);
-
-	return retries;
-}
-
-
-// ROUTINE TO PROCESS AN INCOMING INSTANCE OF THE ABOVE MESSAGE
-BOOL
-vncService::ProcessUserHelperMessage(DWORD processId) {
-	// - Check the platform type
-	if (!IsWinNT() || !vncService::RunningAsService())
-		return TRUE;
-
-	// - Close the HKEY_CURRENT_USER key, to force NT to reload it for the new user
-	// NB: Note that this is _really_ dodgy if ANY other thread is accessing the key!
-	if (RegCloseKey(HKEY_CURRENT_USER) != ERROR_SUCCESS) {
-		vnclog.Print(LL_INTERR, VNCLOG("failed to close current registry hive\n"));
+	// Kept functional - this is a plain message post and the properties reload
+	// is useful on any platform.
+	if (!PostToWinVNC(MENU_RELOAD_MSG, 0, 0))
 		return FALSE;
-	}
 
-	// - Revert to our own identity
-	RevertToSelf();
-	g_impersonating_user = FALSE;
-	CloseHandle(g_impersonation_token);
-	g_impersonation_token = 0;
-
-	// - Open the specified process
-	HANDLE processHandle = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, processId);
-	if (processHandle == NULL) {
-		vnclog.Print(LL_INTERR, VNCLOG("failed to open specified process, error=%d\n"),
-					 GetLastError());
-		return FALSE;
-	}
-
-	// - Get the token for the given process
-	HANDLE userToken = NULL;
-	if (!OpenProcessToken(processHandle, TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_IMPERSONATE, &userToken)) {
-		vnclog.Print(LL_INTERR, VNCLOG("failed to get user token, error=%d\n"),
-					 GetLastError());
-		CloseHandle(processHandle);
-		return FALSE;
-	}
-	CloseHandle(processHandle);
-
-	// - Set this thread to impersonate them
-	if (!ImpersonateLoggedOnUser(userToken)) {
-		vnclog.Print(LL_INTERR, VNCLOG("failed to impersonate user, error=%d\n"),
-					 GetLastError());
-		CloseHandle(userToken);
-		return FALSE;
-	}
-
-	g_impersonating_user = TRUE;
-	g_impersonation_token = userToken;
-	vnclog.Print(LL_INTINFO, VNCLOG("impersonating logged on user\n"));
 	return TRUE;
 }
 
-bool vncService::tryImpersonate()
+BOOL
+vncService::ProcessUserHelperMessage(DWORD processId)
 {
-	if (!IsWinNT() || !vncService::RunningAsService())
-		return true;
+	// Counterpart of PostUserHelperMessage: would OpenProcess the helper,
+	// OpenProcessToken it and DuplicateToken the result.  No security model
+	// here.
+	return FALSE;
+}
 
-	if (!g_impersonating_user) {
-		vnclog.Print(LL_INTERR, VNCLOG("impersonation failure, user unknown\n"));
-		return false;
-	}
-	if (!ImpersonateLoggedOnUser(g_impersonation_token)) {
-		vnclog.Print(LL_INTERR, VNCLOG("user impersonation failure, error=%d\n"),
-					 GetLastError());
-		return false;
-	}
-
-	vnclog.Print(LL_INTINFO, VNCLOG("impersonated logged on user\n"));
+bool
+vncService::tryImpersonate()
+{
+	// IMPORTANT: must return TRUE.
+	//
+	// Windows 3.1 has no security model, so there is nothing to impersonate and
+	// no restriction to work around - the server already runs with full access
+	// to everything the logged-on user can reach.
+	//
+	// Returning false here would be a quiet disaster: every file-transfer
+	// handler in vncClient.cpp is written as
+	//
+	//     if (!vncService::tryImpersonate()) { ...send failure to client...; break; }
+	//
+	// so a false return disables file transfer completely and reports it to the
+	// user as an impersonation failure.
 	return true;
 }
 
-void vncService::undoImpersonate()
+void
+vncService::undoImpersonate()
 {
-	RevertToSelf();
-	vnclog.Print(LL_INTINFO, VNCLOG("reverted impersonation\n"));
+	// Nothing was impersonated.  Deliberately does NOT call RevertToSelf():
+	// that is an ADVAPI32 import we do not need, and calling it without a
+	// preceding impersonation is meaningless.
 }
 
-// SERVICE MAIN ROUTINE
 int
 vncService::WinVNCServiceMain()
 {
-	typedef DWORD (WINAPI * RegisterServiceProc)(DWORD, DWORD);
-	const ULONG RSP_SIMPLE_SERVICE = 0x00000001;
-	const ULONG RSP_UNREGISTER_SERVICE = 0x00000000;
-
-	g_servicemode = TRUE;
-
-	// How to run as a service depends upon the OS being used
-	switch (g_platform_id)
-	{
-
-		// Windows 95/98
-	case VER_PLATFORM_WIN32_WINDOWS:
-		{
-			// Obtain a handle to the kernel library
-			HINSTANCE kerneldll = LoadLibrary("KERNEL32.DLL");
-			if (kerneldll == NULL)
-				break;
-
-			// And find the RegisterServiceProcess function
-			RegisterServiceProc RegisterService;
-			RegisterService = (RegisterServiceProc) GetProcAddress(kerneldll, "RegisterServiceProcess");
-			if (RegisterService == NULL)
-				break;
-
-			// Register this process with the OS as a service!
-			RegisterService(NULL, RSP_SIMPLE_SERVICE);
-
-			// Run the service itself
-			WinVNCAppMain();
-
-			// Then remove the service from the system service table
-			RegisterService(NULL, RSP_UNREGISTER_SERVICE);
-
-			// Free the kernel library
-			FreeLibrary(kerneldll);
-
-			// *** If we don't kill the process directly here, then 
-			// for some reason, WinVNC crashes...
-			// *** Is this now fixed (with the stdcall patch above)?
-			//ExitProcess(0);
-		}
-		break;
-
-		// Windows NT
-	case VER_PLATFORM_WIN32_NT:
-		{
-			// Create a service entry table
-			SERVICE_TABLE_ENTRY dispatchTable[] =
-		    {
-				{VNCSERVICENAME, (LPSERVICE_MAIN_FUNCTION)ServiceMain},
-				{NULL, NULL}
-			};
-
-			// Call the service control dispatcher with our entry table
-			if (!StartServiceCtrlDispatcher(dispatchTable))
-				LogErrorMsg("StartServiceCtrlDispatcher failed.");
-		}
-		break;
-
-	};
-
-	return 0;
-}
-
-// SERVICE MAIN ROUTINE
-void WINAPI ServiceMain(DWORD argc, char**argv)
-{
-	// Register the service control handler
-    g_hstatus = RegisterServiceCtrlHandler(VNCSERVICENAME, ServiceCtrl);
-
-    if (g_hstatus == 0)
-		return;
-
-	// Set up some standard service state values
-    g_srvstatus.dwServiceType = SERVICE_WIN32 | SERVICE_INTERACTIVE_PROCESS;
-    g_srvstatus.dwServiceSpecificExitCode = 0;
-
-	// Give this status to the SCM
-    if (!ReportStatus(
-        SERVICE_START_PENDING,	// Service state
-        NO_ERROR,				// Exit code type
-        15000))					// Hint as to how long WinVNC should have hung before you assume error
-	{
-        ReportStatus(
-			SERVICE_STOPPED,
-			g_error,
-            0);
-		return;
-	}
-
-	// Now start the service for real
-    omni_thread *workthread = omni_thread::create(ServiceWorkThread);
-    return;
-}
-
-// SERVICE START ROUTINE - thread that calls WinVNCAppMain
-void ServiceWorkThread(void *arg)
-{
-	// Save the current thread identifier
-	g_servicethread = GetCurrentThreadId();
-
-    // report the status to the service control manager.
-    //
-    if (!ReportStatus(
-        SERVICE_RUNNING,       // service state
-        NO_ERROR,              // exit code
-        0))                    // wait hint
-		return;
-
-	// RUN!
-	WinVNCAppMain();
-
-	// Mark that we're no longer running
-	g_servicethread = NULL;
-
-	// Tell the service manager that we've stopped.
-    ReportStatus(
-		SERVICE_STOPPED,
-		g_error,
-		0);
-}
-
-// SERVICE STOP ROUTINE - post a quit message to the relevant thread
-void ServiceStop()
-{
-	// Post a quit message to the main service thread
-	if (g_servicethread != NULL)
-	{
-		vnclog.Print(LL_INTINFO, VNCLOG("quitting from ServiceStop\n"));
-		PostThreadMessage(g_servicethread, WM_QUIT, 0, 0);
-	}
-}
-
-// SERVICE INSTALL ROUTINE
-int
-vncService::ReinstallService(BOOL silent) {
-	RemoveService(1);
-	InstallService(silent);
-	return 0;
+	MessageBox(NULL,
+		"Service mode is not available on this version of Windows.\r\n\r\n"
+		"Run WinVNC normally instead - it will appear as an ordinary "
+		"application.",
+		szAppName, MB_ICONINFORMATION | MB_OK);
+	return 1;
 }
 
 int
 vncService::InstallService(BOOL silent)
 {
-	const int pathlength = 2048;
-	char path[pathlength];
-	char servicecmd[pathlength];
-
-	// Get the filename of this executable
-    if (GetModuleFileName(NULL, path, pathlength-(strlen(winvncRunService)+2)) == 0) {
-		if (!silent) {
-			MessageBox(NULL, "Unable to install WinVNC service", szAppName, MB_ICONEXCLAMATION | MB_OK);
-		}
-		return 0;
-    }
-
-	// Append the service-start flag to the end of the path:
-	if (strlen(path) + 4 + strlen(winvncRunService) < pathlength)
-		sprintf(servicecmd, "\"%s\" %s", path, winvncRunService);
-	else
-		return 0;
-
-	// How to add the WinVNC service depends upon the OS
-	switch (g_platform_id)
-	{
-
-		// Windows 95/98
-	case VER_PLATFORM_WIN32_WINDOWS:
-		{
-			// Locate the RunService registry entry
-			HKEY runservices;
-			if (RegCreateKey(HKEY_LOCAL_MACHINE, 
-				"Software\\Microsoft\\Windows\\CurrentVersion\\RunServices",
-				&runservices) != ERROR_SUCCESS)
-			{
-				if (!silent) {
-					MessageBox(NULL, "The SCM could not be contacted - the WinVNC service was not installed", szAppName, MB_ICONEXCLAMATION | MB_OK);
-				}
-				break;
-			}
-
-			// Attempt to add a WinVNC key
-			if (RegSetValueEx(runservices, szAppName, 0, REG_SZ, (unsigned char *)servicecmd, strlen(servicecmd)+1) != ERROR_SUCCESS)
-			{
-				RegCloseKey(runservices);
-				if (!silent) {
-					MessageBox(NULL, "The WinVNC service could not be registered", szAppName, MB_ICONEXCLAMATION | MB_OK);
-				}
-				break;
-			}
-
-			RegCloseKey(runservices);
-
-			// We have successfully installed the service!
-			if (!silent) {
-				vncTimedMsgBox::Do(
-					"The WinVNC service was successfully installed\n"
-					"The service will start now and will automatically\n"
-					"be run the next time this machine is reset",
-					szAppName,
-					MB_ICONINFORMATION | MB_OK);
-			}
-
-			// Run the service...
-			STARTUPINFO si;
-			si.cb = sizeof(si);
-			si.cbReserved2 = 0;
-			si.lpReserved = NULL;
-			si.lpReserved2 = NULL;
-			si.dwFlags = 0;
-			si.lpTitle = NULL;
-			PROCESS_INFORMATION pi;
-			if (!CreateProcess(
-				NULL, servicecmd,							// Program name & path
-				NULL, NULL,									// Security attributes
-				FALSE,										// Inherit handles?
-				NORMAL_PRIORITY_CLASS,						// Extra startup flags
-				NULL,										// Environment table
-				NULL,										// Current directory
-				&si,
-				&pi
-				))
-			{
-				if (!silent) {
-					MessageBox(NULL, "The WinVNC service failed to start",
-							   szAppName, MB_ICONSTOP | MB_OK);
-				}
-				break;
-			}
-		}
-		break;
-
-		// Windows NT
-	case VER_PLATFORM_WIN32_NT:
-		{
-			SC_HANDLE   hservice;
-		    SC_HANDLE   hsrvmanager;
-
-			// Open the default, local Service Control Manager database
-		    hsrvmanager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
-			if (hsrvmanager == NULL)
-			{
-				if (!silent) {
-					MessageBox(NULL,
-						"The Service Control Manager could not be contacted - the WinVNC service was not registered",
-						szAppName,
-						MB_ICONEXCLAMATION | MB_OK);
-				}
-				break;
-			}
-
-			// Create an entry for the WinVNC service
-			hservice = CreateService(
-				hsrvmanager,				// SCManager database
-				VNCSERVICENAME,				// name of service
-				VNCSERVICEDISPLAYNAME,		// name to display
-				SERVICE_ALL_ACCESS,			// desired access
-				SERVICE_WIN32_OWN_PROCESS | SERVICE_INTERACTIVE_PROCESS,
-											// service type
-				SERVICE_AUTO_START,			// start type
-				SERVICE_ERROR_NORMAL,		// error control type
-				servicecmd,					// service's binary
-				NULL,						// no load ordering group
-				NULL,						// no tag identifier
-				VNCDEPENDENCIES,			// dependencies
-				NULL,						// LocalSystem account
-				NULL);						// no password
-			if (hservice == NULL)
-			{
-				DWORD error = GetLastError();
-				if (!silent) {
-					if (error == ERROR_SERVICE_EXISTS) {
-						MessageBox(NULL,
-							"The WinVNC service is already registered",
-							szAppName,
-							MB_ICONEXCLAMATION | MB_OK);
-					} else {
-						MessageBox(NULL,
-							"The WinVNC service could not be registered",
-							szAppName,
-							MB_ICONEXCLAMATION | MB_OK);
-					}
-				}
- 				CloseServiceHandle(hsrvmanager);
-				break;
-			}
-			CloseServiceHandle(hsrvmanager);
-			CloseServiceHandle(hservice);
-
-			// Now install the servicehelper registry setting...
-			// Locate the RunService registry entry
-			HKEY runapps;
-			if (RegCreateKey(HKEY_LOCAL_MACHINE, 
-				"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-				&runapps) != ERROR_SUCCESS)
-			{
-				if (!silent) {
-					MessageBox(NULL, "WARNING:Unable to install the ServiceHelper hook\nGlobal user-specific registry settings will not be loaded", szAppName, MB_ICONEXCLAMATION | MB_OK);
-				}
-			} else {
-				char servicehelpercmd[pathlength];
-
-				// Append the service-helper-start flag to the end of the path:
-				if (strlen(path) + 4 + strlen(winvncRunServiceHelper) < pathlength)
-					sprintf(servicehelpercmd, "\"%s\" %s", path, winvncRunServiceHelper);
-				else
-					return 0;
-
-				// Add the VNCserviceHelper entry
-				if (RegSetValueEx(runapps, szAppName, 0, REG_SZ,
-					(unsigned char *)servicehelpercmd, strlen(servicehelpercmd)+1) != ERROR_SUCCESS)
-				{
-					if (!silent) {
-						MessageBox(NULL, "WARNING:Unable to install the ServiceHelper hook\nGlobal user-specific registry settings will not be loaded", szAppName, MB_ICONEXCLAMATION | MB_OK);
-					}
-				}
-				RegCloseKey(runapps);
-			}
-
-			// Everything went fine
-			if (!silent) {
-				vncTimedMsgBox::Do(
-					"The WinVNC service was successfully registered\n"
-					"The service may be started from the Control Panel, and will\n"
-					"automatically be run the next time this machine is reset",
-					szAppName,
-					MB_ICONINFORMATION | MB_OK);
-			}
-		}
-		break;
-	};
-
-	return 0;
+	if (!silent) {
+		MessageBox(NULL,
+			"Service installation is not available on this version of "
+			"Windows.\r\n\r\n"
+			"To start WinVNC automatically, put a shortcut to it in your "
+			"Startup group instead.",
+			szAppName, MB_ICONINFORMATION | MB_OK);
+	}
+	return 1;
 }
 
-// SERVICE REMOVE ROUTINE
+int
+vncService::ReinstallService(BOOL silent)
+{
+	return InstallService(silent);
+}
+
 int
 vncService::RemoveService(BOOL silent)
 {
-	// How to remove the WinVNC service depends upon the OS
-	switch (g_platform_id)
-	{
-
-		// Windows 95/98
-	case VER_PLATFORM_WIN32_WINDOWS:
-		{
-			// Locate the RunService registry entry
-			HKEY runservices;
-			if (RegOpenKey(HKEY_LOCAL_MACHINE, 
-				"Software\\Microsoft\\Windows\\CurrentVersion\\RunServices",
-				&runservices) != ERROR_SUCCESS)
-			{
-				if (!silent) {
-					MessageBox(NULL, "The Service Control Manager could not be contacted - the WinVNC service was not unregistered", szAppName, MB_ICONEXCLAMATION | MB_OK);
-				}
-			}
-			else
-			{
-				// Attempt to delete the WinVNC key
-				if (RegDeleteValue(runservices, szAppName) != ERROR_SUCCESS)
-				{
-					RegCloseKey(runservices);
-					if (!silent) {
-						MessageBox(NULL, "The WinVNC service could not be unregistered", szAppName, MB_ICONEXCLAMATION | MB_OK);
-					}
-				}
-
-				RegCloseKey(runservices);
-				break;
-			}
-
-			// Try to kill any running copy of WinVNC
-			if (!KillRunningCopy())
-			{
-				if (!silent) {
-					MessageBox(NULL,
-						"The WinVNC service could not be contacted",
-						szAppName,
-						MB_ICONEXCLAMATION | MB_OK);
-				}
-				break;
-			}
-
-			// We have successfully removed the service!
-			if (!silent) {
-				vncTimedMsgBox::Do("The WinVNC service has been unregistered", szAppName, MB_ICONINFORMATION | MB_OK);
-			}
-		}
-		break;
-
-		// Windows NT
-	case VER_PLATFORM_WIN32_NT:
-		{
-			SC_HANDLE   hservice;
-			SC_HANDLE   hsrvmanager;
-
-			// Attempt to remove the service-helper hook
-			HKEY runapps;
-			if (RegOpenKey(HKEY_LOCAL_MACHINE, 
-				"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-				&runapps) == ERROR_SUCCESS)
-			{
-				// Attempt to delete the WinVNC key
-				if (RegDeleteValue(runapps, szAppName) != ERROR_SUCCESS)
-				{
-					if (!silent) {
-						MessageBox(NULL, "WARNING:The ServiceHelper hook entry could not be removed from the registry", szAppName, MB_ICONEXCLAMATION | MB_OK);
-					}
-				}
-				RegCloseKey(runapps);
-			}
-
-			// Open the SCM
-		    hsrvmanager = OpenSCManager(
-                        NULL,                   // machine (NULL == local)
-                        NULL,                   // database (NULL == default)
-                        SC_MANAGER_ALL_ACCESS   // access required
-                        );
-		    if (hsrvmanager)
-		    {
-		        hservice = OpenService(hsrvmanager, VNCSERVICENAME, SERVICE_ALL_ACCESS);
-
-				if (hservice != NULL)
-				{
-					SERVICE_STATUS status;
-
-					// Try to stop the WinVNC service
-					if (ControlService(hservice, SERVICE_CONTROL_STOP, &status))
-					{
-						while(QueryServiceStatus(hservice, &status))
-						{
-							if (status.dwCurrentState == SERVICE_STOP_PENDING)
-								Sleep(1000);
-							else
-								break;
-						}
-
-						if (status.dwCurrentState != SERVICE_STOPPED) {
-							if (!silent) {
-								MessageBox(NULL, "The WinVNC service could not be stopped", szAppName, MB_ICONEXCLAMATION | MB_OK);
-							}
-						}
-					}
-
-					// Now remove the service from the SCM
-					if (DeleteService(hservice)) {
-						if (!silent) {
-							vncTimedMsgBox::Do("The WinVNC service has been unregistered", szAppName, MB_ICONINFORMATION | MB_OK);
-						}
-					} else {
-						DWORD error = GetLastError();
-						if (error == ERROR_SERVICE_MARKED_FOR_DELETE) {
-							if (!silent)
-								MessageBox(NULL, "The WinVNC service is already marked to be unregistered", szAppName, MB_ICONEXCLAMATION | MB_OK);
-						} else {
-							if (!silent)
-								MessageBox(NULL, "The WinVNC service could not be unregistered", szAppName, MB_ICONEXCLAMATION | MB_OK);
-						}
-					}
-					CloseServiceHandle(hservice);
-				}
-				else if (!silent)
-					MessageBox(NULL, "The WinVNC service could not be found", szAppName, MB_ICONEXCLAMATION | MB_OK);
-
-				CloseServiceHandle(hsrvmanager);
-			}
-			else if (!silent)
-				MessageBox(NULL, "The Service Control Manager could not be contacted - the WinVNC service was not unregistered", szAppName, MB_ICONEXCLAMATION | MB_OK);
-		}
-		break;
-	};
-	return 0;
-}
-
-// USEFUL SERVICE SUPPORT ROUTINES
-
-// Service control routine
-void WINAPI ServiceCtrl(DWORD ctrlcode)
-{
-	// What control code have we been sent?
-    switch(ctrlcode)
-    {
-
-	case SERVICE_CONTROL_STOP:
-		// STOP : The service must stop
-		g_srvstatus.dwCurrentState = SERVICE_STOP_PENDING;
-        ServiceStop();
-        break;
-
-    case SERVICE_CONTROL_INTERROGATE:
-		// QUERY : Service control manager just wants to know our state
-		break;
-
-	default:
-		// Control code not recognised
-		break;
-
-    }
-
-	// Tell the control manager what we're up to.
-    ReportStatus(g_srvstatus.dwCurrentState, NO_ERROR, 0);
-}
-
-// Service manager status reporting
-BOOL ReportStatus(DWORD state,
-				  DWORD exitcode,
-				  DWORD waithint)
-{
-	static DWORD checkpoint = 1;
-	BOOL result = TRUE;
-
-	// If we're in the start state then we don't want the control manager
-	// sending us control messages because they'll confuse us.
-    if (state == SERVICE_START_PENDING)
-		g_srvstatus.dwControlsAccepted = 0;
-	else
-		g_srvstatus.dwControlsAccepted = SERVICE_ACCEPT_STOP;
-
-	// Save the new status we've been given
-	g_srvstatus.dwCurrentState = state;
-	g_srvstatus.dwWin32ExitCode = exitcode;
-	g_srvstatus.dwWaitHint = waithint;
-
-	// Update the checkpoint variable to let the SCM know that we
-	// haven't died if requests take a long time
-	if ((state == SERVICE_RUNNING) || (state == SERVICE_STOPPED))
-		g_srvstatus.dwCheckPoint = 0;
-	else
-        g_srvstatus.dwCheckPoint = checkpoint++;
-
-	// Tell the SCM our new status
-	if (!(result = SetServiceStatus(g_hstatus, &g_srvstatus)))
-		LogErrorMsg("SetServiceStatus failed");
-
-    return result;
-}
-
-// Error reporting
-void LogErrorMsg(char *message)
-{
-    char	msgbuff[256];
-    HANDLE	heventsrc;
-    char *	strings[2];
-
-	// Save the error code
-	g_error = GetLastError();
-
-	// Use event logging to log the error
-    heventsrc = RegisterEventSource(NULL, VNCSERVICENAME);
-
-	sprintf(msgbuff, "%.200s error: %d", VNCSERVICENAME, g_error);
-    strings[0] = msgbuff;
-    strings[1] = message;
-
-	if (heventsrc != NULL)
-	{
-		MessageBeep(MB_OK);
-
-		ReportEvent(
-			heventsrc,				// handle of event source
-			EVENTLOG_ERROR_TYPE,	// event type
-			0,						// event category
-			0,						// event ID
-			NULL,					// current user's SID
-			2,						// strings in 'strings'
-			0,						// no bytes of raw data
-			(const char **)strings,	// array of error strings
-			NULL);					// no raw data
-
-		DeregisterEventSource(heventsrc);
+	if (!silent) {
+		MessageBox(NULL,
+			"Service removal is not available on this version of Windows.",
+			szAppName, MB_ICONINFORMATION | MB_OK);
 	}
+	return 1;
+}
+
+// Error reporting helper, retained because WinVNC.cpp and vncMenu.cpp
+// reference it.
+//
+// The NT version wrote to the event log via RegisterEventSource /
+// ReportEvent / DeregisterEventSource.  There is no event log on Windows 3.1,
+// so this goes to the normal VNC log instead.
+void
+LogErrorMsg(char *message)
+{
+	if (message == NULL)
+		message = "(no message)";
+
+	vnclog.Print(LL_INTERR, VNCLOG("%s (error %d)\n"),
+				 message, (int)GetLastError());
 }

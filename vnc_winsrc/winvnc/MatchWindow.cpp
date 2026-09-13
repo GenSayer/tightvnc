@@ -25,6 +25,7 @@
 //////////////////////////////////////////////////////////////////////
 
 #include "stdhdrs.h"
+#include "Win32sApi.h"	// WIN32S: Win32sSetWindowRgn
 #include "MatchWindow.h"
 #include "vncProperties.h"
 
@@ -45,9 +46,13 @@ CMatchWindow::CMatchWindow(vncServer* pServer,int left,int top,int right,int bot
 	m_bSized=FALSE;
 	m_pServer=pServer;
 
-	WNDCLASSEX wcex;
-
-	wcex.cbSize = sizeof(WNDCLASSEX); 
+	// WIN32S: plain WNDCLASS / RegisterClass, not WNDCLASSEX / RegisterClassEx.
+	//
+	// RegisterClassEx is Win95/NT only and is absent from the Win32s USER32.  The
+	// linker records it as an import, so its presence stops the EXE from LOADING
+	// on Win32s - the process never starts and there is no diagnostic.  hIconSm,
+	// the only extra field, is NULL here anyway.
+	WNDCLASS wcex;
 
 	wcex.style			= CS_HREDRAW | CS_VREDRAW;
 	wcex.lpfnWndProc	= (WNDPROC)CMatchWindow::WndProc;
@@ -59,10 +64,13 @@ CMatchWindow::CMatchWindow(vncServer* pServer,int left,int top,int right,int bot
 	wcex.hbrBackground	= (HBRUSH)(COLOR_WINDOW+1);
 	wcex.lpszMenuName	= NULL;
 	wcex.lpszClassName	= szMatchWindowClass;
-	wcex.hIconSm		= NULL;
 
-	RegisterClassEx(&wcex);
+	RegisterClass(&wcex);
 
+	// WS_EX_TOOLWINDOW is Win95+.  Passing an unknown extended style bit is
+	// ignored rather than fatal, so this is safe - but note that on Windows 3.1
+	// the window therefore gets a normal (thicker) border than intended.
+	// WS_EX_TOPMOST does exist in 3.1.
 	m_hWnd=CreateWindowEx(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,			//dwExStyle
 		szMatchWindowClass,		//pointer to registered class name
   		"ScreenShared",					// pointer to window name
@@ -405,14 +413,37 @@ void CMatchWindow::ChangeRegion()
     GetWindowRect(m_hWnd,&rect);
     OffsetRect(&rect,-rect.left,-rect.top);
 
+    // WIN32S: CreateRectRgn rather than CreateRectRgnIndirect.
+    //
+    // CreateRectRgnIndirect takes a pointer to a RECT, and pointer arguments do
+    // not survive the 32->16 bit thunk reliably - see the long note in
+    // vncRegion::AddRect, where the same call silently disabled the entire
+    // screen-update path.  CreateRectRgn takes four integers.
+    //
+    // SetWindowRgn is ALSO a Win95+ API absent from the Win32s USER32, and
+    // because the linker records it as an import its mere presence would stop
+    // the EXE from LOADING.  Win32sSetWindowRgn resolves it at run time; when it
+    // is unavailable the frame stays a plain rectangle, which is cosmetic.
+    //
+    // OWNERSHIP: on success the system takes ownership of wndRgn and we must NOT
+    // delete it.  On failure we still own it.  The original never handled the
+    // failure case and would have leaked the region on every call - and
+    // ChangeRegion() runs on every mouse move while picking a window.
     wndRgn=CreateRectRgn(0, 0, 1,1);
-    wndHiRgn=CreateRectRgnIndirect(&rect);
+    wndHiRgn=CreateRectRgn(rect.left, rect.top, rect.right, rect.bottom);
     InflateRect(&rect,-MW_WIDTH,-MW_WIDTH);
-    wndLoRgn=CreateRectRgnIndirect(&rect);
-    CombineRgn(wndRgn,wndHiRgn,wndLoRgn,RGN_DIFF);
-    SetWindowRgn(m_hWnd,wndRgn, TRUE);
-    DeleteObject(wndHiRgn);
-    DeleteObject(wndLoRgn);
+    wndLoRgn=CreateRectRgn(rect.left, rect.top, rect.right, rect.bottom);
+    if (wndRgn != NULL && wndHiRgn != NULL && wndLoRgn != NULL) {
+        CombineRgn(wndRgn,wndHiRgn,wndLoRgn,RGN_DIFF);
+        if (!Win32sSetWindowRgn(m_hWnd, wndRgn, TRUE)) {
+            // Not supported - we still own the region.
+            DeleteObject(wndRgn);
+        }
+    } else if (wndRgn != NULL) {
+        DeleteObject(wndRgn);
+    }
+    if (wndHiRgn != NULL) DeleteObject(wndHiRgn);
+    if (wndLoRgn != NULL) DeleteObject(wndLoRgn);
 }
 
 BOOL CMatchWindow::ModifyPosition(int left, int top, int right, int bottom)

@@ -42,7 +42,13 @@
 void ClientConnection::ProcessLocalClipboardChange()
 {
 	vnclog.Print(2, _T("Clipboard changed\n"));
-	
+
+	// WM_DRAWCLIPBOARD arrives for as long as we are in the viewer chain, which
+	// includes the window-destruction window.  Also skip the work entirely if
+	// the session is not live - SendClientCutText would just fail.
+	if (m_hwnd == NULL)
+		return;
+
 	HWND hOwner = GetClipboardOwner();
 	if (hOwner == m_hwnd) {
 		vnclog.Print(2, _T("We changed it - ignore!\n"));
@@ -51,8 +57,17 @@ void ClientConnection::ProcessLocalClipboardChange()
 		m_initialClipboardSeen = true;
 	} else if (!m_opts.m_DisableClipboard) {
 		
-		// The clipboard should not be modified by more than one thread at once
+		// (No-op lock: single-threaded.)
 		omni_mutex_lock l(m_clipMutex);
+
+		// do { ... } while(0) so that the early exits below use "break" and
+		// still fall through to the clipboard-chain pass at the end of the
+		// function.  A plain "return" here would silently drop us out of the
+		// viewer chain's message relay, which breaks every other clipboard
+		// viewer on the system.
+		do {
+		if (!m_running || m_sock == INVALID_SOCKET)
+			break;
 		
 		if (OpenClipboard(m_hwnd)) { 
 			HGLOBAL hglb = GetClipboardData(CF_TEXT); 
@@ -60,34 +75,63 @@ void ClientConnection::ProcessLocalClipboardChange()
 				CloseClipboard();
 			} else {
 				LPSTR lpstr = (LPSTR) GlobalLock(hglb);  
-				
-				char *contents = new char[strlen(lpstr) + 1];
-				char *unixcontents = new char[strlen(lpstr) + 1];
-				strcpy(contents,lpstr);
+				if (lpstr == NULL) {
+					// GlobalLock can fail; the original dereferenced the result
+					// immediately in strlen().
+					CloseClipboard();
+				} else {
+				size_t srclen = strlen(lpstr);
+
+				// Cap what we send.  A user copying a large file's worth of text
+				// on the host would otherwise make the viewer allocate two
+				// buffers of that size out of the Win32s heap and then block in
+				// send() until it all goes out.
+				if (srclen > 0x00010000)		// 64 KB
+					srclen = 0x00010000;
+
+				char *contents = new char[srclen + 1];
+				char *unixcontents = new char[srclen + 1];
+				if (contents == NULL || unixcontents == NULL) {
+					if (contents != NULL) delete [] contents;
+					if (unixcontents != NULL) delete [] unixcontents;
+					GlobalUnlock(hglb);
+					CloseClipboard();
+					break;
+				}
+				memcpy(contents, lpstr, srclen);
+				contents[srclen] = '\0';
 				GlobalUnlock(hglb); 
 				CloseClipboard();       		
 				
 				// Translate to Unix-format lines before sending
-				int j = 0;
-				for (int i = 0; contents[i] != '\0'; i++) {
+				size_t j = 0;
+				for (size_t i = 0; i < srclen && contents[i] != '\0'; i++) {
 					if (contents[i] != '\x0d') {
 						unixcontents[j++] = contents[i];
 					}
 				}
 				unixcontents[j] = '\0';
 				try {
-					SendClientCutText(unixcontents, strlen(unixcontents));
+					SendClientCutText(unixcontents, j);
 				} catch (WarningException &e) {
 					vnclog.Print(0, _T("Exception while sending clipboard text : %s\n"), e.m_info);
-					DestroyWindow(m_hwnd1);
+					if (m_hwnd1 != NULL)
+						PostMessage(m_hwnd1, WM_CLOSE, 0, 0);
+					else
+						m_dead = true;
 				}
 				delete [] contents; 
 				delete [] unixcontents;
+				}
 			}
 		}
+		} while (0);
 	}
-	// Pass the message to the next window in clipboard viewer chain
-	::SendMessage(m_hwndNextViewer, WM_DRAWCLIPBOARD , 0,0); 
+	// Pass the message to the next window in clipboard viewer chain.
+	// Guard against NULL: we are only in the chain if SetClipboardViewer
+	// succeeded, and it returns NULL when we are the only viewer.
+	if (m_hwndNextViewer != NULL)
+		::SendMessage(m_hwndNextViewer, WM_DRAWCLIPBOARD , 0,0); 
 }
 
 // We've read some text from the remote server, and
@@ -99,38 +143,54 @@ void ClientConnection::UpdateLocalClipboard(char *buf, size_t len) {
 	if (m_opts.m_DisableClipboard)
 		return;
 
-	// Copy to wincontents replacing LF with CR-LF
+	if (buf == NULL)
+		return;
+
+	// Copy to wincontents replacing LF with CR-LF.
+	//
+	// Two bugs fixed here.  First, the loop condition read m_netbuf[i] but
+	// indexed buf[i]: those are the same pointer today only because the caller
+	// happens to pass m_netbuf, and CheckBufferSize() can reallocate m_netbuf,
+	// so this was a latent wild read.  Second, nothing bounded the loop by len,
+	// so a server payload without a NUL ran off the end of the buffer.
 	char *wincontents = new char[len * 2 + 1];
-	int j = 0;
-	for (int i = 0; m_netbuf[i] != 0; i++, j++) {
+	if (wincontents == NULL)
+		return;
+	size_t j = 0;
+	for (size_t i = 0; i < len && buf[i] != '\0'; i++) {
         if (buf[i] == '\x0a') {
 			wincontents[j++] = '\x0d';
-            len++;
         }
-		wincontents[j] = buf[i];
+		wincontents[j++] = buf[i];
 	}
 	wincontents[j] = '\0';
+	size_t winlen = j;
 
-    // The clipboard should not be modified by more than one thread at once
+    // (The clipboard mutex is a no-op now: single-threaded.)
     {
         omni_mutex_lock l(m_clipMutex);
 
         if (!OpenClipboard(m_hwnd)) {
+			delete [] wincontents;
 	        throw WarningException("Failed to open clipboard\n");
         }
         if (! ::EmptyClipboard()) {
+			CloseClipboard();
+			delete [] wincontents;
 	        throw WarningException("Failed to empty clipboard\n");
         }
 
         // Allocate a global memory object for the text. 
-        HGLOBAL hglbCopy = GlobalAlloc(GMEM_DDESHARE, (len +1) * sizeof(TCHAR));
+        HGLOBAL hglbCopy = GlobalAlloc(GMEM_DDESHARE, (winlen + 1) * sizeof(TCHAR));
         if (hglbCopy != NULL) { 
 	        // Lock the handle and copy the text to the buffer.  
 	        LPTSTR lptstrCopy = (LPTSTR) GlobalLock(hglbCopy); 
-	        memcpy(lptstrCopy, wincontents, len * sizeof(TCHAR)); 
-	        lptstrCopy[len] = (TCHAR) 0;    // null character 
-	        GlobalUnlock(hglbCopy);          // Place the handle on the clipboard.  
-	        SetClipboardData(CF_TEXT, hglbCopy); 
+			if (lptstrCopy != NULL) {
+				memcpy(lptstrCopy, wincontents, winlen * sizeof(TCHAR));
+				lptstrCopy[winlen] = (TCHAR) 0;    // null character
+				GlobalUnlock(hglbCopy);          // Place the handle on the clipboard.
+				SetClipboardData(CF_TEXT, hglbCopy);
+			}
         }
 
         delete [] wincontents;

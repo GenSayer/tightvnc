@@ -46,6 +46,11 @@ class vncHTTPConnect;
 #include <omnithread.h>
 
 // The vncHTTPConnect class itself
+//
+// WIN32S: no threads.  Init() binds and listens; PumpIdle() accepts one
+// connection per call and serves the request synchronously.  See the notes in
+// vncHTTPConnect.cpp about the blocking transaction, and the note at the top of
+// vncSockConnect.cpp about polling versus WSAAsyncSelect.
 class vncHTTPConnect
 {
 public:
@@ -56,6 +61,13 @@ public:
 	// Init
 	virtual VBool Init(vncServer *server, UINT listen_port, BOOL allow_params);
 
+	// Accept and serve at most one HTTP request.  The accept is non-blocking;
+	// the transaction itself is not.  Returns TRUE if a request was served.
+	BOOL PumpIdle();
+
+	// TRUE while the listening socket is usable.
+	BOOL IsListening() { return m_listening && !m_shutdown; }
+
 	// Implementation
 protected:
 	// The listening socket
@@ -64,8 +76,14 @@ protected:
 	// The port to listen on
 	UINT m_listen_port;
 
-	// The in-coming accept thread
-	omni_thread *m_listen_thread;
+	// The server to serve on behalf of (was held by the listen thread).
+	vncServer *m_server;
+
+	// Was vncHTTPListenThread::m_shutdown.
+	BOOL m_shutdown;
+
+	// TRUE once bind+listen have succeeded.
+	BOOL m_listening;
 
 	// Allow passing applet parameters in the URL
 	BOOL m_allow_params;

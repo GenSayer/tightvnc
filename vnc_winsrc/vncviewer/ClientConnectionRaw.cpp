@@ -36,6 +36,18 @@ void ClientConnection::ReadRawRect(rfbFramebufferUpdateRectHeader *pfburh) {
 	UINT numpixels = pfburh->r.w * pfburh->r.h;
     // this assumes at least one byte per pixel. Naughty.
 	UINT numbytes = numpixels * m_minPixelBytes;
+	// TEMP-DIAG (Raw blank): prove the decoder runs with sane geometry.
+	// Bounded to the first 3 rects so the log stays small.
+	{
+		static int s_rawDiag = 0;
+		if (s_rawDiag < 3) {
+			s_rawDiag++;
+			vnclog.Print(0, _T("DIAG Raw rect %d: %dx%d at %d,%d bpp=%d bytes=%u\n"),
+						 s_rawDiag, (int)pfburh->r.w, (int)pfburh->r.h,
+						 (int)pfburh->r.x, (int)pfburh->r.y,
+						 (int)m_myFormat.bitsPerPixel, (unsigned)numbytes);
+		}
+	}
 	// Read in the whole thing
     CheckBufferSize(numbytes);
 	ReadExact(m_netbuf, numbytes);
@@ -43,23 +55,30 @@ void ClientConnection::ReadRawRect(rfbFramebufferUpdateRectHeader *pfburh) {
 	SETUP_COLOR_SHORTCUTS;
 
 	{
-		// No other threads can use bitmap DC
+		// (No-op lock: single-threaded.)
 		omni_mutex_lock l(m_bitmapdcMutex);
-		ObjectSelector b(m_hBitmapDC, m_hBitmap);							  \
-		PaletteSelector p(m_hBitmapDC, m_hPalette);							  \
+		ObjectSelector b(m_hBitmapDC, m_hBitmap);
+		PaletteSelector p(m_hBitmapDC, m_hPalette);
 
-		// This big switch is untidy but fast
+		// WIN32S: was SETPIXELS(), i.e. one SetPixel call per pixel - 307,200
+		// GDI thunks for a 640x480 update, which is why the first screen took
+		// tens of seconds.  DrawPixelBlock builds a DIB and issues one
+		// SetDIBitsToDevice per band of rows instead.  See the long comment on
+		// DrawPixelBlock in ClientConnection.cpp.
 		switch (m_myFormat.bitsPerPixel) {
 		case 8:
-			SETPIXELS(m_netbuf, 8, pfburh->r.x, pfburh->r.y, pfburh->r.w, pfburh->r.h)
-				break;
+			DrawPixelBlock(m_netbuf, 8, pfburh->r.x, pfburh->r.y,
+						   pfburh->r.w, pfburh->r.h);
+			break;
 		case 16:
-			SETPIXELS(m_netbuf, 16, pfburh->r.x, pfburh->r.y, pfburh->r.w, pfburh->r.h)
-				break;
+			DrawPixelBlock(m_netbuf, 16, pfburh->r.x, pfburh->r.y,
+						   pfburh->r.w, pfburh->r.h);
+			break;
 		case 24:
 		case 32:
-			SETPIXELS(m_netbuf, 32, pfburh->r.x, pfburh->r.y, pfburh->r.w, pfburh->r.h)            
-				break;
+			DrawPixelBlock(m_netbuf, 32, pfburh->r.x, pfburh->r.y,
+						   pfburh->r.w, pfburh->r.h);
+			break;
 		default:
 			vnclog.Print(0, _T("Invalid number of bits per pixel: %d\n"), m_myFormat.bitsPerPixel);
 			return;

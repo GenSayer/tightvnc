@@ -45,12 +45,12 @@ ALL : "$(OUTDIR)\WinVNC.exe"
 
 !ELSE 
 
-ALL : "libjpeg - Win32 Release" "zlib - Win32 Release" "omnithread - Win32 Release" "VNCHooks - Win32 Release" "$(OUTDIR)\WinVNC.exe"
+ALL : "libjpeg - Win32 Release" "zlib - Win32 Release" "omnithread - Win32 Release" "$(OUTDIR)\WinVNC.exe"
 
 !ENDIF 
 
 !IF "$(RECURSE)" == "1" 
-CLEAN :"VNCHooks - Win32 ReleaseCLEAN" "omnithread - Win32 ReleaseCLEAN" "zlib - Win32 ReleaseCLEAN" "libjpeg - Win32 ReleaseCLEAN" 
+CLEAN :"omnithread - Win32 ReleaseCLEAN" "zlib - Win32 ReleaseCLEAN" "libjpeg - Win32 ReleaseCLEAN" 
 !ELSE 
 CLEAN :
 !ENDIF 
@@ -73,7 +73,9 @@ CLEAN :
 	-@erase "$(INTDIR)\translate.obj"
 	-@erase "$(INTDIR)\TsSessions.obj"
 	-@erase "$(INTDIR)\vc60.idb"
-	-@erase "$(INTDIR)\VideoDriver.obj"
+	-@erase "$(INTDIR)\VNCHooksStub.obj"
+	-@erase "$(INTDIR)\Win32sApi.obj"
+	-@erase "$(INTDIR)\IniSettings.obj"
 	-@erase "$(INTDIR)\vncAbout.obj"
 	-@erase "$(INTDIR)\vncAcceptDialog.obj"
 	-@erase "$(INTDIR)\vncAcceptReverseDlg.obj"
@@ -112,7 +114,7 @@ CLEAN :
 "$(INTDIR)" :
     if not exist "$(INTDIR)/$(NULL)" mkdir "$(INTDIR)"
 
-CPP_PROJ=/nologo /MT /W3 /GX /O2 /I "D:\MSTOOLS\Include" /I "D:\INetSDK\Include" /I "./omnithread" /I "./zlib" /I ".." /D "NDEBUG" /D "WIN32" /D "_WINDOWS" /D "__WIN32__" /D "__NT__" /D "_WINSTATIC" /D "NCORBA" /D WINVER=0x0400 /Fp"$(INTDIR)\WinVNC.pch" /YX /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
+CPP_PROJ=/nologo /ML /W3 /GX /O2 /I "C:\MSTOOLS\Include" /I "./omnithread" /I "./zlib" /I ".." /D "NDEBUG" /D "WIN32" /D "_WINDOWS" /D "__WIN32__" /D "__NT__" /D "_WINSTATIC" /D "NCORBA" /FI"win32s_fix.h" /Fp"$(INTDIR)\WinVNC.pch" /YX /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
 MTL_PROJ=/nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32 
 RSC_PROJ=/l 0x809 /fo"$(INTDIR)\WinVNC.res" /d "NDEBUG" /d "WITH_JAVA_VIEWER" 
 #BSC32=bscmake.exe
@@ -120,7 +122,7 @@ RSC_PROJ=/l 0x809 /fo"$(INTDIR)\WinVNC.res" /d "NDEBUG" /d "WITH_JAVA_VIEWER"
 #BSC32_SBRS= \
 	
 LINK32=link.exe
-LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comctl32.lib /nologo /subsystem:windows /incremental:no /pdb:"$(OUTDIR)\WinVNC.pdb" /machine:PPC /out:"$(OUTDIR)\WinVNC.exe" 
+LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib comdlg32.lib advapi32.lib /nologo /subsystem:windows,3.10 /incremental:no /pdb:"$(OUTDIR)\WinVNC.pdb" /machine:I386 /out:"$(OUTDIR)\WinVNC.exe" 
 LINK32_OBJS= \
 	"$(INTDIR)\AdministrationControls.obj" \
 	"$(INTDIR)\BuildTime.obj" \
@@ -140,7 +142,6 @@ LINK32_OBJS= \
 	"$(INTDIR)\stdhdrs.obj" \
 	"$(INTDIR)\translate.obj" \
 	"$(INTDIR)\TsSessions.obj" \
-	"$(INTDIR)\VideoDriver.obj" \
 	"$(INTDIR)\vncAbout.obj" \
 	"$(INTDIR)\vncAcceptDialog.obj" \
 	"$(INTDIR)\vncAcceptReverseDlg.obj" \
@@ -167,17 +168,19 @@ LINK32_OBJS= \
 	"$(INTDIR)\vncService.obj" \
 	"$(INTDIR)\vncSockConnect.obj" \
 	"$(INTDIR)\vncTimedMsgBox.obj" \
+	"$(INTDIR)\VNCHooksStub.obj" \
+	"$(INTDIR)\Win32sApi.obj" \
+	"$(INTDIR)\IniSettings.obj" \
 	"$(INTDIR)\VSocket.obj" \
 	"$(INTDIR)\WallpaperUtils.obj" \
 	"$(INTDIR)\WinVNC.obj" \
 	"$(INTDIR)\WinVNC.res" \
-	"$(OUTDIR)\VNCHooks.lib" \
 	"$(OUTDIR)\omnithread.lib" \
 	"$(OUTDIR)\zlib.lib" \
 	"$(OUTDIR)\libjpeg.lib"
 
 "$(OUTDIR)\WinVNC.exe" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
-   cl /c /nologo /Fo.\Release\winvnc\ /Fd.\Release\winvnc /MT BuildTime.cpp
+   cl /c /nologo /Fo.\Release\winvnc\ /Fd.\Release\winvnc /ML BuildTime.cpp
 	 $(LINK32) @<<
   $(LINK32_FLAGS) $(LINK32_OBJS)
 <<
@@ -194,16 +197,16 @@ OutDir=.\Debug
 
 !IF "$(RECURSE)" == "0" 
 
-ALL : "$(OUTDIR)\WinVNC.exe" "$(OUTDIR)\WinVNC.bsc"
+ALL : "$(OUTDIR)\WinVNC.exe"
 
 !ELSE 
 
-ALL : "libjpeg - Win32 Debug" "zlib - Win32 Debug" "omnithread - Win32 Debug" "VNCHooks - Win32 Debug" "$(OUTDIR)\WinVNC.exe" "$(OUTDIR)\WinVNC.bsc"
+ALL : "libjpeg - Win32 Debug" "zlib - Win32 Debug" "omnithread - Win32 Debug" "$(OUTDIR)\WinVNC.exe"
 
 !ENDIF 
 
 !IF "$(RECURSE)" == "1" 
-CLEAN :"VNCHooks - Win32 DebugCLEAN" "omnithread - Win32 DebugCLEAN" "zlib - Win32 DebugCLEAN" "libjpeg - Win32 DebugCLEAN" 
+CLEAN :"omnithread - Win32 DebugCLEAN" "zlib - Win32 DebugCLEAN" "libjpeg - Win32 DebugCLEAN" 
 !ELSE 
 CLEAN :
 !ENDIF 
@@ -245,8 +248,9 @@ CLEAN :
 	-@erase "$(INTDIR)\TsSessions.sbr"
 	-@erase "$(INTDIR)\vc60.idb"
 	-@erase "$(INTDIR)\vc60.pdb"
-	-@erase "$(INTDIR)\VideoDriver.obj"
-	-@erase "$(INTDIR)\VideoDriver.sbr"
+	-@erase "$(INTDIR)\VNCHooksStub.obj"
+	-@erase "$(INTDIR)\Win32sApi.obj"
+	-@erase "$(INTDIR)\IniSettings.obj"
 	-@erase "$(INTDIR)\vncAbout.obj"
 	-@erase "$(INTDIR)\vncAbout.sbr"
 	-@erase "$(INTDIR)\vncAcceptDialog.obj"
@@ -318,7 +322,7 @@ CLEAN :
 "$(INTDIR)" :
     if not exist "$(INTDIR)/$(NULL)" mkdir "$(INTDIR)"
 
-CPP_PROJ=/nologo /MTd /W3 /Gm /GX /ZI /Od /I "D:\MSTOOLS\Include" /I "D:\INetSDK\Include"  /I "./omnithread" /I "./zlib" /I ".." /D "_DEBUG" /D "WIN32" /D "_WINDOWS" /D "__WIN32__" /D "__NT__" /D "_WINSTATIC" /D "NCORBA" /D WINVER=0x0400 /FR"$(INTDIR)\\" /Fp"$(INTDIR)\WinVNC.pch" /YX /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
+CPP_PROJ=/nologo /MLd /W3 /Gm /GX /ZI /Od /I "C:\MSTOOLS\Include"  /I "./omnithread" /I "./zlib" /I ".." /D "_DEBUG" /D "WIN32" /D "_WINDOWS" /D "__WIN32__" /D "__NT__" /D "_WINSTATIC" /D "NCORBA" /FI"win32s_fix.h" /Fp"$(INTDIR)\WinVNC.pch" /YX /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
 MTL_PROJ=/nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32 
 RSC_PROJ=/l 0x809 /fo"$(INTDIR)\WinVNC.res" /d "_DEBUG" /d "WITH_JAVA_VIEWER" 
 #BSC32=bscmake.exe
@@ -331,7 +335,7 @@ RSC_PROJ=/l 0x809 /fo"$(INTDIR)\WinVNC.res" /d "_DEBUG" /d "WITH_JAVA_VIEWER"
 #<<
 
 LINK32=link.exe
-LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comctl32.lib /nologo /subsystem:windows /incremental:yes /pdb:"$(OUTDIR)\WinVNC.pdb" /map:"$(INTDIR)\WinVNC.map" /debug /machine:PPC /out:"$(OUTDIR)\WinVNC.exe" /pdbtype:sept 
+LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib comdlg32.lib advapi32.lib /nologo /subsystem:windows,3.10 /incremental:yes /pdb:"$(OUTDIR)\WinVNC.pdb" /map:"$(INTDIR)\WinVNC.map" /debug /machine:I386 /out:"$(OUTDIR)\WinVNC.exe" /pdbtype:sept 
 LINK32_OBJS= \
 	"$(INTDIR)\AdministrationControls.obj" \
 	"$(INTDIR)\BuildTime.obj" \
@@ -351,7 +355,6 @@ LINK32_OBJS= \
 	"$(INTDIR)\stdhdrs.obj" \
 	"$(INTDIR)\translate.obj" \
 	"$(INTDIR)\TsSessions.obj" \
-	"$(INTDIR)\VideoDriver.obj" \
 	"$(INTDIR)\vncAbout.obj" \
 	"$(INTDIR)\vncAcceptDialog.obj" \
 	"$(INTDIR)\vncAcceptReverseDlg.obj" \
@@ -378,17 +381,19 @@ LINK32_OBJS= \
 	"$(INTDIR)\vncService.obj" \
 	"$(INTDIR)\vncSockConnect.obj" \
 	"$(INTDIR)\vncTimedMsgBox.obj" \
+	"$(INTDIR)\VNCHooksStub.obj" \
+	"$(INTDIR)\Win32sApi.obj" \
+	"$(INTDIR)\IniSettings.obj" \
 	"$(INTDIR)\VSocket.obj" \
 	"$(INTDIR)\WallpaperUtils.obj" \
 	"$(INTDIR)\WinVNC.obj" \
 	"$(INTDIR)\WinVNC.res" \
-	"$(OUTDIR)\VNCHooks.lib" \
 	"$(OUTDIR)\omnithread.lib" \
 	"$(OUTDIR)\zlib.lib" \
 	"$(OUTDIR)\libjpeg.lib"
 
 "$(OUTDIR)\WinVNC.exe" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
-   cl /c /nologo /Fo.\Debug\winvnc\ /Fd.\Debug\winvnc /MTd BuildTime.cpp
+   cl /c /nologo /Fo.\Debug\winvnc\ /Fd.\Debug\winvnc /MLd BuildTime.cpp
 	 $(LINK32) @<<
   $(LINK32_FLAGS) $(LINK32_OBJS)
 <<
@@ -409,12 +414,12 @@ ALL : "$(OUTDIR)\WinVNC.exe"
 
 !ELSE 
 
-ALL : "libjpeg - Win32 Profile" "zlib - Win32 Profile" "omnithread - Win32 Profile" "VNCHooks - Win32 Profile" "$(OUTDIR)\WinVNC.exe"
+ALL : "libjpeg - Win32 Profile" "zlib - Win32 Profile" "omnithread - Win32 Profile" "$(OUTDIR)\WinVNC.exe"
 
 !ENDIF 
 
 !IF "$(RECURSE)" == "1" 
-CLEAN :"VNCHooks - Win32 ProfileCLEAN" "omnithread - Win32 ProfileCLEAN" "zlib - Win32 ProfileCLEAN" "libjpeg - Win32 ProfileCLEAN" 
+CLEAN :"omnithread - Win32 ProfileCLEAN" "zlib - Win32 ProfileCLEAN" "libjpeg - Win32 ProfileCLEAN" 
 !ELSE 
 CLEAN :
 !ENDIF 
@@ -438,7 +443,9 @@ CLEAN :
 	-@erase "$(INTDIR)\TsSessions.obj"
 	-@erase "$(INTDIR)\vc60.idb"
 	-@erase "$(INTDIR)\vc60.pdb"
-	-@erase "$(INTDIR)\VideoDriver.obj"
+	-@erase "$(INTDIR)\VNCHooksStub.obj"
+	-@erase "$(INTDIR)\Win32sApi.obj"
+	-@erase "$(INTDIR)\IniSettings.obj"
 	-@erase "$(INTDIR)\vncAbout.obj"
 	-@erase "$(INTDIR)\vncAcceptDialog.obj"
 	-@erase "$(INTDIR)\vncAcceptReverseDlg.obj"
@@ -478,7 +485,7 @@ CLEAN :
 "$(INTDIR)" :
     if not exist "$(INTDIR)/$(NULL)" mkdir "$(INTDIR)"
 
-CPP_PROJ=/nologo /MTd /W3 /Gm /GX /ZI /Od /I /I "D:\MSTOOLS\Include" /I "D:\INetSDK\Include" "./omnithread" /I "./zlib" /I ".." /D "_DEBUG" /D "WIN32" /D "_WINDOWS" /D "__WIN32__" /D "__NT__" /D "_WINSTATIC" /D "NCORBA" /D WINVER=0x0400 /Fp"$(INTDIR)\WinVNC.pch" /YX /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
+CPP_PROJ=/nologo /MLd /W3 /Gm /GX /ZI /Od /I /I "C:\MSTOOLS\Include" "./omnithread" /I "./zlib" /I ".." /D "_DEBUG" /D "WIN32" /D "_WINDOWS" /D "__WIN32__" /D "__NT__" /D "_WINSTATIC" /D "NCORBA" /FI"win32s_fix.h" /Fp"$(INTDIR)\WinVNC.pch" /YX /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
 MTL_PROJ=/nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32 
 RSC_PROJ=/l 0x809 /fo"$(INTDIR)\WinVNC.res" /d "_DEBUG" /d "WITH_JAVA_VIEWER" 
 BSC32=bscmake.exe
@@ -486,7 +493,7 @@ BSC32_FLAGS=/nologo /o"$(OUTDIR)\WinVNC.bsc"
 BSC32_SBRS= \
 	
 LINK32=link.exe
-LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comctl32.lib /nologo /subsystem:windows /profile /map:"$(INTDIR)\WinVNC.map" /debug /machine:PPC /out:"$(OUTDIR)\WinVNC.exe" 
+LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib comdlg32.lib advapi32.lib /nologo /subsystem:windows,3.10 /profile /map:"$(INTDIR)\WinVNC.map" /debug /machine:I386 /out:"$(OUTDIR)\WinVNC.exe" 
 LINK32_OBJS= \
 	"$(INTDIR)\AdministrationControls.obj" \
 	"$(INTDIR)\BuildTime.obj" \
@@ -506,7 +513,6 @@ LINK32_OBJS= \
 	"$(INTDIR)\stdhdrs.obj" \
 	"$(INTDIR)\translate.obj" \
 	"$(INTDIR)\TsSessions.obj" \
-	"$(INTDIR)\VideoDriver.obj" \
 	"$(INTDIR)\vncAbout.obj" \
 	"$(INTDIR)\vncAcceptDialog.obj" \
 	"$(INTDIR)\vncAcceptReverseDlg.obj" \
@@ -533,17 +539,19 @@ LINK32_OBJS= \
 	"$(INTDIR)\vncService.obj" \
 	"$(INTDIR)\vncSockConnect.obj" \
 	"$(INTDIR)\vncTimedMsgBox.obj" \
+	"$(INTDIR)\VNCHooksStub.obj" \
+	"$(INTDIR)\Win32sApi.obj" \
+	"$(INTDIR)\IniSettings.obj" \
 	"$(INTDIR)\VSocket.obj" \
 	"$(INTDIR)\WallpaperUtils.obj" \
 	"$(INTDIR)\WinVNC.obj" \
 	"$(INTDIR)\WinVNC.res" \
-	"$(OUTDIR)\VNCHooks.lib" \
 	"$(OUTDIR)\omnithread.lib" \
 	"$(OUTDIR)\zlib.lib" \
 	"$(OUTDIR)\libjpeg.lib"
 
 "$(OUTDIR)\WinVNC.exe" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
-   cl /c /nologo /Fo.\Profile\winvnc\ /Fd.\Profile\winvnc /MT BuildTime.cpp
+   cl /c /nologo /Fo.\Profile\winvnc\ /Fd.\Profile\winvnc /ML BuildTime.cpp
 	 $(LINK32) @<<
   $(LINK32_FLAGS) $(LINK32_OBJS)
 <<
@@ -564,12 +572,12 @@ ALL : "$(OUTDIR)\AppShare.exe"
 
 !ELSE 
 
-ALL : "libjpeg - Win32 HorizonLive" "zlib - Win32 HorizonLive" "omnithread - Win32 HorizonLive" "VNCHooks - Win32 HorizonLive" "$(OUTDIR)\AppShare.exe"
+ALL : "libjpeg - Win32 HorizonLive" "zlib - Win32 HorizonLive" "omnithread - Win32 HorizonLive" "$(OUTDIR)\AppShare.exe"
 
 !ENDIF 
 
 !IF "$(RECURSE)" == "1" 
-CLEAN :"VNCHooks - Win32 HorizonLiveCLEAN" "omnithread - Win32 HorizonLiveCLEAN" "zlib - Win32 HorizonLiveCLEAN" "libjpeg - Win32 HorizonLiveCLEAN" 
+CLEAN :"omnithread - Win32 HorizonLiveCLEAN" "zlib - Win32 HorizonLiveCLEAN" "libjpeg - Win32 HorizonLiveCLEAN" 
 !ELSE 
 CLEAN :
 !ENDIF 
@@ -592,7 +600,9 @@ CLEAN :
 	-@erase "$(INTDIR)\translate.obj"
 	-@erase "$(INTDIR)\TsSessions.obj"
 	-@erase "$(INTDIR)\vc60.idb"
-	-@erase "$(INTDIR)\VideoDriver.obj"
+	-@erase "$(INTDIR)\VNCHooksStub.obj"
+	-@erase "$(INTDIR)\Win32sApi.obj"
+	-@erase "$(INTDIR)\IniSettings.obj"
 	-@erase "$(INTDIR)\vncAbout.obj"
 	-@erase "$(INTDIR)\vncAcceptDialog.obj"
 	-@erase "$(INTDIR)\vncAcceptReverseDlg.obj"
@@ -628,7 +638,7 @@ CLEAN :
 "$(OUTDIR)" :
     if not exist "$(OUTDIR)/$(NULL)" mkdir "$(OUTDIR)"
 
-CPP_PROJ=/nologo /MT /W3 /GX /O2 /I "D:\MSTOOLS\Include" /I "D:\INetSDK\Include" /I "./omnithread" /I "./zlib" /I ".." /D "NDEBUG" /D "XMD_H" /D "HORIZONLIVE" /D "WIN32" /D "_WINDOWS" /D "__WIN32__" /D "__NT__" /D "_WINSTATIC" /D "NCORBA" /D WINVER=0x0400 /Fp"$(INTDIR)\WinVNC.pch" /YX /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
+CPP_PROJ=/nologo /ML /W3 /GX /O2 /I "C:\MSTOOLS\Include" /I "./omnithread" /I "./zlib" /I ".." /D "NDEBUG" /D "XMD_H" /D "HORIZONLIVE" /D "WIN32" /D "_WINDOWS" /D "__WIN32__" /D "__NT__" /D "_WINSTATIC" /D "NCORBA" /FI"win32s_fix.h" /Fp"$(INTDIR)\WinVNC.pch" /YX /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c 
 MTL_PROJ=/nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32 
 RSC_PROJ=/l 0x409 /fo"$(INTDIR)\WinVNC.res" /d "NDEBUG" 
 BSC32=bscmake.exe
@@ -636,7 +646,7 @@ BSC32_FLAGS=/nologo /o"$(OUTDIR)\WinVNC.bsc"
 BSC32_SBRS= \
 	
 LINK32=link.exe
-LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comctl32.lib /nologo /subsystem:windows /incremental:no /pdb:"$(OUTDIR)\AppShare.pdb" /machine:PPC /nodefaultlib:"LIBC" /out:"$(OUTDIR)\AppShare.exe" 
+LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib comdlg32.lib advapi32.lib /nologo /subsystem:windows,3.10 /incremental:no /pdb:"$(OUTDIR)\AppShare.pdb" /machine:I386 /nodefaultlib:"LIBC" /out:"$(OUTDIR)\AppShare.exe" 
 LINK32_OBJS= \
 	"$(INTDIR)\AdministrationControls.obj" \
 	"$(INTDIR)\BuildTime.obj" \
@@ -656,7 +666,6 @@ LINK32_OBJS= \
 	"$(INTDIR)\stdhdrs.obj" \
 	"$(INTDIR)\translate.obj" \
 	"$(INTDIR)\TsSessions.obj" \
-	"$(INTDIR)\VideoDriver.obj" \
 	"$(INTDIR)\vncAbout.obj" \
 	"$(INTDIR)\vncAcceptDialog.obj" \
 	"$(INTDIR)\vncAcceptReverseDlg.obj" \
@@ -683,17 +692,19 @@ LINK32_OBJS= \
 	"$(INTDIR)\vncService.obj" \
 	"$(INTDIR)\vncSockConnect.obj" \
 	"$(INTDIR)\vncTimedMsgBox.obj" \
+	"$(INTDIR)\VNCHooksStub.obj" \
+	"$(INTDIR)\Win32sApi.obj" \
+	"$(INTDIR)\IniSettings.obj" \
 	"$(INTDIR)\VSocket.obj" \
 	"$(INTDIR)\WallpaperUtils.obj" \
 	"$(INTDIR)\WinVNC.obj" \
 	"$(INTDIR)\WinVNC.res" \
-	"$(OUTDIR)\VNCHooks.lib" \
 	"$(OUTDIR)\omnithread.lib" \
 	"$(OUTDIR)\zlib.lib" \
 	"$(OUTDIR)\libjpeg.lib"
 
 "$(OUTDIR)\AppShare.exe" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
-   cl /c /nologo /Fo.\HorizonLive\ /Fd.\HorizonLive /MT BuildTime.cpp
+   cl /c /nologo /Fo.\HorizonLive\ /Fd.\HorizonLive /ML BuildTime.cpp
 	 $(LINK32) @<<
   $(LINK32_FLAGS) $(LINK32_OBJS)
 <<
@@ -1250,30 +1261,120 @@ SOURCE=.\TsSessions.cpp
 
 !ENDIF 
 
-SOURCE=.\VideoDriver.cpp
+# WIN32S: VideoDriver.cpp is NOT compiled.
+#
+# The mirror ("Mirage") video driver requires Windows 2000 or later.  More
+# importantly, VideoDriver.cpp imports ChangeDisplaySettingsEx,
+# EnumDisplayDevices and ExtEscape - names that do not exist in the Win32s
+# USER32/GDI32.  The linker records every import whether or not the code path can
+# execute, so merely compiling this file into the EXE prevents it from LOADING on
+# Win32s.  vncDesktop::InitVideoDriver() now returns FALSE unconditionally.
+#
+# The file is left in the tree for anyone building the NT version.
+
+SOURCE=.\IniSettings.cpp
+
+# WIN32S: settings storage.
+#
+# Win32s cannot store named, typed registry values - RegSetValueEx returns
+# ERROR_INVALID_PARAMETER (87) for every call, because the Win32s registry is an
+# emulation over the Windows 3.1 REG.DAT whose model is "one unnamed string per
+# key".  Settings and the VNC passwords therefore go to WINVNC.INI via the
+# profile API instead.  See IniSettings.h.
 
 !IF  "$(CFG)" == "WinVNC - Win32 Release"
 
 
-"$(INTDIR)\VideoDriver.obj" : $(SOURCE) "$(INTDIR)"
+"$(INTDIR)\IniSettings.obj" : $(SOURCE) "$(INTDIR)"
 
 
 !ELSEIF  "$(CFG)" == "WinVNC - Win32 Debug"
 
 
-"$(INTDIR)\VideoDriver.obj"	"$(INTDIR)\VideoDriver.sbr" : $(SOURCE) "$(INTDIR)"
+"$(INTDIR)\IniSettings.obj" : $(SOURCE) "$(INTDIR)"
 
 
 !ELSEIF  "$(CFG)" == "WinVNC - Win32 Profile"
 
 
-"$(INTDIR)\VideoDriver.obj" : $(SOURCE) "$(INTDIR)"
+"$(INTDIR)\IniSettings.obj" : $(SOURCE) "$(INTDIR)"
 
 
 !ELSEIF  "$(CFG)" == "WinVNC - Win32 HorizonLive"
 
 
-"$(INTDIR)\VideoDriver.obj" : $(SOURCE) "$(INTDIR)"
+"$(INTDIR)\IniSettings.obj" : $(SOURCE) "$(INTDIR)"
+
+
+!ENDIF 
+
+SOURCE=.\Win32sApi.cpp
+
+# WIN32S: run-time resolution of the Win95-and-later APIs the server calls.
+#
+# Every function whose NAME must not appear in the EXE's import table is fetched
+# here with GetProcAddress and given a Windows 3.1 fallback: SetForegroundWindow,
+# SetMenuDefaultItem, Shell_NotifyIcon, InitCommonControls, LoadImage,
+# GetSysColorBrush, SetScrollInfo, SetPixelV, ScrollWindowEx,
+# LoadKeyboardLayout, GetKeyboardLayoutName, SystemParametersInfo(SPI_GETWORKAREA)
+# and CreateToolbarEx.  See Win32sApi.h for why declaring them instead of
+# resolving them prevents the EXE from loading on Win32s.
+
+!IF  "$(CFG)" == "WinVNC - Win32 Release"
+
+
+"$(INTDIR)\Win32sApi.obj" : $(SOURCE) "$(INTDIR)"
+
+
+!ELSEIF  "$(CFG)" == "WinVNC - Win32 Debug"
+
+
+"$(INTDIR)\Win32sApi.obj" : $(SOURCE) "$(INTDIR)"
+
+
+!ELSEIF  "$(CFG)" == "WinVNC - Win32 Profile"
+
+
+"$(INTDIR)\Win32sApi.obj" : $(SOURCE) "$(INTDIR)"
+
+
+!ELSEIF  "$(CFG)" == "WinVNC - Win32 HorizonLive"
+
+
+"$(INTDIR)\Win32sApi.obj" : $(SOURCE) "$(INTDIR)"
+
+
+!ENDIF 
+
+SOURCE=.\VNCHooksStub.cpp
+
+# WIN32S: replaces the VNCHooks DLL.  Global Windows hooks cannot reach 16-bit
+# tasks, and on Windows 3.1 nearly every application is 16-bit, so the hook-based
+# screen-change notification cannot work.  These stubs return FALSE and the server
+# falls back to polling.  See VNCHooksStub.cpp and VNCHooks/VNCHooks.cpp.
+
+!IF  "$(CFG)" == "WinVNC - Win32 Release"
+
+
+"$(INTDIR)\VNCHooksStub.obj" : $(SOURCE) "$(INTDIR)"
+
+
+!ELSEIF  "$(CFG)" == "WinVNC - Win32 Debug"
+
+
+"$(INTDIR)\VNCHooksStub.obj" : $(SOURCE) "$(INTDIR)"
+
+
+!ELSEIF  "$(CFG)" == "WinVNC - Win32 Profile"
+
+
+"$(INTDIR)\VNCHooksStub.obj" : $(SOURCE) "$(INTDIR)"
+
+
+!ELSEIF  "$(CFG)" == "WinVNC - Win32 HorizonLive"
+
+
+"$(INTDIR)\VNCHooksStub.obj" : $(SOURCE) "$(INTDIR)"
 
 
 !ENDIF 
@@ -2096,55 +2197,23 @@ SOURCE=.\WinVNC.rc
 	$(RSC) $(RSC_PROJ) $(SOURCE)
 
 
-!IF  "$(CFG)" == "WinVNC - Win32 Release"
+# WIN32S: the VNCHooks sub-project is NOT built.
+#
+# The recursive-make rules that used to be here (four configurations, each
+# building VNCHooks.mak and its CLEAN counterpart) have been removed along with
+# the DLL itself.
+#
+# Global Windows hooks cannot be injected into 16-bit tasks, and on Windows 3.1
+# essentially every application is 16-bit - so the hook-based screen-change
+# notification the DLL provides cannot work.  winvnc/VNCHooksStub.cpp supplies
+# the eight entry points instead (all returning FALSE) and the server falls back
+# to full-screen polling, which vncDesktop::ActivateHooks already handled as its
+# error path.
+#
+# See VNCHooksStub.cpp and the long note at the top of VNCHooks/VNCHooks.cpp.
+# VNCHooks.mak and the DLL sources are left in the tree for anyone building the
+# NT version from this branch.
 
-"VNCHooks - Win32 Release" : 
-   cd ".\VNCHooks"
-   $(MAKE) /$(MAKEFLAGS) /F ".\VNCHooks.mak" CFG="VNCHooks - Win32 Release" 
-   cd ".."
-
-"VNCHooks - Win32 ReleaseCLEAN" : 
-   cd ".\VNCHooks"
-   $(MAKE) /$(MAKEFLAGS) /F ".\VNCHooks.mak" CFG="VNCHooks - Win32 Release" RECURSE=1 CLEAN 
-   cd ".."
-
-!ELSEIF  "$(CFG)" == "WinVNC - Win32 Debug"
-
-"VNCHooks - Win32 Debug" : 
-   cd ".\VNCHooks"
-   $(MAKE) /$(MAKEFLAGS) /F ".\VNCHooks.mak" CFG="VNCHooks - Win32 Debug" 
-   cd ".."
-
-"VNCHooks - Win32 DebugCLEAN" : 
-   cd ".\VNCHooks"
-   $(MAKE) /$(MAKEFLAGS) /F ".\VNCHooks.mak" CFG="VNCHooks - Win32 Debug" RECURSE=1 CLEAN 
-   cd ".."
-
-!ELSEIF  "$(CFG)" == "WinVNC - Win32 Profile"
-
-"VNCHooks - Win32 Profile" : 
-   cd ".\VNCHooks"
-   $(MAKE) /$(MAKEFLAGS) /F ".\VNCHooks.mak" CFG="VNCHooks - Win32 Profile" 
-   cd ".."
-
-"VNCHooks - Win32 ProfileCLEAN" : 
-   cd ".\VNCHooks"
-   $(MAKE) /$(MAKEFLAGS) /F ".\VNCHooks.mak" CFG="VNCHooks - Win32 Profile" RECURSE=1 CLEAN 
-   cd ".."
-
-!ELSEIF  "$(CFG)" == "WinVNC - Win32 HorizonLive"
-
-"VNCHooks - Win32 HorizonLive" : 
-   cd ".\VNCHooks"
-   $(MAKE) /$(MAKEFLAGS) /F ".\VNCHooks.mak" CFG="VNCHooks - Win32 HorizonLive" 
-   cd ".."
-
-"VNCHooks - Win32 HorizonLiveCLEAN" : 
-   cd ".\VNCHooks"
-   $(MAKE) /$(MAKEFLAGS) /F ".\VNCHooks.mak" CFG="VNCHooks - Win32 HorizonLive" RECURSE=1 CLEAN 
-   cd ".."
-
-!ENDIF 
 
 !IF  "$(CFG)" == "WinVNC - Win32 Release"
 

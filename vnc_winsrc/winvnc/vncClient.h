@@ -42,7 +42,7 @@ typedef SHORT vncClientId;
 #define _WINVNC_VNCCLIENT
 
 //#include <list>
-#include <list.h>
+#include "list.h"	// WIN32S: local minimal list<> (MSVC 4.1 STL cannot build these)
 
 typedef list<vncClientId> vncClientList;
 
@@ -59,6 +59,33 @@ typedef list<vncClientId> vncClientList;
 #include "vncKeymap.h"
 
 // The vncClient class itself
+//
+// ==========================================================================
+// WIN32S SINGLE-THREADED DESIGN
+//
+// Originally each client ran its whole RFB conversation on its own thread
+// (class vncClientThread, vncClient.cpp).  Win32s has no threads, so a client
+// is now a state machine driven from the application's idle loop:
+//
+//   Init()      - as before, but instead of spawning a thread it runs the
+//                 blocking handshake inline (version exchange, authentication,
+//                 ClientInit, pixel format, interaction caps) and then arms the
+//                 state machine.  A client that fails the handshake is rejected
+//                 exactly as before.
+//
+//   PumpIdle()  - called repeatedly from the idle loop.  If a message has
+//                 started arriving it reads and processes exactly one RFB
+//                 message, then returns.  Also flushes queued output.  Never
+//                 blocks waiting for a message that has not begun.
+//
+//   IsDead()    - TRUE once the conversation has ended.  vncServer deletes the
+//                 client from a safe place rather than from inside a window
+//                 procedure or mid-iteration over the client list.
+//
+// The handshake is still allowed to block: it happens during AddClient, which
+// is itself triggered by a socket notification, and it is bounded by
+// VSocket's read/send deadlines.
+// ==========================================================================
 
 class vncClient
 {
@@ -67,7 +94,8 @@ public:
 	vncClient();
 	~vncClient();
 
-	// Allow the client thread to see inside the client object
+	// The former thread class is gone; this friend declaration is retained
+	// because vncServer still befriends the same name in places.
 	friend class vncClientThread;
 
 	// Init
@@ -78,9 +106,23 @@ public:
 						vncClientId newid);
 
 	// Kill
-	// The server uses this to close the client socket, causing the
-	// client thread to fail, which in turn deletes the client object
+	// The server uses this to close the client socket, which makes the state
+	// machine notice at its next PumpIdle() and mark itself dead.
 	virtual void Kill();
+
+	// ---- single-threaded session driver (see vncClient.cpp) --------------
+
+	// Service at most one pending client message, and flush queued output.
+	// Returns TRUE if it did some work, so the caller can pump again before
+	// going back to sleep.
+	BOOL PumpIdle();
+
+	// TRUE when the conversation has finished and this object may be deleted.
+	BOOL IsDead() { return m_dead; }
+
+	// Mark the conversation finished.  Used by Kill() and by the pump on any
+	// protocol or socket failure.
+	void SetDead() { m_dead = TRUE; m_protocol_ready = FALSE; }
 
 	// Client manipulation functions for use by the server
 	virtual void SetBuffer(vncBuffer *buffer);
@@ -127,6 +169,41 @@ public:
 
 
 
+	// ---- handshake, formerly vncClientThread members --------------------
+	//
+	// These were virtual members of vncClientThread.  They are now members of
+	// vncClient itself and run inline from Init().  Their bodies are unchanged
+	// apart from "m_client->" becoming "this->" (i.e. nothing) and "m_socket"
+	// resolving to the client's own socket.
+protected:
+	BOOL InitVersion();
+	BOOL InitAuthenticate();
+	int  GetAuthenticationType();
+	void SendConnFailedMessage(const char *reasonString);
+	BOOL SendTextStringMessage(const char *str);
+	BOOL NegotiateTunneling();
+	BOOL NegotiateAuthentication(int authType);
+	BOOL AuthenticateNone();
+	BOOL AuthenticateVNC();
+	BOOL ReadClientInit();
+	BOOL SendInteractionCaps();
+	// NOTE: there is no separate SendServerInit().  The ServerInit message is
+	// built and sent inline inside RunHandshake(), exactly where the old run()
+	// did it, so that the desktop-name and shared-rect handling stays in one
+	// place.
+
+	// Runs the whole blocking handshake.  Returns FALSE if the client must be
+	// rejected.
+	BOOL RunHandshake();
+
+	// Handles exactly one RFB message that has already started arriving.
+	// Returns FALSE if the conversation must end.
+	BOOL HandleOneMessage();
+
+	// Path conversion helper used by the file transfer handlers (was a
+	// vncClientThread member).
+	char *ConvertPath(char *path);
+
 	// Update routines
 protected:
 	BOOL SendUpdate();
@@ -163,8 +240,69 @@ protected:
 	char			*m_client_name;
 	char			*m_server_name;
 
-	// The client thread
-	omni_thread		*m_thread;
+	// Session state.
+	//
+	// m_dead replaces "the thread returned": the conversation is over and the
+	// object can be freed by vncServer::ReapDeadClients().
+	BOOL			m_dead;
+
+	// ---- WIN32S input synthesis state (see vncClient.cpp) ----------------
+	//
+	// Windows 3.1 gives us no way to drive the system's modal move/resize loop or
+	// to have double-clicks generated for us, because both depend on PHYSICAL
+	// input that injected messages never provide.  Both are therefore implemented
+	// here.
+
+	// Caption drag: the window being dragged, and the grab point relative to its
+	// top-left corner.  NULL when no drag is in progress.
+	HWND			m_dragWindow;
+	int				m_dragOffsetX;
+	int				m_dragOffsetY;
+
+	// Interactive resize: the window being resized, which edge/corner is grabbed,
+	// the original rectangle, and whether a resize is in progress.  Replaces the
+	// system's modal resize loop, which cannot be driven by posted messages.
+	HWND			m_resizeWindow;
+	int				m_resizeHit;
+	RECT			m_resizeRect;
+	BOOL			m_resizeActive;
+
+	// Scrollbar tracking: which window scrollbar is being dragged, its
+	// orientation and range, and the geometry needed to map cursor pixels to
+	// scroll positions.  Replaces the system's modal scrollbar loop, which
+	// polls the physical mouse.  Window scrollbars (HTVSCROLL/HTHSCROLL, e.g.
+	// a Progman group's scrollbars) arrive here; ScrollBar CONTROLS are
+	// separate child windows that hit-test as HTCLIENT and already work via
+	// the client-area branch.
+	HWND			m_scrollWindow;
+	BOOL			m_scrollVert;
+	BOOL			m_scrollActive;
+	int				m_scrollMin;
+	int				m_scrollMax;
+	int				m_scrollArrow;
+	int				m_scrollTrackLen;
+	int				m_scrollStrip0;
+	int				m_scrollLast;
+
+	// Double-click detection: when and where the last press landed, and on which
+	// window.  Compared against GetDoubleClickTime() and SM_CXDOUBLECLK.
+	DWORD			m_lastClickTime;
+	int				m_lastClickX;
+	int				m_lastClickY;
+	HWND			m_lastClickWindow;
+
+	// Pending iconic single-click Control menu.  A quick press-release on a
+	// minimized icon must show the icon menu, but a double-click must restore
+	// instead - and the two cannot be told apart until the double-click window
+	// (GetDoubleClickTime) passes.  UP arms this; PumpIdle fires it once the
+	// window expires; a second press in time cancels it via the double-click
+	// path.  NULL when nothing is pending.
+	HWND			m_menuPendingWindow;
+	DWORD			m_menuPendingTime;
+
+	// Copies of the Init() arguments that the old thread object held.
+	BOOL			m_reverse;
+	BOOL			m_shared;
 
 	// Flag to indicate whether the client is ready for RFB messages
 	BOOL			m_protocol_ready;

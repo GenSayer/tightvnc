@@ -38,11 +38,18 @@ class vncMenu;
 #define _WINVNC_VNCMENU
 
 #include "stdhdrs.h"
-#include <lmcons.h>
+// WIN32S: <lmcons.h> is the LAN Manager header, included only for UNLEN.  It is
+// not part of the MSVC 4.1 core SDK and drags in netapi declarations.
+// #include <lmcons.h>
 #include "vncServer.h"
 #include "vncProperties.h"
 #include "vncAbout.h"
 #include "WallpaperUtils.h"
+#include "Win32sApi.h"		// NOTIFYICONDATA, Win32sShellNotifyIcon, ...
+
+#ifndef UNLEN
+#define UNLEN 256
+#endif
 
 // Constants
 extern const UINT MENU_SERVER_SHAREALL;
@@ -67,11 +74,15 @@ public:
 	vncMenu(vncServer *server);
 	~vncMenu();
 protected:
-	// Tray icon handling
+	// Tray icon handling.  All four are no-ops when m_noTray is set.
 	void AddTrayIcon();
 	void DelTrayIcon();
 	void FlashTrayIcon(BOOL flash);
 	void SendTrayMsg(DWORD msg, BOOL flash);
+
+	// Display the server menu at the cursor.  Shared by the tray-icon path and,
+	// on Win32s, by a click in the visible server window.
+	void ShowPopupMenu();
 
 	// Message handler for the tray window
 	static LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam);
@@ -93,6 +104,11 @@ protected:
 	HWND			m_hwnd;
 	HMENU			m_hmenu;
 	NOTIFYICONDATA		m_nid;
+
+	// WIN32S: TRUE when there is no system tray (Windows 3.1).  m_hwnd is then
+	// shown as an ordinary minimised window and serves as the user's only way to
+	// reach the menu or quit the server.  See vncMenu.cpp.
+	BOOL			m_noTray;
 
 	char			m_username[UNLEN+1];
 

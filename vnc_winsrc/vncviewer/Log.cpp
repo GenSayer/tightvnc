@@ -30,9 +30,7 @@
 #include "stdhdrs.h"
 #include "Log.h"
 
-typedef int bool;
-#define false 0
-#define true 1
+// bool/true/false come from win32s_fix.h (force-included).  Do not redefine.
 
 //////////////////////////////////////////////////////////////////////
 // Construction/Destruction
@@ -50,6 +48,13 @@ Log::Log(int mode, int level, LPTSTR filename, bool append)
     m_todebug = false;
     m_toconsole = false;
     m_tofile = false;
+    // m_level was NEVER initialised here.  Print() tests "level > m_level", so
+    // with garbage in m_level the viewer either logged nothing or logged
+    // everything (including OutputDebugString on every socket read) depending
+    // on what happened to be on the stack.  This object is a file-scope global
+    // in vncviewer.cpp, so its constructor runs before WinMain - all the more
+    // reason for it to be fully deterministic.
+    m_level = level;
     SetMode(mode);
     if (mode & ToFile)  {
         SetFile(filename, append);
@@ -74,9 +79,22 @@ void Log::SetMode(int mode) {
 	m_toconsole = false;
 #else
     if (mode & ToConsole) {
-        if (!m_toconsole)
-            AllocConsole();
-        m_toconsole = true;
+        // WIN32S: AllocConsole() does not exist on Win32s - there is no console
+        // subsystem under Windows 3.1.  Resolve it dynamically so that (a) the
+        // name is not in the import table, and (b) /logtoconsole degrades to
+        // debug output instead of failing to load the program.
+        if (!m_toconsole) {
+            typedef BOOL (WINAPI *PFNALLOCCONSOLE)(void);
+            HINSTANCE hK32 = GetModuleHandle("KERNEL32");
+            PFNALLOCCONSOLE pAlloc = (hK32 == NULL) ? NULL :
+                (PFNALLOCCONSOLE)GetProcAddress(hK32, "AllocConsole");
+            if (pAlloc != NULL && pAlloc()) {
+                m_toconsole = true;
+            } else {
+                m_toconsole = false;
+                m_todebug = true;
+            }
+        }
     } else {
         m_toconsole = false;
     }
@@ -94,18 +112,29 @@ void Log::SetFile(LPTSTR filename, bool append)
     CloseFile();
 
     m_tofile  = true;
-    
-    // If filename is NULL or invalid we should throw an exception here
+
+    if (filename == NULL) {
+        // The original comment said "If filename is NULL or invalid we should
+        // throw an exception here" and then passed NULL straight to CreateFile.
+        m_todebug = true;
+        m_tofile = false;
+        return;
+    }
     
     hlogfile = CreateFile(
         filename,  GENERIC_WRITE, FILE_SHARE_READ, NULL,
         OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL  );
     
     if (hlogfile == INVALID_HANDLE_VALUE) {
-        // We should throw an exception here
+        // Was: set m_todebug/m_tofile and carry on - but hlogfile was left as
+        // INVALID_HANDLE_VALUE (not NULL), so CloseFile() later called
+        // CloseHandle(INVALID_HANDLE_VALUE), and the SetFilePointer/
+        // SetEndOfFile calls below ran on the invalid handle too.
+        hlogfile = NULL;
         m_todebug = true;
         m_tofile = false;
         Print(0, _T("Error opening log file %s\n"), filename);
+        return;
     }
     if (append) {
         SetFilePointer( hlogfile, 0, NULL, FILE_END );
@@ -130,21 +159,54 @@ void Log::CloseFile() {
 void Log::ReallyPrint(LPTSTR format, va_list ap) 
 {
 	TCHAR line[LINE_BUFFER_SIZE];
-	_vsntprintf(line, sizeof(line) - 2 * sizeof(TCHAR), format, ap);
-	line[LINE_BUFFER_SIZE-2] = (TCHAR)'\0';
+	// Was: _vsntprintf(line, sizeof(line) - 2*sizeof(TCHAR), ...).  The count
+	// argument is in CHARACTERS, not bytes, and the same confusion appears in
+	// the length checks below.  In an ANSI build sizeof == count so it happened
+	// to work; it is wrong in principle and would overflow the buffer in a
+	// _UNICODE build.
+	const int maxChars = LINE_BUFFER_SIZE - 3;
+	line[0] = (TCHAR)'\0';
+	_vsntprintf(line, maxChars, format, ap);
+	line[maxChars] = (TCHAR)'\0';
 	int len = _tcslen(line);
-	if (len > 0 && len <= sizeof(line) - 2 * sizeof(TCHAR) && line[len-1] == (TCHAR)'\n') {
+	if (len > 0 && len <= maxChars && line[len-1] == (TCHAR)'\n') {
 		// Replace trailing '\n' with MS-DOS style end-of-line.
 		line[len-1] = (TCHAR)'\r';
 		line[len] =   (TCHAR)'\n';
 		line[len+1] = (TCHAR)'\0';
+		len++;
 	}
 
     if (m_todebug) OutputDebugString(line);
 
     if (m_toconsole) {
-        DWORD byteswritten;
-        WriteConsole(GetStdHandle(STD_OUTPUT_HANDLE), line, _tcslen(line)*sizeof(TCHAR), &byteswritten, NULL); 
+        // WIN32S: WriteConsole and GetStdHandle are console-subsystem APIs that
+        // Win32s does not provide.  m_toconsole can only be true if AllocConsole
+        // succeeded (see SetMode, which resolves that dynamically), which cannot
+        // happen on Win32s - but the NAMES would still appear in the EXE's import
+        // table and stop it loading.  Resolve them at run time too.
+        //
+        // Pointers cached in statics: this is called for every log line.
+        typedef BOOL (WINAPI *PFNWRITECONSOLE)(HANDLE, const void *, DWORD, DWORD *, void *);
+        typedef HANDLE (WINAPI *PFNGETSTDHANDLE)(DWORD);
+        static PFNWRITECONSOLE pWriteConsole = NULL;
+        static PFNGETSTDHANDLE pGetStdHandle = NULL;
+        static int consoleResolved = 0;
+
+        if (!consoleResolved) {
+            consoleResolved = 1;
+            HINSTANCE hK32 = GetModuleHandle("KERNEL32");
+            if (hK32 != NULL) {
+                pWriteConsole = (PFNWRITECONSOLE)GetProcAddress(hK32, "WriteConsoleA");
+                pGetStdHandle = (PFNGETSTDHANDLE)GetProcAddress(hK32, "GetStdHandle");
+            }
+        }
+
+        if (pWriteConsole != NULL && pGetStdHandle != NULL) {
+            DWORD byteswritten;
+            pWriteConsole(pGetStdHandle(STD_OUTPUT_HANDLE), line,
+                          _tcslen(line), &byteswritten, NULL);
+        }
     }
 
     if (m_tofile && (hlogfile != NULL)) {
@@ -188,4 +250,6 @@ Log::~Log()
     CloseFile();
 }
 
-Log theLog;
+// NOTE: "Log theLog;" used to be here.  It was a second, unused, file-scope Log
+// object (the one everything actually uses is "Log vnclog;" in vncviewer.cpp),
+// so it ran an extra constructor before WinMain for no purpose.  Removed.

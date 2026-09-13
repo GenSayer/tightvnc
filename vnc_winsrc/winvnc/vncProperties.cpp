@@ -32,7 +32,12 @@
 // Implementation of the Properties dialog!
 
 #include "stdhdrs.h"
-#include "lmcons.h"
+// WIN32S: <lmcons.h> removed (LAN Manager header, needed only for UNLEN).
+// UNLEN comes from vncMenu.h / vncService.h.
+// #include "lmcons.h"
+#ifndef UNLEN
+#define UNLEN 256
+#endif
 #include "vncService.h"
 
 #include "WinVNC.h"
@@ -40,6 +45,8 @@
 #include "vncServer.h"
 #include "vncPasswd.h"
 #include "commctrl.h"
+#include "Win32sApi.h"	// WIN32S: run-time API resolution
+#include "IniSettings.h"	// WIN32S: settings storage (registry is unusable)
 
 // ============================================================================
 // TCITEM Structure Mapping Fallback for Legacy Toolchains (CommCtrl)
@@ -265,7 +272,8 @@ vncProperties::Show(BOOL show, BOOL usersettings, BOOL passwordfocused)
 		else
 		{
 			// The dialog is already displayed, just raise it to foreground.
-			SetForegroundWindow(m_hDialog);
+			// WIN32S: resolved at run time - see Win32sApi.h.
+			Win32sSetForegroundWindow(m_hDialog);
 		}
 	}
 }
@@ -292,11 +300,61 @@ vncProperties::ParentDlgProc(HWND hwnd,
 			_this->m_hDialog = hwnd;
 			_this->m_dlgvisible = TRUE;
 
-			InitCommonControls();
+			// WIN32S: COMCTL32 may be absent entirely on Windows 3.1.
+			// Win32sInitCommonControls resolves InitCommonControls at run time
+			// and does nothing if the DLL is not there.  Note that the tab
+			// control and trackbars on these property pages DO need COMCTL32 -
+			// see the dialog-creation check below.
+			Win32sInitCommonControls();
+
+			// WIN32S: restore WS_EX_CONTROLPARENT at run time.
+			//
+			// The resource used to carry "EXSTYLE WS_EX_CONTEXTHELP |
+			// WS_EX_CONTROLPARENT", but EXSTYLE only works with a DIALOGEX
+			// template, which Win32s cannot instantiate - so the template is now
+			// a plain DIALOG and the EXSTYLE line is gone (see WinVNC.rc).
+			//
+			// WS_EX_CONTROLPARENT matters functionally rather than cosmetically:
+			// without it, Tab does not move focus INTO the five child dialogs that
+			// make up the property pages, so the pages become keyboard-
+			// unreachable.  Applying it here restores that on platforms that
+			// support it, and is harmlessly ignored on Windows 3.1 (which has no
+			// such style - the pages remain mouse-only there).
+			{
+				LONG exstyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+				SetWindowLong(hwnd, GWL_EXSTYLE, exstyle | WS_EX_CONTROLPARENT);
+			}
 
 			_this->m_hTab = GetDlgItem(hwnd, IDC_TAB);
 
+			// WIN32S: if the tab control does not exist, COMCTL32 could not
+			// create it (no SysTabControl32 window class) and this dialog is
+			// unusable - every TabCtrl_* macro below sends a message to NULL, and
+			// the five child dialogs would be positioned using an uninitialised
+			// RECT.
+			//
+			// Report it and close, rather than presenting an empty frame.  Note
+			// that the server itself works fine without the Properties dialog:
+			// settings can be edited in the registry, or the server can be run
+			// with command-line switches.
+			if (_this->m_hTab == NULL) {
+				vnclog.Print(LL_INTERR,
+					VNCLOG("no tab control - COMCTL32 unavailable?\n"));
+				MessageBox(hwnd,
+					"The Properties dialog needs the common controls library,\n"
+					"which is not available on this system.\n\n"
+					"Settings can still be changed in the registry under\n"
+					"HKEY_LOCAL_MACHINE\\Software\\ORL\\WinVNC3.",
+					"WinVNC", MB_OK | MB_ICONINFORMATION);
+				_this->m_dlgvisible = FALSE;
+				EndDialog(hwnd, IDCANCEL);
+				return TRUE;
+			}
+
+			// TCITEM must be fully initialised: the control copies the whole
+			// structure, and iImage/lParam were left as stack garbage here.
 			TCITEM item;
+			memset(&item, 0, sizeof(item));
 			item.mask = TCIF_TEXT; 
 			item.pszText="Server";
 			TabCtrl_InsertItem(_this->m_hTab, 0, &item);
@@ -341,8 +399,39 @@ vncProperties::ParentDlgProc(HWND hwnd,
 				(DLGPROC)_this->AdministrationDlgProc,
 				(LONG)_this);
 
+			// WIN32S: all five pages contain trackbars and/or up-down controls
+			// (msctls_trackbar32 / msctls_updown32), so a dialog whose control
+			// class cannot be found fails to create as a whole.  Check before
+			// using the handles - SetWindowPos(NULL, ...) is an invalid-window
+			// call and the SendMessage-based page updates would go nowhere.
+			if (_this->m_hShared == NULL || _this->m_hIncoming == NULL ||
+				_this->m_hPoll == NULL || _this->m_hQuerySettings == NULL ||
+				_this->m_hAdministration == NULL) {
+				vnclog.Print(LL_INTERR,
+					VNCLOG("could not create property pages (error %d)\n"),
+					GetLastError());
+				if (_this->m_hShared != NULL) DestroyWindow(_this->m_hShared);
+				if (_this->m_hIncoming != NULL) DestroyWindow(_this->m_hIncoming);
+				if (_this->m_hPoll != NULL) DestroyWindow(_this->m_hPoll);
+				if (_this->m_hQuerySettings != NULL) DestroyWindow(_this->m_hQuerySettings);
+				if (_this->m_hAdministration != NULL) DestroyWindow(_this->m_hAdministration);
+				_this->m_hShared = NULL;
+				_this->m_hIncoming = NULL;
+				_this->m_hPoll = NULL;
+				_this->m_hQuerySettings = NULL;
+				_this->m_hAdministration = NULL;
+				MessageBox(hwnd,
+					"The Properties dialog needs the common controls library,\n"
+					"which is not available on this system.",
+					"WinVNC", MB_OK | MB_ICONINFORMATION);
+				_this->m_dlgvisible = FALSE;
+				EndDialog(hwnd, IDCANCEL);
+				return TRUE;
+			}
+
 			// Position child dialogs, to fit the Tab control's display area
 			RECT rc;
+			memset(&rc, 0, sizeof(rc));
 			GetWindowRect(_this->m_hTab, &rc);
 			MapWindowPoints(NULL, hwnd, (POINT *)&rc, 2);
 			TabCtrl_AdjustRect(_this->m_hTab, FALSE, &rc);
@@ -369,7 +458,7 @@ vncProperties::ParentDlgProc(HWND hwnd,
 				SetWindowText(hwnd, "TightVNC Server: Default Local System Properties");
 			}						
 
-			SetForegroundWindow(hwnd);
+			Win32sSetForegroundWindow(hwnd);
 
 			// If the first tab is selected, then return FALSE because in that case
 			// we set the keyboard focus explicitly (on the password field).
@@ -718,9 +807,38 @@ BOOL CALLBACK vncProperties::QuerySettingsDlgProc(HWND hwnd, UINT uMsg,
 LONG
 vncProperties::LoadInt(HKEY key, LPCSTR valname, LONG defval)
 {
-	LONG pref;
-	ULONG type = REG_DWORD;
-	ULONG prefsize = sizeof(pref);
+	// ==================================================================
+	// WIN32S: settings come from WINVNC.INI, not the registry.
+	//
+	// Win32s cannot store named, typed registry values at all - RegSetValueEx
+	// returns ERROR_INVALID_PARAMETER (87) for every call, because the Win32s
+	// registry is an emulation over the Windows 3.1 REG.DAT whose data model is
+	// "one unnamed string per key".  See the long note in IniSettings.h.
+	//
+	// The redirect is here, in the five accessors, rather than at the ~90 call
+	// sites: LoadInt/SaveInt/LoadString/LoadPassword/SavePassword are the only
+	// places this file touches value data, so the rest of vncProperties.cpp -
+	// including which of the three registry scopes is being used - is unchanged.
+	// The HKEY parameter is simply ignored on the INI path (there is one INI
+	// section; Windows 3.1 is single-user, so the scopes have no meaning).
+	// ==================================================================
+	if (IniSettingsInUse())
+		return IniGetInt(valname, defval);
+
+	// WIN32S: DWORD, not ULONG, for the type and size out-parameters.
+	//
+	// ULONG and DWORD are the same underlying type in the Win32 headers, so this
+	// compiles and works - but RegQueryValueEx's prototype takes LPDWORD, and
+	// being exact here matters on the Win32s registry emulation, which is
+	// stricter about the in/out size protocol than NT.  (The same pattern in
+	// LoadPassword above was additionally casting an int through LPDWORD.)
+	//
+	// 'pref' is also initialised now: if RegQueryValueEx succeeds but writes
+	// fewer bytes than expected, the prefsize check below rejects the value - but
+	// the uninitialised read happens first if that check is ever relaxed.
+	LONG pref = defval;
+	DWORD type = REG_DWORD;
+	DWORD prefsize = sizeof(pref);
 
 	if (key == NULL)
 		return defval;
@@ -745,26 +863,90 @@ vncProperties::LoadInt(HKEY key, LPCSTR valname, LONG defval)
 BOOL
 vncProperties::LoadPassword(HKEY key, char *buffer, const char *entry_name)
 {
+	// ==================================================================
+	// WIN32S: two real bugs here, both of which make a saved password look
+	// absent - and an absent password is exactly what the client reports as
+	// "this server does not have a valid password enabled".
+	//
+	//  1. TYPE PUNNING ON THE SIZE ARGUMENT.  It was
+	//
+	//         int slen = MAXPWLEN;
+	//         RegQueryValueEx(..., (LPBYTE)&inouttext, (LPDWORD)&slen);
+	//
+	//     RegQueryValueEx writes a DWORD through that pointer.  int and DWORD
+	//     happen to be the same size on x86 so this "works", but the cast hides
+	//     a genuine problem: the function also READS the incoming value as the
+	//     buffer size, and passing a signed int through an LPDWORD cast is
+	//     exactly the kind of thing that behaves differently on the Win32s
+	//     registry emulation, which is stricter about the in/out size protocol
+	//     than NT is.  Use a DWORD.
+	//
+	//  2. THE TYPE FILTER WAS MISSING.  'type' is initialised to REG_BINARY but
+	//     RegQueryValueEx OVERWRITES it with the value's actual type, and the
+	//     result was never checked.  A value stored as anything else would be
+	//     copied into the password buffer regardless.
+	//
+	// Also: "if (slen > MAXPWLEN) return FALSE" rejected a value that is too
+	// LONG but silently accepted one that is too SHORT, then memcpy'd MAXPWLEN
+	// bytes out of it - reading past the end of whatever the registry returned.
+	// A short value now fails cleanly.
+	// ==================================================================
 	DWORD type = REG_BINARY;
-	int slen=MAXPWLEN;
+	DWORD slen = MAXPWLEN;
 	char inouttext[MAXPWLEN];
+
+	if (buffer == NULL)
+		return FALSE;
+
+	// WIN32S: the password lives in WINVNC.INI as 16 hex characters.  This is
+	// THE fix for "this server does not have a valid password enabled": the
+	// registry write was failing with error 87, so nothing was ever stored and
+	// the next Load() found no password.
+	if (IniSettingsInUse())
+		return IniGetPassword(buffer, entry_name);
 
 	if (key == NULL)
 		return FALSE;
 
+	memset(inouttext, 0, sizeof(inouttext));
+
 	// Retrieve the encrypted password
-	if (RegQueryValueEx(key,
+	LONG res = RegQueryValueEx(key,
 		(LPCSTR) entry_name,
 		NULL,
 		&type,
-		(LPBYTE) &inouttext,
-		(LPDWORD) &slen) != ERROR_SUCCESS)
+		(LPBYTE) inouttext,
+		&slen);
+	if (res != ERROR_SUCCESS) {
+		// ERROR_FILE_NOT_FOUND simply means no password has been set yet, which
+		// is not an error worth reporting at LL_INTERR.
+		if (res != ERROR_FILE_NOT_FOUND) {
+			vnclog.Print(LL_INTERR,
+				VNCLOG("failed to read password \"%s\" (error %d)\n"),
+				entry_name, (int)res);
+		} else {
+			vnclog.Print(LL_INTINFO,
+				VNCLOG("no stored password \"%s\"\n"), entry_name);
+		}
 		return FALSE;
+	}
 
-	if (slen > MAXPWLEN)
+	if (type != REG_BINARY) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("password \"%s\" has wrong type %d - ignoring\n"),
+			entry_name, (int)type);
 		return FALSE;
+	}
+
+	if (slen != MAXPWLEN) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("password \"%s\" is %d bytes, expected %d - ignoring\n"),
+			entry_name, (int)slen, (int)MAXPWLEN);
+		return FALSE;
+	}
 
 	memcpy(buffer, inouttext, MAXPWLEN);
+	vnclog.Print(LL_INTINFO, VNCLOG("loaded password \"%s\"\n"), entry_name);
 	return TRUE;
 }
 
@@ -774,6 +956,10 @@ vncProperties::LoadString(HKEY key, LPCSTR keyname)
 	DWORD type = REG_SZ;
 	DWORD buflen = 0;
 	BYTE *buffer = 0;
+
+	// WIN32S: see the note in LoadInt above.  Only AuthHosts uses this.
+	if (IniSettingsInUse())
+		return IniGetString(keyname);
 
 	if (key == NULL)
 		return 0;
@@ -813,91 +999,18 @@ vncProperties::LoadString(HKEY key, LPCSTR keyname)
 	return (char *)buffer;
 }
 
+// Set every per-user preference to its documented default.
+//
+// WIN32S: this was inline in Load(), immediately before the registry keys were
+// read.  It is a separate method now because the INI path in Load() needs the
+// same defaults and returns before reaching that point.
+//
+// Order matters: callers must run this BEFORE LoadUserPrefs(), because
+// LoadUserPrefs passes the current value as the default for each LoadInt() - so
+// a setting absent from storage keeps whatever is set here.
 void
-vncProperties::Load(BOOL usersettings)
+vncProperties::SetDefaultUserPrefs()
 {
-	if (m_dlgvisible) {
-		vnclog.Print(LL_INTWARN, VNCLOG("service helper invoked while Properties panel displayed\n"));
-		return;
-	}
-
-	char username[UNLEN+1];
-	HKEY hkLocal, hkLocalUser, hkDefault;
-	DWORD dw;
-
-	// NEW (R3) PREFERENCES ALGORITHM
-	// 1.	Look in HKEY_LOCAL_MACHINE/Software/ORL/WinVNC3/%username%
-	//		for sysadmin-defined, user-specific settings.
-	// 2.	If not found, fall back to %username%=Default
-	// 3.	If AllowOverrides is set then load settings from
-	//		HKEY_CURRENT_USER/Software/ORL/WinVNC3
-
-	// GET THE CORRECT KEY TO READ FROM
-
-	// Get the user name / service name
-	if (!vncService::CurrentUser((char *)&username, sizeof(username)))
-		return;
-
-	// If there is no user logged on them default to SYSTEM
-	if (strcmp(username, "") == 0)
-		strcpy((char *)&username, "SYSTEM");
-
-	// Try to get the machine registry key for WinVNC
-	if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
-		WINVNC_REGISTRY_KEY,
-		0, REG_NONE, REG_OPTION_NON_VOLATILE,
-		KEY_READ, NULL, &hkLocal, &dw) != ERROR_SUCCESS)
-		hkLocal = NULL;
-
-	// Now try to get the per-user local key
-	if ( hkLocal == NULL ||
-		 RegOpenKeyEx(hkLocal, username, 0,
-					  KEY_READ, &hkLocalUser) != ERROR_SUCCESS )
-		hkLocalUser = NULL;
-
-	// Get the default key
-	if ( hkLocal == NULL ||
-		 RegCreateKeyEx(hkLocal, "Default", 0, REG_NONE, REG_OPTION_NON_VOLATILE,
-						KEY_READ, NULL, &hkDefault, &dw) != ERROR_SUCCESS )
-		hkDefault = NULL;
-
-	// LOAD THE MACHINE-LEVEL PREFS
-
-	// Logging/debugging prefs
-	vnclog.Print(LL_INTINFO, VNCLOG("loading local-only settings\n"));
-	vnclog.SetMode(LoadInt(hkLocal, "DebugMode", 0));
-	vnclog.SetLevel(LoadInt(hkLocal, "DebugLevel", 0));
-
-	// Disable Tray Icon
-	m_server->SetDisableTrayIcon(LoadInt(hkLocal, "DisableTrayIcon", false));
-
-	// Authentication required, loopback allowed, loopbackOnly
-	m_server->SetLoopbackOk(LoadInt(hkLocal, "AllowLoopback", false));
-	if (!m_server->LoopbackOk())
-		m_server->SetLoopbackOnly(false);
-	else
-		m_server->SetLoopbackOnly(LoadInt(hkLocal, "LoopbackOnly", false));
-	m_server->SetHttpdEnabled(LoadInt(hkLocal, "EnableHTTPDaemon", true),
-							  LoadInt(hkLocal, "EnableURLParams", false));
-	m_server->SetAuthRequired(LoadInt(hkLocal, "AuthRequired", true));
-	// NOTE: RealVNC sets ConnectPriority to 0 by default, we set it to 2.
-	m_server->SetConnectPriority(LoadInt(hkLocal, "ConnectPriority", 2));
-	if (!m_server->LoopbackOnly())
-	{
-		char *authhosts = LoadString(hkLocal, "AuthHosts");
-		if (authhosts != 0) {
-			m_server->SetAuthHosts(authhosts);
-			delete [] authhosts;
-		} else {
-			m_server->SetAuthHosts(0);
-		}
-	} else {
-		m_server->SetAuthHosts(0);
-	}
-
-	// LOAD THE USER PREFERENCES
-
-	// Set the default user prefs
 	vnclog.Print(LL_INTINFO, VNCLOG("clearing user settings\n"));
 	m_pref_AutoPortSelect=TRUE;
 	m_pref_PortNumber=RFB_PORT_OFFSET;
@@ -935,6 +1048,198 @@ vncProperties::Load(BOOL usersettings)
 	m_pref_PriorityTime = 3;
 	m_pref_LocalInputPriority = FALSE;
 	m_pref_PollingCycle = 300;
+}
+
+// NOTE: "void" restored on the line below.  Extracting SetDefaultUserPrefs()
+// consumed Load()'s return type, because the original source wrote it as
+//
+//     void
+//     vncProperties::Load(BOOL usersettings)
+//
+// and the extracted block ended immediately before that "void".  MSVC 4.1 would
+// have taken the missing type as implicit int and then disagreed with the "void
+// Load(BOOL)" declaration in vncProperties.h.
+void
+vncProperties::Load(BOOL usersettings)
+{
+	if (m_dlgvisible) {
+		vnclog.Print(LL_INTWARN, VNCLOG("service helper invoked while Properties panel displayed\n"));
+		return;
+	}
+
+	char username[UNLEN+1];
+	HKEY hkLocal, hkLocalUser, hkDefault;
+	DWORD dw;
+
+	// NEW (R3) PREFERENCES ALGORITHM
+	// 1.	Look in HKEY_LOCAL_MACHINE/Software/ORL/WinVNC3/%username%
+	//		for sysadmin-defined, user-specific settings.
+	// 2.	If not found, fall back to %username%=Default
+	// 3.	If AllowOverrides is set then load settings from
+	//		HKEY_CURRENT_USER/Software/ORL/WinVNC3
+
+	// GET THE CORRECT KEY TO READ FROM
+
+	// Get the user name / service name
+	if (!vncService::CurrentUser((char *)&username, sizeof(username)))
+		return;
+
+	// If there is no user logged on them default to SYSTEM
+	if (strcmp(username, "") == 0)
+		strcpy((char *)&username, "SYSTEM");
+
+	// ==================================================================
+	// WIN32S: skip the registry key opens entirely.
+	//
+	// On the INI path the accessors ignore the HKEY, so leaving all three handles
+	// NULL is correct and harmless - LoadInt/LoadPassword/LoadString check
+	// IniSettingsInUse() before they ever look at the key.
+	//
+	// This matters for more than tidiness: with the handles NULL, the
+	// machine-level block below ("loading local-only settings") would otherwise
+	// take every default, and the per-user block is guarded by
+	// "if (hkDefault != NULL)" / "if (hkLocalUser != NULL)" - so NOTHING would be
+	// loaded and the settings would silently revert on every start.  Setting
+	// hkDefault to a non-NULL sentinel is not an option either, because the
+	// registry path would then use it.  Instead, the INI path calls
+	// LoadUserPrefs() explicitly here.
+	// ==================================================================
+	if (IniSettingsInUse()) {
+		vnclog.Print(LL_INTINFO,
+			VNCLOG("loading settings from %s\n"), IniFileName());
+
+		// Machine-level prefs.
+		vnclog.SetMode(LoadInt(NULL, "DebugMode", 0));
+		vnclog.SetLevel(LoadInt(NULL, "DebugLevel", 0));
+		m_server->SetDisableTrayIcon(LoadInt(NULL, "DisableTrayIcon", false));
+		m_server->SetLoopbackOk(LoadInt(NULL, "AllowLoopback", false));
+		if (!m_server->LoopbackOk())
+			m_server->SetLoopbackOnly(false);
+		else
+			m_server->SetLoopbackOnly(LoadInt(NULL, "LoopbackOnly", false));
+		m_server->SetHttpdEnabled(LoadInt(NULL, "EnableHTTPDaemon", true),
+								  LoadInt(NULL, "EnableURLParams", false));
+		m_server->SetAuthRequired(LoadInt(NULL, "AuthRequired", true));
+		m_server->SetConnectPriority(LoadInt(NULL, "ConnectPriority", 2));
+		if (!m_server->LoopbackOnly()) {
+			char *authhosts = LoadString(NULL, "AuthHosts");
+			if (authhosts != 0) {
+				m_server->SetAuthHosts(authhosts);
+				delete [] authhosts;
+			} else {
+				m_server->SetAuthHosts(0);
+			}
+		} else {
+			m_server->SetAuthHosts(0);
+		}
+
+		// Per-user prefs.  SetDefaultUserPrefs() must run first so that any
+		// setting absent from the INI file keeps its documented default - the
+		// registry path gets this from the block further down.
+		SetDefaultUserPrefs();
+		LoadUserPrefs(NULL);
+		m_allowshutdown   = LoadInt(NULL, "AllowShutdown", m_allowshutdown);
+		m_allowproperties = LoadInt(NULL, "AllowProperties", m_allowproperties);
+		m_alloweditclients = LoadInt(NULL, "AllowEditClients", m_alloweditclients);
+
+		ApplyUserPrefs();
+
+		vnclog.Print(LL_INTERR,
+			VNCLOG("after load: passwd_set=%d viewonly_set=%d "
+				   "AuthRequired=%d ValidPasswordsSet=%d\n"),
+			(int)m_pref_passwd_set, (int)m_pref_passwd_viewonly_set,
+			(int)m_server->AuthRequired(),
+			(int)m_server->ValidPasswordsSet());
+
+		m_usersettings = usersettings;
+		return;
+	}
+
+	// Try to get the machine registry key for WinVNC.
+	//
+	// WIN32S: KEY_ALL_ACCESS rather than KEY_READ.
+	//
+	// The Win32s registry is an emulation over the Windows 3.1 REG.DAT, and its
+	// access-mask handling is not the full NT model.  A key opened KEY_READ here
+	// and then re-created KEY_WRITE in Save() can end up referring to a
+	// different, empty key - which is one way settings appear to save and then
+	// vanish.  Opening with full access throughout keeps one consistent view.
+	//
+	// The result is also LOGGED now.  Every one of these three opens previously
+	// failed silently to NULL, and LoadInt()/LoadPassword() return the default
+	// for a NULL key - so a registry problem was indistinguishable from
+	// "no settings have been saved yet".
+	LONG res = RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+		WINVNC_REGISTRY_KEY,
+		0, REG_NONE, REG_OPTION_NON_VOLATILE,
+		KEY_ALL_ACCESS, NULL, &hkLocal, &dw);
+	if (res != ERROR_SUCCESS) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("could not open HKLM\\%s (error %d) - using defaults\n"),
+			WINVNC_REGISTRY_KEY, (int)res);
+		hkLocal = NULL;
+	}
+
+	// Now try to get the per-user local key
+	if ( hkLocal == NULL ||
+		 RegOpenKeyEx(hkLocal, username, 0,
+					  KEY_ALL_ACCESS, &hkLocalUser) != ERROR_SUCCESS )
+		hkLocalUser = NULL;
+
+	// Get the default key
+	if ( hkLocal == NULL ||
+		 RegCreateKeyEx(hkLocal, "Default", 0, REG_NONE, REG_OPTION_NON_VOLATILE,
+						KEY_ALL_ACCESS, NULL, &hkDefault, &dw) != ERROR_SUCCESS )
+		hkDefault = NULL;
+
+	if (hkDefault == NULL) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("could not open the \"Default\" settings key - "
+				   "settings will not persist\n"));
+	}
+
+	// LOAD THE MACHINE-LEVEL PREFS
+
+	// Logging/debugging prefs
+	vnclog.Print(LL_INTINFO, VNCLOG("loading local-only settings\n"));
+	vnclog.SetMode(LoadInt(hkLocal, "DebugMode", 0));
+	vnclog.SetLevel(LoadInt(hkLocal, "DebugLevel", 0));
+
+	// Disable Tray Icon
+	m_server->SetDisableTrayIcon(LoadInt(hkLocal, "DisableTrayIcon", false));
+
+	// Authentication required, loopback allowed, loopbackOnly
+	m_server->SetLoopbackOk(LoadInt(hkLocal, "AllowLoopback", false));
+	if (!m_server->LoopbackOk())
+		m_server->SetLoopbackOnly(false);
+	else
+		m_server->SetLoopbackOnly(LoadInt(hkLocal, "LoopbackOnly", false));
+	m_server->SetHttpdEnabled(LoadInt(hkLocal, "EnableHTTPDaemon", true),
+							  LoadInt(hkLocal, "EnableURLParams", false));
+	m_server->SetAuthRequired(LoadInt(hkLocal, "AuthRequired", true));
+	// NOTE: RealVNC sets ConnectPriority to 0 by default, we set it to 2.
+	m_server->SetConnectPriority(LoadInt(hkLocal, "ConnectPriority", 2));
+	if (!m_server->LoopbackOnly())
+	{
+		char *authhosts = LoadString(hkLocal, "AuthHosts");
+		if (authhosts != 0) {
+			m_server->SetAuthHosts(authhosts);
+			delete [] authhosts;
+		} else {
+			m_server->SetAuthHosts(0);
+		}
+	} else {
+		m_server->SetAuthHosts(0);
+	}
+
+	// LOAD THE USER PREFERENCES
+
+	// Set the default user prefs.
+	//
+	// WIN32S: extracted into SetDefaultUserPrefs() so that the INI path (which
+	// returns long before this point) can apply exactly the same defaults.  Having
+	// two copies of ~30 default values would drift the moment either is edited.
+	SetDefaultUserPrefs();
 
 	// Load the local prefs for this user
 	if (hkDefault != NULL)
@@ -987,6 +1292,29 @@ vncProperties::Load(BOOL usersettings)
 
 	// Make the loaded settings active..
 	ApplyUserPrefs();
+
+	// WIN32S DIAGNOSTIC: report the password state after loading.
+	//
+	// This is the single most useful line in the log when the client reports
+	// "this server does not have a valid password enabled".  It distinguishes
+	// the three possible causes:
+	//
+	//   "no password loaded"        - nothing was read from the registry, so
+	//                                 either Save() never wrote it or the key
+	//                                 being read is not the key being written.
+	//   "password loaded but empty" - a password was read but decrypts to a
+	//                                 zero-length string, which
+	//                                 ValidPasswordsSet() rejects when
+	//                                 AuthRequired is on.
+	//   "password ok"               - the server is happy; look elsewhere.
+	{
+		BOOL vp = m_server->ValidPasswordsSet();
+		vnclog.Print(LL_INTERR,
+			VNCLOG("after load: passwd_set=%d viewonly_set=%d "
+				   "AuthRequired=%d ValidPasswordsSet=%d\n"),
+			(int)m_pref_passwd_set, (int)m_pref_passwd_viewonly_set,
+			(int)m_server->AuthRequired(), (int)vp);
+	}
 
 	// Note whether we loaded the user settings or just the default system settings
 	m_usersettings = usersettings;
@@ -1103,16 +1431,77 @@ vncProperties::ApplyUserPrefs()
 	m_server->LocalInputPriority(m_pref_LocalInputPriority);
 }
 
+// ==========================================================================
+// WIN32S: REGISTRY WRITES MUST BE CHECKED, AND THE KEY MUST BE WRITABLE.
+//
+// This is the cause of "settings are not saved" and, downstream of it, of the
+// client seeing "this server does not have a valid password enabled":
+//
+//   Save() writes the password to a key opened with KEY_WRITE|KEY_READ, but on
+//   Win32s the registry is the Windows 3.1 REG.DAT / registry emulation, and
+//   RegSetValueEx can FAIL for reasons that do not arise on NT - the value type
+//   REG_BINARY is supported but the emulated registry has a much smaller value
+//   size limit, and a key created with RegCreateKeyEx(..., KEY_READ, ...) is not
+//   writable at all.
+//
+//   Neither SaveInt() nor SavePassword() looked at the return value, so every
+//   failure was silent.  Load() then read nothing back, m_pref_passwd_set stayed
+//   FALSE, ApplyUserPrefs() called SetPassword(FALSE, ...), and
+//   ValidPasswordsSet() correctly reported that no password is set - which is
+//   exactly the error the client displays.
+//
+// Both now report failures at LL_INTERR so the log names the value that could
+// not be written.
+// ==========================================================================
+
 void
 vncProperties::SaveInt(HKEY key, LPCSTR valname, LONG val)
 {
-	RegSetValueEx(key, valname, 0, REG_DWORD, (LPBYTE) &val, sizeof(val));
+	// WIN32S: see the note in LoadInt above.
+	if (IniSettingsInUse()) {
+		IniSetInt(valname, val);
+		return;
+	}
+
+	if (key == NULL) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("cannot save \"%s\": registry key not open\n"), valname);
+		return;
+	}
+
+	LONG res = RegSetValueEx(key, valname, 0, REG_DWORD,
+							 (LPBYTE) &val, sizeof(val));
+	if (res != ERROR_SUCCESS) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("failed to save \"%s\" (error %d)\n"), valname, (int)res);
+	}
 }
 
 void
 vncProperties::SavePassword(HKEY key, const char *buffer, const char *entry_name)
 {
-	RegSetValueEx(key, entry_name, 0, REG_BINARY, (LPBYTE) buffer, MAXPWLEN);
+	// WIN32S: see the note in LoadPassword above.
+	if (IniSettingsInUse()) {
+		IniSetPassword(buffer, entry_name);
+		return;
+	}
+
+	if (key == NULL || buffer == NULL) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("cannot save password: registry key not open\n"));
+		return;
+	}
+
+	LONG res = RegSetValueEx(key, entry_name, 0, REG_BINARY,
+							 (LPBYTE) buffer, MAXPWLEN);
+	if (res != ERROR_SUCCESS) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("failed to save password \"%s\" (error %d)\n"),
+			entry_name, (int)res);
+	} else {
+		vnclog.Print(LL_INTINFO,
+			VNCLOG("saved password \"%s\" (%d bytes)\n"), entry_name, MAXPWLEN);
+	}
 }
 
 void
@@ -1123,6 +1512,41 @@ vncProperties::Save()
 
 	if (!m_allowproperties)
 		return;
+
+	// ==================================================================
+	// WIN32S: short-circuit the whole registry-key dance.
+	//
+	// Everything below this point exists to pick ONE OF THREE registry scopes
+	// (HKCU\...\WinVNC3, HKLM\...\WinVNC3\Default, HKLM\...\WinVNC3) and open it
+	// for writing.  On Win32s there is a single INI section, so none of that
+	// applies - and worse, several of those RegCreateKeyEx calls return failure
+	// and take an early "return", which would skip the save entirely even though
+	// the INI write would have succeeded.
+	//
+	// SaveUserPrefs() and the machine-level SaveInt() calls both ignore the HKEY
+	// on the INI path, so pass NULL and let the accessors do the work.
+	// ==================================================================
+	if (IniSettingsInUse()) {
+		vnclog.Print(LL_INTINFO,
+			VNCLOG("saving settings to %s\n"), IniFileName());
+
+		// Per-user prefs (the bulk of the settings, including the passwords).
+		SaveUserPrefs(NULL);
+
+		// Machine-level prefs.  These are the same values the registry path
+		// writes to HKLM after SaveUserPrefs; the names do not collide with the
+		// per-user ones, so one section holds both.
+		SaveInt(NULL, "ConnectPriority", m_server->ConnectPriority());
+		SaveInt(NULL, "LoopbackOnly", m_server->LoopbackOnly());
+		SaveInt(NULL, "EnableHTTPDaemon", m_server->HttpdEnabled());
+		SaveInt(NULL, "EnableURLParams", m_server->HttpdParamsEnabled());
+		SaveInt(NULL, "AllowLoopback", m_server->LoopbackOk());
+		SaveInt(NULL, "AuthRequired", m_server->AuthRequired());
+		SaveInt(NULL, "DebugMode", vnclog.GetMode());
+		SaveInt(NULL, "DebugLevel", vnclog.GetLevel());
+
+		return;
+	}
 
 	// NEW (R3) PREFERENCES ALGORITHM
 	// The user's prefs are only saved if the user is allowed to override
@@ -1140,26 +1564,53 @@ vncProperties::Save()
 		if (strcmp(username, "") == 0)
 			return;
 
-		// Try to get the per-user, global registry key for WinVNC
-		if (RegCreateKeyEx(HKEY_CURRENT_USER,
+		// Try to get the per-user, global registry key for WinVNC.
+		//
+		// WIN32S NOTE: HKEY_CURRENT_USER exists on Win32s but maps to the same
+		// storage as HKEY_LOCAL_MACHINE (Windows 3.1 is single-user and REG.DAT
+		// has no per-user hive).  Writing here therefore works, but it is the
+		// SAME place the machine settings live - which is fine, and is why
+		// settings still round-trip on this platform.
+		LONG res = RegCreateKeyEx(HKEY_CURRENT_USER,
 			WINVNC_REGISTRY_KEY,
 			0, REG_NONE, REG_OPTION_NON_VOLATILE,
-			KEY_WRITE | KEY_READ, NULL, &appkey, &dw) != ERROR_SUCCESS)
-			return;
-	} else {
-		// Try to get the default local registry key for WinVNC
-		HKEY hkLocal;
-		if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
-			WINVNC_REGISTRY_KEY,
-			0, REG_NONE, REG_OPTION_NON_VOLATILE,
-			KEY_READ, NULL, &hkLocal, &dw) != ERROR_SUCCESS) {
-			MessageBox(NULL, "MB1", "WVNC", MB_OK);
+			KEY_ALL_ACCESS, NULL, &appkey, &dw);
+		if (res != ERROR_SUCCESS) {
+			vnclog.Print(LL_INTERR,
+				VNCLOG("Save: could not open HKCU\\%s (error %d) - "
+					   "settings will not persist\n"),
+				WINVNC_REGISTRY_KEY, (int)res);
 			return;
 		}
-		if (RegCreateKeyEx(hkLocal,
+	} else {
+		// Try to get the default local registry key for WinVNC.
+		//
+		// WIN32S: KEY_ALL_ACCESS on the parent, not KEY_READ.  The child
+		// "Default" key is opened for writing, and on the Win32s registry
+		// emulation a read-only parent handle is not a reliable base for that.
+		//
+		// Also note the removed MessageBox(NULL, "MB1", "WVNC", MB_OK) - that was
+		// leftover debugging in the original source, and it fires on a failure
+		// path the user cannot act on.
+		HKEY hkLocal;
+		LONG res = RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+			WINVNC_REGISTRY_KEY,
+			0, REG_NONE, REG_OPTION_NON_VOLATILE,
+			KEY_ALL_ACCESS, NULL, &hkLocal, &dw);
+		if (res != ERROR_SUCCESS) {
+			vnclog.Print(LL_INTERR,
+				VNCLOG("Save: could not open HKLM\\%s (error %d)\n"),
+				WINVNC_REGISTRY_KEY, (int)res);
+			return;
+		}
+		res = RegCreateKeyEx(hkLocal,
 			"Default",
 			0, REG_NONE, REG_OPTION_NON_VOLATILE,
-			KEY_WRITE | KEY_READ, NULL, &appkey, &dw) != ERROR_SUCCESS) {
+			KEY_ALL_ACCESS, NULL, &appkey, &dw);
+		if (res != ERROR_SUCCESS) {
+			vnclog.Print(LL_INTERR,
+				VNCLOG("Save: could not open the \"Default\" key for writing "
+					   "(error %d) - settings will not persist\n"), (int)res);
 			RegCloseKey(hkLocal);
 			return;
 		}
@@ -1167,6 +1618,29 @@ vncProperties::Save()
 	}
 
 	// SAVE PER-USER PREFS IF ALLOWED
+	//
+	// WIN32S DIAGNOSTIC: say WHICH key is being written.
+	//
+	// This is the other half of the "settings are not saved" investigation.  The
+	// asymmetry to watch for is:
+	//
+	//   Save() with m_usersettings == TRUE writes to
+	//       HKEY_CURRENT_USER\Software\ORL\WinVNC3
+	//   Load() reads
+	//       HKLM\Software\ORL\WinVNC3\Default   (always)
+	//       HKLM\Software\ORL\WinVNC3\<user>    (if present)
+	//       HKCU\Software\ORL\WinVNC3            (only if m_allowproperties
+	//                                               AND username != "SYSTEM")
+	//
+	// vncService::GetCurrentUser() returns "Default" on this platform (Windows
+	// 3.1 has no user database - see vncService.cpp), so the username is
+	// "Default", not "SYSTEM", and the HKCU read DOES happen.  If it did not, the
+	// settings would be written somewhere that is never read back - which is
+	// precisely the symptom.  Log it so the pairing is verifiable.
+	vnclog.Print(LL_INTINFO,
+		VNCLOG("saving to %s key\n"),
+		m_usersettings ? "HKCU (per-user)" : "HKLM Default");
+
 	SaveUserPrefs(appkey);
 
 	RegCloseKey(appkey);
@@ -1177,8 +1651,12 @@ vncProperties::Save()
 	if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
 		WINVNC_REGISTRY_KEY,
 		0, REG_NONE, REG_OPTION_NON_VOLATILE,
-		KEY_WRITE | KEY_READ, NULL, &hkLocal, &dw) != ERROR_SUCCESS)
+		KEY_ALL_ACCESS, NULL, &hkLocal, &dw) != ERROR_SUCCESS) {
+		vnclog.Print(LL_INTERR,
+			VNCLOG("Save: could not open HKLM\\%s for machine prefs\n"),
+			WINVNC_REGISTRY_KEY);
 		return;
+	}
 
 	SaveInt(hkLocal, "ConnectPriority", m_server->ConnectPriority());
 	SaveInt(hkLocal, "LoopbackOnly", m_server->LoopbackOnly());
@@ -1200,7 +1678,12 @@ void
 vncProperties::SaveUserPrefs(HKEY appkey)
 {
 	// SAVE THE PER USER PREFS
-	vnclog.Print(LL_INTINFO, VNCLOG("saving current settings to registry\n"));
+	//
+	// WIN32S: 'appkey' is NULL and IGNORED when settings go to WINVNC.INI - every
+	// SaveInt/SavePassword below checks IniSettingsInUse() first.  Nothing in
+	// this function may dereference appkey.
+	vnclog.Print(LL_INTINFO, VNCLOG("saving current settings to %s\n"),
+				 IniSettingsInUse() ? IniFileName() : "registry");
 
 	// Connection prefs
 	SaveInt(appkey, "SocketConnect", m_server->SockConnected());
