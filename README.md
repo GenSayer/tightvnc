@@ -39,7 +39,7 @@ This project provides native binaries compiled explicitly for the following targ
 | IA64 (Itanium) | Intel Itanium Systems | Windows XP 64-Bit Edition / Windows Server 2003/2008 (may be broken on the latter 2). |
 | PowerPC | IBM / Motorola / Mac & Wii Systems | Legacy Windows NT 3.51 / 4.0 PowerPC editions. |
 | MIPS | MIPS R4000 and higher | Legacy Windows NT 3.51 / 4.0 MIPS editions. |
-| win32s | Intel 386+ | Windows 3.1x with Win32s (1.30 recommended, prior versions untested |
+| win32s | Intel 386+ | Windows 3.1x with Win32s (1.30 recommended, prior versions untested) |
 
 ## Features & Enhancements
 * Native Execution: No emulation layers or performance overhead; built explicitly for each instruction set for maximum performance on each architecture.
