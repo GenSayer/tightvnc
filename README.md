@@ -76,7 +76,8 @@ PRs are also welcome, and please send all PRs to the specific branch which you a
 This port maintains the original project formatting and licensing constraints. It is distributed under the standard GNU General Public License (GPLv2).
 
 ## Transparency/AI Disclaimer
-Parts of the updated code and README were written with AI Assistance, however code review and testing was all done by a human. If you do not want to use code that was generated with AI Assistance (which is very little), please do not use this port. 
+Parts of the updated code and README were written with AI Assistance, however code review and testing was all done by a human. If you do not want to use code that was generated with AI Assistance (which is very little), please do not use this port.
+However, the win32s port was written entirely with Claude Code and OpenCode. Testing was still done with a human.
 
 ## Credits & Copyright
 * **Original TightVNC Source:** The core software and original code are Copyright © **Constantin Kaplinsky**, **GlavSoft LLC** and the **TightVNC Team**.
