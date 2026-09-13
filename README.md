@@ -1,4 +1,4 @@
-# TightVNC 1.3.10 Port for All non-x86 Windows Architectures
+# TightVNC 1.3.10 Port for All Windows Architectures
 This is a specialized, unofficial, comprehensive fork of TightVNC 1.3.10 built natively for virtually every Windows processor architecture to ever exist. This project extends the ultra-lightweight, classic 1.3.10 code to run smoothly on modern 64-bit platforms, ARM hardware, and legacy Windows retro-computing environments.
 
 > Looking for the official, untouched upstream x86 TightVNC 1.3.10 source and binaries?
@@ -14,6 +14,7 @@ Because each legacy and modern architecture requires unique toolchains, compiler
 - AXP & AXP64 – Vintage DEC Alpha (32-bit and 64-bit) Windows NT/2000 adaptations.
 - PowerPC – Vintage Windows NT PowerPC adaptations.
 - MIPS – Vintage NT MIPS adaptations & compiler workarounds.
+- win32s - Specialized win32s port for TightVNC 1.3.10.
 
 > **Tip for Git Users:** You can clone and checkout a specific architecture branch immediately using your terminal, for example:
 > ``git clone -b ARM64 https://github.com/GenSayer/tightvnc.git``
@@ -38,6 +39,7 @@ This project provides native binaries compiled explicitly for the following targ
 | IA64 (Itanium) | Intel Itanium Systems | Windows XP 64-Bit Edition / Windows Server 2003/2008 (may be broken on the latter 2). |
 | PowerPC | IBM / Motorola / Mac & Wii Systems | Legacy Windows NT 3.51 / 4.0 PowerPC editions. |
 | MIPS | MIPS R4000 and higher | Legacy Windows NT 3.51 / 4.0 MIPS editions. |
+| win32s | Intel 386+ | Windows 3.1x with Win32s (1.30 recommended, prior versions untested |
 
 ## Features & Enhancements
 * Native Execution: No emulation layers or performance overhead; built explicitly for each instruction set for maximum performance on each architecture.
@@ -54,7 +56,7 @@ This project provides native binaries compiled explicitly for the following targ
 I have every port separated into separate branches because that is how I originally started it and to track changes on each port. I do eventually intend on merging most of the branches, while more than likely keeping the x64 (haven't decided on that yet) and PPC/MIPS branches separated from the main branch, making it either an eventual total of 2 or 3 branches, and I may eventually come up with a name of this fork that isn't TightVNC.
 
 ### Toolchains used:
-* PowerPC/MIPS: MSVC 4.1 with the Windows NT 4.0 SDK and the Microsoft Internet Explorer 3.01 Internet Client SDK for wininet.h for the OS architecture corresponding versions
+* PowerPC/MIPS/win32s: MSVC 4.1 with the Windows NT 4.0 SDK and the Microsoft Internet Explorer 3.01 Internet Client SDK for wininet.h for the OS architecture corresponding versions
 * AXP: Visual Studio 6.0 for DEC Alpha Platforms with the October 1999 Microsoft Platform SDK
 * AXP64: The AXP64 cross-compiler from the October 1999 Platform SDK, which is a very early version of the MSVC 7.0 compiler
 * IA64: MSVC 7.1 cross-compiler from the February 2003 Platform SDK
