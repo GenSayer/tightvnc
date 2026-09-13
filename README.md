@@ -30,7 +30,7 @@ This project provides native binaries compiled explicitly for the following targ
 | ARM32 | Windows RT 8.1 / Windows 10 ARM Build 15035 / ARM64 Windows versions with the ARM32 compatibility layer | Older ARM hardware and ARM32 boards. |
 
 
-## Legacy & Vintage NT Platforms
+## Legacy & Vintage Windows Platforms
 
 | Architecture | Platform Target | Common Use Cases / Operating Systems |
 |---|---|---|
