@@ -14,7 +14,7 @@ Because each legacy and modern architecture requires unique toolchains, compiler
 - AXP & AXP64 – Vintage DEC Alpha (32-bit and 64-bit) Windows NT/2000 adaptations.
 - PowerPC – Vintage Windows NT PowerPC adaptations.
 - MIPS – Vintage NT MIPS adaptations & compiler workarounds.
-- win32s - Specialized win32s port for TightVNC 1.3.10.
+- win32s - Specialized Windows 3.1x win32s port of TightVNC 1.3.10.
 
 > **Tip for Git Users:** You can clone and checkout a specific architecture branch immediately using your terminal, for example:
 > ``git clone -b ARM64 https://github.com/GenSayer/tightvnc.git``
