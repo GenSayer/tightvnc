@@ -43,6 +43,7 @@
 // Includes
 #include "stdhdrs.h"
 #include <omnithread.h>
+#include <string.h>
 #include "resource.h"
 
 // Custom
@@ -77,6 +78,21 @@ extern "C" {
 	sz_rfbCapabilityInfoVendor);						\
 	memcpy(pcap->nameSignature, sig_##code_sym,			\
 	sz_rfbCapabilityInfoName);							\
+}
+
+// Portable socket discard helper: VSocket::ReadExact(NULL,...) passes NULL
+// to recv() which faults (AV) on all targets including old MSVC builds.
+// Read and drop with a small stack buffer instead. No C99/64-bit specifics.
+static BOOL DiscardSocketBytes(VSocket *sock, unsigned int n)
+{
+	char buf[256];
+	while (n > 0) {
+		unsigned int chunk = (n > sizeof(buf)) ? (unsigned int)sizeof(buf) : n;
+		if (!sock->ReadExact(buf, chunk))
+			return FALSE;
+		n -= chunk;
+	}
+	return TRUE;
 }
 
 // vncClient thread class
@@ -1357,14 +1373,14 @@ vncClientThread::run(void *arg)
 				msg.fdr.position = Swap32IfLE(msg.fdr.position);
 
 				if (!vncService::tryImpersonate()) {
-					m_socket->ReadExact(NULL, msg.fdr.fNameSize);
+					DiscardSocketBytes(m_socket, msg.fdr.fNameSize);
 					char reason[] = "Cannot impersonate logged on user";
 					int reasonLen = strlen(reason);
 					m_client->SendFileDownloadFailed(reasonLen, reason);
 					break;
 				}
 				if (msg.fdr.fNameSize > 255) {
-					m_socket->ReadExact(NULL, msg.fdr.fNameSize);
+					DiscardSocketBytes(m_socket, msg.fdr.fNameSize);
 					char reason[] = "Path length exceeds 255 bytes";
 					int reasonLen = strlen(reason);
 					m_client->SendFileDownloadFailed(reasonLen, reason);
@@ -1391,9 +1407,13 @@ vncClientThread::run(void *arg)
 				vnclog.Print(LL_CLIENTS, VNCLOG("file download requested: %s\n"),
 							 path_file);
 
-				if ((FindFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || 
-					(hFile == INVALID_HANDLE_VALUE) || (path_file[0] == '\0')) {
-					FindClose(hFile);
+				// Portable: check handle before touching FindFileData which is
+				// undefined when FindFirstFile fails; never FindClose an
+				// invalid handle (harmless on x86, AV risk on some targets).
+				if ((hFile == INVALID_HANDLE_VALUE) || (path_file[0] == '\0') ||
+					(FindFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+					if (hFile != INVALID_HANDLE_VALUE)
+						FindClose(hFile);
 					char reason[] = "Cannot open file, perhaps it is absent or is a directory";
 					int reasonLen = strlen(reason);
 					m_client->SendFileDownloadFailed(reasonLen, reason);
@@ -1432,14 +1452,14 @@ vncClientThread::run(void *arg)
 				msg.fupr.position = Swap32IfLE(msg.fupr.position);
 
 				if (!vncService::tryImpersonate()) {
-					m_socket->ReadExact(NULL, msg.fupr.fNameSize);
+					DiscardSocketBytes(m_socket, msg.fupr.fNameSize);
 					char reason[] = "Cannot impersonate logged on user";
 					int reasonLen = strlen(reason);
 					m_client->SendFileUploadCancel(reasonLen, reason);
 					break;
 				}
 				if (msg.fupr.fNameSize > MAX_PATH) {
-					m_socket->ReadExact(NULL, msg.fupr.fNameSize);
+					DiscardSocketBytes(m_socket, msg.fupr.fNameSize);
 					char reason[] = "Path length exceeds MAX_PATH value";
 					int reasonLen = strlen(reason);
 					m_client->SendFileUploadCancel(reasonLen, reason);
@@ -1499,9 +1519,9 @@ vncClientThread::run(void *arg)
 
 				if (!vncService::tryImpersonate()) {
 					if (msg.fud.realSize == 0 && msg.fud.compressedSize == 0) {
-						m_socket->ReadExact(NULL, sizeof(CARD32));
+						DiscardSocketBytes(m_socket, sizeof(CARD32));
 					} else {
-						m_socket->ReadExact(NULL, msg.fud.compressedSize);
+						DiscardSocketBytes(m_socket, msg.fud.compressedSize);
 					}
 					char reason[] = "Cannot impersonate logged on user";
 					int reasonLen = strlen(reason);
@@ -2387,7 +2407,11 @@ vncClient::UpdateLocalFormat()
 char * 
 vncClientThread::ConvertPath(char *path)
 {
+	if (path == NULL) return path;
 	int len = strlen(path);
+	// Portable: len==0 previously wrote path[-1]; same on all targets
+	// including IA64/AXP64/AMD64/ARM64 and old MSVC.
+	if (len <= 0) return path;
 	if(len >= 255) return path;
 	if((path[0] == '/') && (len == 1)) {path[0] = '\0'; return path;}
 	for(int i = 0; i < (len - 1); i++) {
@@ -2405,11 +2429,16 @@ vncClient::SendFileUploadCancel(unsigned short reasonLen, char *reason)
 
 	int msgLen = sz_rfbFileUploadCancelMsg + reasonLen;
 	char *pAllFUCMessage = new char[msgLen];
-	rfbFileUploadCancelMsg *pFUC = (rfbFileUploadCancelMsg *) pAllFUCMessage;
-	char *pFollow = &pAllFUCMessage[sz_rfbFileUploadCancelMsg];
-	pFUC->type = rfbFileUploadCancel;
-	pFUC->reasonLen = Swap16IfLE(reasonLen);
-	memcpy(pFollow, reason, reasonLen);
+	if (pAllFUCMessage == NULL) return;
+	// Portable: char buffer is 1-byte aligned; use memcpy for CARD16.
+	pAllFUCMessage[0] = (char)rfbFileUploadCancel;
+	pAllFUCMessage[1] = 0;
+	{
+		CARD16 v = Swap16IfLE(reasonLen);
+		memcpy(&pAllFUCMessage[2], &v, sizeof(v));
+	}
+	if (reasonLen > 0 && reason != NULL)
+		memcpy(&pAllFUCMessage[sz_rfbFileUploadCancelMsg], reason, reasonLen);
 	m_socket->SendExact(pAllFUCMessage, msgLen);
 	delete [] pAllFUCMessage;
 }
@@ -2429,11 +2458,16 @@ vncClient::SendFileDownloadFailed(unsigned short reasonLen, char *reason)
 
 	int msgLen = sz_rfbFileDownloadFailedMsg + reasonLen;
 	char *pAllFDFMessage = new char[msgLen];
-	rfbFileDownloadFailedMsg *pFDF = (rfbFileDownloadFailedMsg *) pAllFDFMessage;
-	char *pFollow = &pAllFDFMessage[sz_rfbFileDownloadFailedMsg];
-	pFDF->type = rfbFileDownloadFailed;
-	pFDF->reasonLen = Swap16IfLE(reasonLen);
-	memcpy(pFollow, reason, reasonLen);
+	if (pAllFDFMessage == NULL) return;
+	// Portable: see SendFileUploadCancel above.
+	pAllFDFMessage[0] = (char)rfbFileDownloadFailed;
+	pAllFDFMessage[1] = 0;
+	{
+		CARD16 v = Swap16IfLE(reasonLen);
+		memcpy(&pAllFDFMessage[2], &v, sizeof(v));
+	}
+	if (reasonLen > 0 && reason != NULL)
+		memcpy(&pAllFDFMessage[sz_rfbFileDownloadFailedMsg], reason, reasonLen);
 	m_socket->SendExact(pAllFDFMessage, msgLen);
 	delete [] pAllFDFMessage;
 }
@@ -2445,13 +2479,18 @@ vncClient::SendFileDownloadData(unsigned int mTime)
 
 	int msgLen = sz_rfbFileDownloadDataMsg + sizeof(unsigned int);
 	char *pAllFDDMessage = new char[msgLen];
-	rfbFileDownloadDataMsg *pFDD = (rfbFileDownloadDataMsg *) pAllFDDMessage;
-	unsigned int *pFollow = (unsigned int *) &pAllFDDMessage[sz_rfbFileDownloadDataMsg];
-	pFDD->type = rfbFileDownloadData;
-	pFDD->compressLevel = 0;
-	pFDD->compressedSize = Swap16IfLE(0);
-	pFDD->realSize = Swap16IfLE(0);
-	memcpy(pFollow, &mTime, sizeof(unsigned int));
+	if (pAllFDDMessage == NULL) return;
+	// Portable: pAllFDDMessage is char-aligned only; multibyte fields use
+	// memcpy so IA64/AXP64/ARM64 never see misaligned CARD16/CARD32 stores.
+	// Byte fields remain direct. Valid on AMD64/x86 and old MSVC.
+	pAllFDDMessage[0] = (char)rfbFileDownloadData;
+	pAllFDDMessage[1] = 0;
+	{
+		CARD16 v = Swap16IfLE((CARD16)0);
+		memcpy(&pAllFDDMessage[2], &v, sizeof(v));
+		memcpy(&pAllFDDMessage[4], &v, sizeof(v));
+	}
+	memcpy(&pAllFDDMessage[sz_rfbFileDownloadDataMsg], &mTime, sizeof(unsigned int));
 	m_socket->SendExact(pAllFDDMessage, msgLen);
 	delete [] pAllFDDMessage;
 }
@@ -2460,18 +2499,36 @@ void
 vncClient::SendFileDownloadPortion()
 {
 	if (!m_bDownloadStarted) return;
+	// Portable guard: handle may have been closed by CloseUndoneFileTransfer
+	// on another thread; ReadFile on INVALID_HANDLE_VALUE fails fast and the
+	// old code would SendFileDownloadData(0,pBuff) + repost forever,
+	// flooding the WinVNC message queue (log symptom: endless 49395).
+	if (m_hFileToRead == INVALID_HANDLE_VALUE) {
+		m_bDownloadStarted = FALSE;
+		return;
+	}
 	DWORD dwNumberOfBytesRead = 0;
 	m_rfbBlockSize = 8192;
 	char *pBuff = new char[m_rfbBlockSize];
-	BOOL bResult = ReadFile(m_hFileToRead, pBuff, m_rfbBlockSize, &dwNumberOfBytesRead, NULL);
-	if ((bResult) && (dwNumberOfBytesRead == 0)) {
-		/* This is the end of the file. */
-		SendFileDownloadData(m_modTime);
-		vnclog.Print(LL_CLIENTS, VNCLOG("file download complete: %s\n"), m_DownloadFilename);
+	if (pBuff == NULL) {
 		CloseHandle(m_hFileToRead);
 		m_bDownloadStarted = FALSE;
 		return;
 	}
+	BOOL bResult = ReadFile(m_hFileToRead, pBuff, m_rfbBlockSize, &dwNumberOfBytesRead, NULL);
+	if ((!bResult) || (dwNumberOfBytesRead == 0)) {
+		delete [] pBuff;
+		if (bResult) {
+			/* This is the end of the file. */
+			SendFileDownloadData(m_modTime);
+			vnclog.Print(LL_CLIENTS, VNCLOG("file download complete: %s\n"), m_DownloadFilename);
+		}
+		CloseHandle(m_hFileToRead);
+		m_bDownloadStarted = FALSE;
+		return;
+	}
+	// m_rfbBlockSize is 8192 so the cast cannot truncate on any target
+	// (IA64/AXP64/AMD64/ARM64/x86, old MSVC).
 	SendFileDownloadData((unsigned short)dwNumberOfBytesRead, pBuff);
 	delete [] pBuff;
 	PostToWinVNC(fileTransferDownloadMessage, (WPARAM) this, (LPARAM) 0);
@@ -2484,13 +2541,17 @@ vncClient::SendFileDownloadData(unsigned short sizeFile, char *pFile)
 
 	int msgLen = sz_rfbFileDownloadDataMsg + sizeFile;
 	char *pAllFDDMessage = new char[msgLen];
-	rfbFileDownloadDataMsg *pFDD = (rfbFileDownloadDataMsg *) pAllFDDMessage;
-	char *pFollow = &pAllFDDMessage[sz_rfbFileDownloadDataMsg];
-	pFDD->type = rfbFileDownloadData;
-	pFDD->compressLevel = 0;
-	pFDD->compressedSize = Swap16IfLE(sizeFile);
-	pFDD->realSize = Swap16IfLE(sizeFile);
-	memcpy(pFollow, pFile, sizeFile);
+	if (pAllFDDMessage == NULL) return;
+	// Portable: see SendFileDownloadData(mTime) above.
+	pAllFDDMessage[0] = (char)rfbFileDownloadData;
+	pAllFDDMessage[1] = 0;
+	{
+		CARD16 v = Swap16IfLE(sizeFile);
+		memcpy(&pAllFDDMessage[2], &v, sizeof(v));
+		memcpy(&pAllFDDMessage[4], &v, sizeof(v));
+	}
+	if (sizeFile > 0 && pFile != NULL)
+		memcpy(&pAllFDDMessage[sz_rfbFileDownloadDataMsg], pFile, sizeFile);
 	m_socket->SendExact(pAllFDDMessage, msgLen);
 	delete [] pAllFDDMessage;
 

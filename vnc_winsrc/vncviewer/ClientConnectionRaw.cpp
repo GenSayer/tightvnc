@@ -33,14 +33,14 @@
 
 void ClientConnection::ReadRawRect(rfbFramebufferUpdateRectHeader *pfburh) {
 
-	UINT numpixels = pfburh->r.w * pfburh->r.h;
+	// Portable: use size_t to avoid 32-bit overflow on large rects
+	// (same on IA64/AXP64/AMD64/ARM64/x86).
+	size_t numpixels = (size_t)pfburh->r.w * (size_t)pfburh->r.h;
     // this assumes at least one byte per pixel. Naughty.
-	UINT numbytes = numpixels * m_minPixelBytes;
+	size_t numbytes = numpixels * m_minPixelBytes;
 	// Read in the whole thing
     CheckBufferSize(numbytes);
-	ReadExact(m_netbuf, numbytes);
-
-	SETUP_COLOR_SHORTCUTS;
+	ReadExact(m_netbuf, (int)numbytes);
 
 	{
 		// No other threads can use bitmap DC

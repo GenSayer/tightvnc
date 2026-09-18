@@ -1675,6 +1675,14 @@ vncServer::SetPollingCycle(UINT msec)
 BOOL
 vncServer::checkPointer(vncClient *pClient)
 {
+  // Portable fix: UI thread (file download pump via PostToWinVNC) races
+  // client thread RemoveClient() which mutates m_authClients/m_clientmap.
+  // Hold m_clientsLock like every other m_authClients user so iteration
+  // and GetClient() cannot observe a half-erased list or dangling pointer.
+  // Safe on IA64/AXP64/AMD64/ARM64/x86 and old MSVC (no new APIs).
+  if (pClient == NULL)
+    return FALSE;
+  omni_mutex_lock l(m_clientsLock);
   vncClientList::iterator i;
   for (i = m_authClients.begin(); i != m_authClients.end(); i++)
   {

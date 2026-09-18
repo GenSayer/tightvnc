@@ -43,6 +43,7 @@
 #include "ConnectingDialog.h"
 #include "FileTransfer.h"
 #include "zlib/zlib.h"
+#include <string.h>
 extern "C" {
 #include "libjpeg/jpeglib.h"
 }
@@ -265,6 +266,17 @@ private:
 		FillSolidRect(&r, color);
 	};
 
+	// Batched pixel blits. Caller must hold m_bitmapdcMutex and have
+	// m_hBitmap selected into m_hBitmapDC (same contract as the old
+	// SETPIXELS macros). Implemented with a single SetDIBitsToDevice
+	// per call using BI_BITFIELDS matching COLORREF layout, so they are
+	// portable to IA64/AXP64/AMD64/ARM64 and avoid w*h SetPixelV calls.
+	// src for DrawPixels* may be unaligned (network/zlib buffers).
+	void DrawPixels8(const void *src, int x, int y, int w, int h);
+	void DrawPixels16(const void *src, int x, int y, int w, int h);
+	void DrawPixels32(const void *src, int x, int y, int w, int h);
+	void DrawColorPixels(const COLORREF *src, int x, int y, int w, int h);
+
     // how many other windows are owned by this process?
     unsigned int CountProcessOtherWindows();
 
@@ -302,7 +314,10 @@ private:
 	bool m_tightCutZeros;
 	int m_tightRectWidth, m_tightRectColors;
 	COLORREF m_tightPalette[256];
-	CARD8 m_tightPrevRow[2048*3*sizeof(CARD16)];
+	// Portable alignment: CARD16 array guarantees 2-byte alignment on
+	// IA64/AXP64/AMD64/ARM64. Byte access (gradient24) uses (CARD8*) cast,
+	// which is always safe. Do not change back to CARD8[].
+	CARD16 m_tightPrevRow[2048*3];
 
 	// Bitmap for local copy of screen, and DC for writing to it.
 	HBITMAP m_hBitmap;
@@ -419,26 +434,33 @@ public:
      CARD8 gs = m_myFormat.greenShift; CARD16 gm = m_myFormat.greenMax; \
      CARD8 bs = m_myFormat.blueShift;  CARD16 bm = m_myFormat.blueMax;  \
 
+// Portable unaligned readers: safe on IA64/AXP64/AMD64/ARM64 where
+// direct *(CARD16*)/(CARD32*) on odd addresses faults (DATATYPE_MISALIGNMENT)
+// or is emulated slowly. memcpy lets the compiler emit safe code on all.
+// Byte loads (8/24bpp) are always safe and kept direct.
+// 'static inline' keeps MSVC 6 / MSVC 7 / VS2005 happy (no ODR link errors,
+// no C99 dependency) while remaining valid on modern compilers.
+static inline CARD16 ReadUnaligned16(const void *p) { CARD16 v; memcpy(&v, p, sizeof(v)); return v; }
+static inline CARD32 ReadUnaligned32(const void *p) { CARD32 v; memcpy(&v, p, sizeof(v)); return v; }
+static inline void WriteUnaligned32(void *p, CARD32 v) { memcpy(p, &v, sizeof(v)); }
+
 // read a pixel from the given address, and return a color value
 #define COLOR_FROM_PIXEL8_ADDRESS(p) (PALETTERGB( \
                 (int) (((*(CARD8 *)(p) >> rs) & rm) * 255 / rm), \
                 (int) (((*(CARD8 *)(p) >> gs) & gm) * 255 / gm), \
                 (int) (((*(CARD8 *)(p) >> bs) & bm) * 255 / bm) ))
 
-#define COLOR_FROM_PIXEL16_ADDRESS(p) (PALETTERGB( \
-                (int) ((( *(CARD16 *)(p) >> rs) & rm) * 255 / rm), \
-                (int) ((( *(CARD16 *)(p) >> gs) & gm) * 255 / gm), \
-                (int) ((( *(CARD16 *)(p) >> bs) & bm) * 255 / bm) ))
+// Single memcpy load per macro expansion: safe for Hextile coloured
+// subrects where 32bpp stride is 6 bytes (base+6,+12...) and for any
+// byte-offset buffer on strict-alignment targets.
+#define COLOR_FROM_PIXEL16_ADDRESS(p) (COLOR_FROM_PIXEL16(ReadUnaligned16(p)))
 
 #define COLOR_FROM_PIXEL24_ADDRESS(p) (PALETTERGB( \
                 (int) (((CARD8 *)(p))[0]), \
                 (int) (((CARD8 *)(p))[1]), \
                 (int) (((CARD8 *)(p))[2]) ))
 
-#define COLOR_FROM_PIXEL32_ADDRESS(p) (PALETTERGB( \
-                (int) ((( *(CARD32 *)(p) >> rs) & rm) * 255 / rm), \
-                (int) ((( *(CARD32 *)(p) >> gs) & gm) * 255 / gm), \
-                (int) ((( *(CARD32 *)(p) >> bs) & bm) * 255 / bm) ))
+#define COLOR_FROM_PIXEL32_ADDRESS(p) (COLOR_FROM_PIXEL32(ReadUnaligned32(p)))
 
 // The following may be faster if you already have a pixel value of the appropriate size
 #define COLOR_FROM_PIXEL8(p) (PALETTERGB( \
@@ -463,29 +485,16 @@ public:
 #define SETPIXEL(b,x,y,c) SetPixelV((b),(x),(y),(c))
 #endif
 
-#define SETPIXELS(buffer, bpp, x, y, w, h)										\
-	{																			\
-		CARD##bpp *p = (CARD##bpp *) buffer;									\
-        register CARD##bpp pix;													\
-		for (int k = y; k < y+h; k++) {											\
-			for (int j = x; j < x+w; j++) {										\
-                    pix = *p;													\
-                    SETPIXEL(m_hBitmapDC, j,k, COLOR_FROM_PIXEL##bpp##(pix));	\
-					p++;														\
-			}																	\
-		}																		\
-	}
+// Batched replacements for the old per-pixel SetPixelV loops.
+// Each expands to a single Draw* call (single SetDIBitsToDevice).
+// Portable: no unaligned dereference, no per-pixel kernel transition,
+// identical pixels on IA64/AXP64/AMD64/ARM64/x86.
+// Braced so existing call sites without trailing ';' keep compiling.
+#define SETPIXELS(buffer, bpp, x, y, w, h) \
+	{ DrawPixels##bpp((const void *)(buffer), (x), (y), (w), (h)); }
 
-#define SETPIXELS_NOCONV(buffer, x, y, w, h)									\
-	{																			\
-		CARD32 *p = (CARD32 *) buffer;											\
-		for (int k = y; k < y+h; k++) {											\
-			for (int j = x; j < x+w; j++) {										\
-                    SETPIXEL(m_hBitmapDC, j,k, *p);	                            \
-					p++;														\
-			}																	\
-		}																		\
-	}
+#define SETPIXELS_NOCONV(buffer, x, y, w, h) \
+	{ DrawColorPixels((const COLORREF *)(buffer), (x), (y), (w), (h)); }
 
 #endif // CLIENTCONNECTION_H__
 

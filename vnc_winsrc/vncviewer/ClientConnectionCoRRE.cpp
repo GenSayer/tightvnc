@@ -35,12 +35,13 @@ void ClientConnection::ReadCoRRERect(rfbFramebufferUpdateRectHeader *pfburh)
 {
 	// An RRE rect is always followed by a background color
 	// For speed's sake we read them together into a buffer.
+	// Portable: tmpbuf is char-aligned only, use memcpy for multibyte
+	// fields (safe on IA64/AXP64/ARM64/AMD64).
 	char tmpbuf[sz_rfbRREHeader+4];			// biggest pixel is 4 bytes long
-    rfbRREHeader *prreh = (rfbRREHeader *) tmpbuf;
 	CARD8 *pcolor = (CARD8 *) tmpbuf + sz_rfbRREHeader;
 	ReadExact(tmpbuf, sz_rfbRREHeader + m_minPixelBytes);
 
-	prreh->nSubrects = Swap32IfLE(prreh->nSubrects);
+	CARD32 nSubrects = Swap32IfLE(ReadUnaligned32(tmpbuf));
 
 	SETUP_COLOR_SHORTCUTS;
     COLORREF color;
@@ -63,18 +64,17 @@ void ClientConnection::ReadCoRRERect(rfbFramebufferUpdateRectHeader *pfburh)
 		FillSolidRect(pfburh->r.x, pfburh->r.y, pfburh->r.w, pfburh->r.h, color);
 	}
 
-    if (prreh->nSubrects == 0) return;
+    if (nSubrects == 0) return;
 
 	// Draw the sub-rectangles
-    rfbCoRRERectangle *pRect;
 	rfbRectangle rect;
 
 	// The size of an CoRRE subrect including color info
 	int subRectSize = m_minPixelBytes + sz_rfbCoRRERectangle;
 
-	// Read subrects into the buffer 
-	CheckBufferSize(subRectSize * prreh->nSubrects);
-    ReadExact(m_netbuf, subRectSize * prreh->nSubrects);
+	// Read subrects into the buffer
+	CheckBufferSize((size_t)subRectSize * nSubrects);
+    ReadExact(m_netbuf, subRectSize * nSubrects);
 	BYTE *p = (BYTE *) m_netbuf;
 
 	// No other threads can use bitmap DC
@@ -82,9 +82,9 @@ void ClientConnection::ReadCoRRERect(rfbFramebufferUpdateRectHeader *pfburh)
 	ObjectSelector b(m_hBitmapDC, m_hBitmap);
 	PaletteSelector ps(m_hBitmapDC, m_hPalette);
 
-	for (CARD32 i = 0; i < prreh->nSubrects; i++) {
-		pRect = (rfbCoRRERectangle *) (p + m_minPixelBytes);
-			
+	for (CARD32 i = 0; i < nSubrects; i++) {
+		const BYTE *pRectBuf = p + m_minPixelBytes;
+
 		switch (m_myFormat.bitsPerPixel) {
 		case 8:
 			color = COLOR_FROM_PIXEL8_ADDRESS(p); break;
@@ -93,11 +93,13 @@ void ClientConnection::ReadCoRRERect(rfbFramebufferUpdateRectHeader *pfburh)
 		case 32:
 			color = COLOR_FROM_PIXEL32_ADDRESS(p); break;
 		};
-			
-		rect.x = pRect->x + pfburh->r.x;
-		rect.y = pRect->y + pfburh->r.y;
-		rect.w = pRect->w;
-		rect.h = pRect->h;
+
+		// rfbCoRRERectangle is 4x CARD8 so byte loads are always
+		// alignment-safe on all targets.
+		rect.x = pRectBuf[0] + pfburh->r.x;
+		rect.y = pRectBuf[1] + pfburh->r.y;
+		rect.w = pRectBuf[2];
+		rect.h = pRectBuf[3];
 
 		FillSolidRect(rect.x, rect.y, rect.w, rect.h, color);
 		p += subRectSize;

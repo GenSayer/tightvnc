@@ -284,7 +284,7 @@ int ClientConnection::ReadCompactLen() {
 //   Bool m_tightCutZeros;
 //   int m_tightRectWidth, m_tightRectColors;
 //   COLORREF m_tightPalette[256];
-//   CARD8 m_tightPrevRow[2048*3*sizeof(CARD16)];
+//   CARD16 m_tightPrevRow[2048*3];
 
 int ClientConnection::InitFilterCopy (int rw, int rh)
 {
@@ -407,9 +407,9 @@ DEFINE_TIGHT_FILTER_COPY(32)
 void ClientConnection::FilterGradient##bpp (int numRows)                      \
 {                                                                             \
   int x, y, c;                                                                \
-  CARD##bpp *src = (CARD##bpp *)m_netbuf;                                     \
+  const CARD8 *srcBytes = (const CARD8 *)m_netbuf;                            \
   COLORREF *dst = (COLORREF *)m_zlibbuf;                                      \
-  CARD16 *thatRow = (CARD16 *)m_tightPrevRow;                                 \
+  CARD16 *thatRow = m_tightPrevRow;                                           \
   CARD16 thisRow[2048*3];                                                     \
   CARD16 pix[3];                                                              \
   CARD16 max[3];                                                              \
@@ -426,18 +426,23 @@ void ClientConnection::FilterGradient##bpp (int numRows)                      \
                                                                               \
   for (y = 0; y < numRows; y++) {                                             \
                                                                               \
-    /* First pixel in a row */                                                \
+    /* First pixel in a row: portable unaligned load via memcpy. */           \
+    { CARD##bpp raw0;                                                         \
+      memcpy(&raw0, srcBytes + (size_t)(y*m_tightRectWidth)*sizeof(CARD##bpp), \
+             sizeof(raw0));                                                   \
     for (c = 0; c < 3; c++) {                                                 \
-      pix[c] = (CARD16)((src[y*m_tightRectWidth] >> shift[c]) +               \
-                        thatRow[c] & max[c]);                                 \
+      pix[c] = (CARD16)((raw0 >> shift[c]) + thatRow[c] & max[c]);            \
       thisRow[c] = pix[c];                                                    \
-    }                                                                         \
+    } }                                                                       \
     dst[y*m_tightRectWidth] = PALETTERGB((CARD32)pix[0] * 255 / max[0],       \
                                          (CARD32)pix[1] * 255 / max[1],       \
                                          (CARD32)pix[2] * 255 / max[2]);      \
                                                                               \
     /* Remaining pixels of a row */                                           \
     for (x = 1; x < m_tightRectWidth; x++) {                                  \
+      CARD##bpp rawx;                                                         \
+      memcpy(&rawx, srcBytes + (size_t)(y*m_tightRectWidth+x)*sizeof(CARD##bpp), \
+             sizeof(rawx));                                                   \
       for (c = 0; c < 3; c++) {                                               \
         est[c] = (int)thatRow[x*3+c] + (int)pix[c]-(int)thatRow[(x-1)*3 + c]; \
         if (est[c] > (int)max[c]) {                                           \
@@ -445,8 +450,7 @@ void ClientConnection::FilterGradient##bpp (int numRows)                      \
         } else if (est[c] < 0) {                                              \
           est[c] = 0;                                                         \
         }                                                                     \
-        pix[c] = (CARD16)((src[y*m_tightRectWidth+x] >> shift[c]) +           \
-                          est[c] & max[c]);                                   \
+        pix[c] = (CARD16)((rawx >> shift[c]) + est[c] & max[c]);              \
         thisRow[x*3+c] = pix[c];                                              \
       }                                                                       \
       dst[y*m_tightRectWidth+x] = PALETTERGB((CARD32)pix[0] * 255 / max[0],   \
@@ -468,12 +472,13 @@ void ClientConnection::FilterGradient24 (int numRows)
   int est[3];
 
   COLORREF *dst = (COLORREF *)m_zlibbuf;
+  CARD8 *prevRowBytes = (CARD8 *)m_tightPrevRow;
 
   for (int y = 0; y < numRows; y++) {
 
     // First pixel in a row
     for (int c = 0; c < 3; c++) {
-      pix[c] = m_tightPrevRow[c] + m_netbuf[y*m_tightRectWidth*3+c];
+      pix[c] = prevRowBytes[c] + m_netbuf[y*m_tightRectWidth*3+c];
       thisRow[c] = pix[c];
     }
     dst[y*m_tightRectWidth] = COLOR_FROM_PIXEL24_ADDRESS(pix);
@@ -481,8 +486,8 @@ void ClientConnection::FilterGradient24 (int numRows)
     // Remaining pixels of a row
     for (int x = 1; x < m_tightRectWidth; x++) {
       for (int c = 0; c < 3; c++) {
-        est[c] = (int)m_tightPrevRow[x*3+c] + (int)pix[c] -
-                 (int)m_tightPrevRow[(x-1)*3+c];
+        est[c] = (int)prevRowBytes[x*3+c] + (int)pix[c] -
+                 (int)prevRowBytes[(x-1)*3+c];
         if (est[c] > 0xFF) {
           est[c] = 0xFF;
         } else if (est[c] < 0x00) {
@@ -494,7 +499,7 @@ void ClientConnection::FilterGradient24 (int numRows)
       dst[y*m_tightRectWidth+x] = COLOR_FROM_PIXEL24_ADDRESS(pix);
     }
 
-    memcpy(m_tightPrevRow, thisRow, m_tightRectWidth * 3);
+    memcpy(prevRowBytes, thisRow, m_tightRectWidth * 3);
   }
 }
 

@@ -214,7 +214,7 @@ void ClientConnection::HandleZlibHexSubencodingBuf##bpp(int x, int y, int w, int
 	SETUP_COLOR_SHORTCUTS;														\
 																				\
 	if (subencoding & rfbHextileBackgroundSpecified) {							\
-		bg = *((CARD##bpp *)(buffer + bufIndex));								\
+		memcpy(&bg, buffer + bufIndex, (bpp/8));								\
 		bufIndex += (bpp/8);													\
 		/* ReadExact((char *)&bg, (bpp/8)); */									\
 		bgcolor = COLOR_FROM_PIXEL##bpp##_ADDRESS(&bg);							\
@@ -222,7 +222,7 @@ void ClientConnection::HandleZlibHexSubencodingBuf##bpp(int x, int y, int w, int
 	FillSolidRect(x,y,w,h,bgcolor);												\
 																				\
 	if (subencoding & rfbHextileForegroundSpecified)  {							\
-		fg = *((CARD##bpp *)(buffer + bufIndex));								\
+		memcpy(&fg, buffer + bufIndex, (bpp/8));								\
 		bufIndex += (bpp/8);													\
 		/* ReadExact((char *)&fg, (bpp/8)); */									\
 		fgcolor = COLOR_FROM_PIXEL##bpp##_ADDRESS(&fg);							\

@@ -1644,13 +1644,15 @@ void ClientConnection::SetFormatAndEncodings()
 	m_minPixelBytes = (m_myFormat.bitsPerPixel + 7) >> 3;
 
 	// Set encodings
+	// Portable: buf is char-aligned only, so all multibyte fields use
+	// memcpy (safe on IA64/AXP64/ARM64/AMD64). Old code cast char* to
+	// rfbSetEncodingsMsg*/CARD32* which faults on strict-alignment targets.
 	char buf[sz_rfbSetEncodingsMsg + MAX_ENCODINGS * 4];
-	rfbSetEncodingsMsg *se = (rfbSetEncodingsMsg *)buf;
-	CARD32 *encs = (CARD32 *)(&buf[sz_rfbSetEncodingsMsg]);
+	int nEncodings = 0;
 	int len = 0;
 
-	se->type = rfbSetEncodings;
-	se->nEncodings = 0;
+	buf[0] = (char)rfbSetEncodings;
+	buf[1] = 0;
 
 	bool useCompressLevel = false;
 	int i;
@@ -1661,7 +1663,9 @@ void ClientConnection::SetFormatAndEncodings()
 	{
 		if (m_opts.m_PreferredEncoding == i) {
 			if (m_opts.m_UseEnc[i]) {
-				encs[se->nEncodings++] = Swap32IfLE(i);
+				WriteUnaligned32(&buf[sz_rfbSetEncodingsMsg + nEncodings * 4],
+								 Swap32IfLE((CARD32)i));
+				nEncodings++;
 				if ( i == rfbEncodingZlib ||
 					 i == rfbEncodingTight ||
 					 i == rfbEncodingZlibHex ) {
@@ -1681,7 +1685,9 @@ void ClientConnection::SetFormatAndEncodings()
 		if ( (m_opts.m_PreferredEncoding != i) &&
 			 (m_opts.m_UseEnc[i]))
 		{
-			encs[se->nEncodings++] = Swap32IfLE(i);
+			WriteUnaligned32(&buf[sz_rfbSetEncodingsMsg + nEncodings * 4],
+							 Swap32IfLE((CARD32)i));
+			nEncodings++;
 			if ( i == rfbEncodingZlib ||
 				 i == rfbEncodingTight ||
 				 i == rfbEncodingZlibHex ) {
@@ -1694,33 +1700,51 @@ void ClientConnection::SetFormatAndEncodings()
 	if ( useCompressLevel && m_opts.m_useCompressLevel &&
 		 m_opts.m_compressLevel >= 0 &&
 		 m_opts.m_compressLevel <= 9) {
-		encs[se->nEncodings++] = Swap32IfLE( rfbEncodingCompressLevel0 +
-											 m_opts.m_compressLevel );
+		WriteUnaligned32(&buf[sz_rfbSetEncodingsMsg + nEncodings * 4],
+						 Swap32IfLE((CARD32)(rfbEncodingCompressLevel0 +
+											 m_opts.m_compressLevel)));
+		nEncodings++;
 	}
 
 	// Request cursor shape updates if enabled by user
 	if (m_opts.m_requestShapeUpdates) {
-		encs[se->nEncodings++] = Swap32IfLE(rfbEncodingXCursor);
-		encs[se->nEncodings++] = Swap32IfLE(rfbEncodingRichCursor);
-		if (!m_opts.m_ignoreShapeUpdates)
-			encs[se->nEncodings++] = Swap32IfLE(rfbEncodingPointerPos);
+		WriteUnaligned32(&buf[sz_rfbSetEncodingsMsg + nEncodings * 4],
+						 Swap32IfLE((CARD32)rfbEncodingXCursor));
+		nEncodings++;
+		WriteUnaligned32(&buf[sz_rfbSetEncodingsMsg + nEncodings * 4],
+						 Swap32IfLE((CARD32)rfbEncodingRichCursor));
+		nEncodings++;
+		if (!m_opts.m_ignoreShapeUpdates) {
+			WriteUnaligned32(&buf[sz_rfbSetEncodingsMsg + nEncodings * 4],
+							 Swap32IfLE((CARD32)rfbEncodingPointerPos));
+			nEncodings++;
+		}
 	}
 
 	// Request JPEG quality level if JPEG compression was enabled by user
 	if ( m_opts.m_enableJpegCompression &&
 		 m_opts.m_jpegQualityLevel >= 0 &&
 		 m_opts.m_jpegQualityLevel <= 9) {
-		encs[se->nEncodings++] = Swap32IfLE( rfbEncodingQualityLevel0 +
-											 m_opts.m_jpegQualityLevel );
+		WriteUnaligned32(&buf[sz_rfbSetEncodingsMsg + nEncodings * 4],
+						 Swap32IfLE((CARD32)(rfbEncodingQualityLevel0 +
+											 m_opts.m_jpegQualityLevel)));
+		nEncodings++;
 	}
 
 	// Notify the server that we support LastRect and NewFBSize encodings
-	encs[se->nEncodings++] = Swap32IfLE(rfbEncodingLastRect);
-	encs[se->nEncodings++] = Swap32IfLE(rfbEncodingNewFBSize);
+	WriteUnaligned32(&buf[sz_rfbSetEncodingsMsg + nEncodings * 4],
+					 Swap32IfLE((CARD32)rfbEncodingLastRect));
+	nEncodings++;
+	WriteUnaligned32(&buf[sz_rfbSetEncodingsMsg + nEncodings * 4],
+					 Swap32IfLE((CARD32)rfbEncodingNewFBSize));
+	nEncodings++;
 
-	len = sz_rfbSetEncodingsMsg + se->nEncodings * 4;
+	len = sz_rfbSetEncodingsMsg + nEncodings * 4;
 
-	se->nEncodings = Swap16IfLE(se->nEncodings);
+	{
+		CARD16 nEncWire = Swap16IfLE((CARD16)nEncodings);
+		memcpy(&buf[2], &nEncWire, sizeof(nEncWire));
+	}
 
 	WriteExact((char *) buf, len);
 }
@@ -3195,6 +3219,91 @@ void ClientConnection::CheckZlibBufferSize(size_t bufsize)
 	m_zlibbufsize = bufsize + 256;
 	vnclog.Print(4, _T("Zlib buffer size expanded to %u\n"),
 				 (unsigned int)m_zlibbufsize);
+}
+
+// Batched pixel blits: portable across IA64/AXP64/AMD64/ARM64/x86.
+// Old code called SetPixelV w*h times per rect (full screen ~= 786k
+// kernel transitions) plus unaligned *(CARD16*)/(CARD32*) loads that fault
+// on strict-alignment targets. New code converts once on CPU with
+// memcpy-safe loads and issues a single SetDIBitsToDevice with BI_BITFIELDS
+// masks matching COLORREF layout (R=0xFF,G=0xFF00,B=0xFF0000), so no R/B
+// swap and no extra copy. Caller must hold m_bitmapdcMutex with m_hBitmap
+// selected (same contract as old SETPIXELS macros).
+
+void ClientConnection::DrawColorPixels(const COLORREF *src, int x, int y, int w, int h)
+{
+	if (src == NULL || w <= 0 || h <= 0 || m_hBitmapDC == NULL)
+		return;
+	struct {
+		BITMAPINFOHEADER hdr;
+		DWORD masks[3];
+	} bmi;
+	ZeroMemory(&bmi, sizeof(bmi));
+	bmi.hdr.biSize = sizeof(BITMAPINFOHEADER);
+	bmi.hdr.biWidth = w;
+	bmi.hdr.biHeight = -h; // top-down, matches src row order
+	bmi.hdr.biPlanes = 1;
+	bmi.hdr.biBitCount = 32;
+	bmi.hdr.biCompression = BI_BITFIELDS;
+	bmi.masks[0] = 0x000000FF;
+	bmi.masks[1] = 0x0000FF00;
+	bmi.masks[2] = 0x00FF0000;
+	SetDIBitsToDevice(m_hBitmapDC, x, y, w, h, 0, 0, 0, h,
+					  src, (BITMAPINFO *)&bmi, DIB_RGB_COLORS);
+}
+
+void ClientConnection::DrawPixels8(const void *src, int x, int y, int w, int h)
+{
+	if (src == NULL || w <= 0 || h <= 0)
+		return;
+	size_t npixels = (size_t)w * (size_t)h;
+	if (npixels >= 0x80000000 / sizeof(COLORREF))
+		throw WarningException("Requested buffer size is too big.");
+	CheckZlibBufferSize(npixels * sizeof(COLORREF));
+	SETUP_COLOR_SHORTCUTS;
+	const CARD8 *s = (const CARD8 *)src;
+	COLORREF *dst = (COLORREF *)m_zlibbuf;
+	for (size_t i = 0; i < npixels; i++) {
+		CARD8 pix = s[i]; // byte load always aligned-safe
+		dst[i] = COLOR_FROM_PIXEL8(pix);
+	}
+	DrawColorPixels(dst, x, y, w, h);
+}
+
+void ClientConnection::DrawPixels16(const void *src, int x, int y, int w, int h)
+{
+	if (src == NULL || w <= 0 || h <= 0)
+		return;
+	size_t npixels = (size_t)w * (size_t)h;
+	if (npixels >= 0x80000000 / sizeof(COLORREF))
+		throw WarningException("Requested buffer size is too big.");
+	CheckZlibBufferSize(npixels * sizeof(COLORREF));
+	SETUP_COLOR_SHORTCUTS;
+	const CARD8 *s = (const CARD8 *)src;
+	COLORREF *dst = (COLORREF *)m_zlibbuf;
+	for (size_t i = 0; i < npixels; i++) {
+		CARD16 pix = ReadUnaligned16(s + i * sizeof(CARD16));
+		dst[i] = COLOR_FROM_PIXEL16(pix);
+	}
+	DrawColorPixels(dst, x, y, w, h);
+}
+
+void ClientConnection::DrawPixels32(const void *src, int x, int y, int w, int h)
+{
+	if (src == NULL || w <= 0 || h <= 0)
+		return;
+	size_t npixels = (size_t)w * (size_t)h;
+	if (npixels >= 0x80000000 / sizeof(COLORREF))
+		throw WarningException("Requested buffer size is too big.");
+	CheckZlibBufferSize(npixels * sizeof(COLORREF));
+	SETUP_COLOR_SHORTCUTS;
+	const CARD8 *s = (const CARD8 *)src;
+	COLORREF *dst = (COLORREF *)m_zlibbuf;
+	for (size_t i = 0; i < npixels; i++) {
+		CARD32 pix = ReadUnaligned32(s + i * sizeof(CARD32));
+		dst[i] = COLOR_FROM_PIXEL32(pix);
+	}
+	DrawColorPixels(dst, x, y, w, h);
 }
 
 //

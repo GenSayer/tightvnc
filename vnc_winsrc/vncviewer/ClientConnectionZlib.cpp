@@ -35,9 +35,9 @@
 
 void ClientConnection::ReadZlibRect(rfbFramebufferUpdateRectHeader *pfburh) {
 
-	UINT numpixels = pfburh->r.w * pfburh->r.h;
+	size_t numpixels = (size_t)pfburh->r.w * (size_t)pfburh->r.h;
     // this assumes at least one byte per pixel. Naughty.
-	UINT numRawBytes = numpixels * m_minPixelBytes;
+	size_t numRawBytes = numpixels * m_minPixelBytes;
 	UINT numCompBytes;
 	int inflateResult;
 
@@ -58,7 +58,9 @@ void ClientConnection::ReadZlibRect(rfbFramebufferUpdateRectHeader *pfburh) {
 	m_decompStream.next_in = (unsigned char *)m_netbuf;
 	m_decompStream.avail_in = numCompBytes;
 	m_decompStream.next_out = m_zlibbuf;
-	m_decompStream.avail_out = numRawBytes;
+	// CheckZlibBufferSize above guarantees < 2GB, safe for uInt on all
+	// targets including old MSVC (32-bit uInt) and AMD64/ARM64.
+	m_decompStream.avail_out = (uInt)numRawBytes;
 	m_decompStream.data_type = Z_BINARY;
 		
 	// Insure the inflator is initialized
