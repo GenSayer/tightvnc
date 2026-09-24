@@ -1,0 +1,1269 @@
+# Microsoft Developer Studio Generated Dependency File, included by WinVNC.mak
+
+.\AdministrationControls.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\AdministrationControls.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\d3des.c : \
+	".\d3des.h"\
+	
+
+.\DynamicFn.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\DynamicFn.h"\
+	".\Log.h"\
+	".\stdhdrs.h"\
+	
+
+.\FileTransferItemInfo.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\FileTransferItemInfo.h"\
+	
+
+.\IncomingConnectionsControls.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\IncomingConnectionsControls.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\VNCHelp.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\WinVNC.h"\
+	
+
+.\InputHandlingControls.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\InputHandlingControls.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\Log.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\Log.h"\
+	".\stdhdrs.h"\
+	
+
+.\MatchWindow.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\AdministrationControls.h"\
+	".\IncomingConnectionsControls.h"\
+	".\InputHandlingControls.h"\
+	".\Log.h"\
+	".\MatchWindow.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\PollControls.h"\
+	".\QuerySettingsControls.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\SharedDesktopArea.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\VNCHelp.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncProperties.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\WinVNC.h"\
+	
+
+.\MinMax.cpp : \
+	".\MinMax.h"\
+	
+
+.\ParseHost.c : \
+	".\ParseHost.h"\
+	
+
+.\PollControls.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\PollControls.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\QuerySettingsControls.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\QuerySettingsControls.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\RectList.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\Log.h"\
+	".\RectList.h"\
+	".\stdhdrs.h"\
+	
+
+.\SharedDesktopArea.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\AdministrationControls.h"\
+	".\IncomingConnectionsControls.h"\
+	".\InputHandlingControls.h"\
+	".\Log.h"\
+	".\MatchWindow.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\PollControls.h"\
+	".\QuerySettingsControls.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\SharedDesktopArea.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\VNCHelp.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncProperties.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\WinVNC.h"\
+	
+
+.\stdhdrs.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\Log.h"\
+	".\stdhdrs.h"\
+	
+
+.\translate.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\tableinitcmtemplate.cpp"\
+	".\tableinittctemplate.cpp"\
+	".\tabletranstemplate.cpp"\
+	".\translate.h"\
+	
+
+.\TsSessions.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\DynamicFn.h"\
+	".\Log.h"\
+	".\stdhdrs.h"\
+	".\TsSessions.h"\
+	
+
+.\VideoDriver.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\vncAbout.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\Log.h"\
+	".\stdhdrs.h"\
+	".\vncAbout.h"\
+	".\VNCHelp.h"\
+	".\WinVNC.h"\
+	
+
+.\vncAcceptDialog.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\Log.h"\
+	".\stdhdrs.h"\
+	".\vncAcceptDialog.h"\
+	".\VNCHelp.h"\
+	".\vncService.h"\
+	".\WinVNC.h"\
+	
+
+.\vncAcceptReverseDlg.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\shldisp.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\AdministrationControls.h"\
+	".\IncomingConnectionsControls.h"\
+	".\InputHandlingControls.h"\
+	".\Log.h"\
+	".\MatchWindow.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\PollControls.h"\
+	".\QuerySettingsControls.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\SharedDesktopArea.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncAbout.h"\
+	".\vncAcceptReverseDlg.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\VNCHelp.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncMenu.h"\
+	".\vncPasswd.h"\
+	".\vncProperties.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncService.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\WallpaperUtils.h"\
+	".\WinVNC.h"\
+	
+
+.\vncauth.c : \
+	".\d3des.h"\
+	".\vncauth.h"\
+	
+
+.\vncBuffer.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\MinMax.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncodeCoRRE.h"\
+	".\vncEncodeHexT.h"\
+	".\vncEncoder.h"\
+	".\vncEncodeRRE.h"\
+	".\vncEncodeTight.h"\
+	".\vncEncodeZlib.h"\
+	".\vncEncodeZlibHex.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\vncClient.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\shldisp.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\AdministrationControls.h"\
+	".\d3des.h"\
+	".\FileTransferItemInfo.h"\
+	".\IncomingConnectionsControls.h"\
+	".\InputHandlingControls.h"\
+	".\Log.h"\
+	".\MatchWindow.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\PollControls.h"\
+	".\QuerySettingsControls.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\SharedDesktopArea.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncAbout.h"\
+	".\vncAcceptDialog.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\VNCHelp.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncMenu.h"\
+	".\vncPasswd.h"\
+	".\vncProperties.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncService.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\WallpaperUtils.h"\
+	".\WinVNC.h"\
+	
+
+.\vncConnDialog.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\ParseHost.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncConnDialog.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\VNCHelp.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\WinVNC.h"\
+	
+
+.\vncDesktop.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\shldisp.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\TsSessions.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\VNCHelp.h"\
+	".\VNCHooks\VNCHooks.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncService.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\WallpaperUtils.h"\
+	".\WinVNC.h"\
+	
+
+.\vncEncodeCoRRE.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\MinMax.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncodeCoRRE.h"\
+	".\vncEncoder.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\vncEncodeHexT.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\MinMax.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncodeHexT.h"\
+	".\vncEncoder.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\vncEncoder.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\vncEncodeRRE.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncEncodeRRE.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\vncEncodeTight.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncEncodeTight.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\vncEncodeZlib.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncEncodeZlib.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\vncEncodeZlibHex.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\MinMax.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncEncodeZlibHex.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\VNCHelp.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\htmlhelp.h"\
+	".\Log.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\WinVNC.h"\
+	
+
+.\vncHTTPConnect.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\vncInstHandler.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\Log.h"\
+	".\stdhdrs.h"\
+	".\vncInstHandler.h"\
+	
+
+.\vncKeymap.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\keysymdef.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncService.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\vncMenu.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\shldisp.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\AdministrationControls.h"\
+	".\IncomingConnectionsControls.h"\
+	".\InputHandlingControls.h"\
+	".\Log.h"\
+	".\MatchWindow.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\PollControls.h"\
+	".\QuerySettingsControls.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\SharedDesktopArea.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncAbout.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncConnDialog.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\VNCHelp.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncMenu.h"\
+	".\vncPasswd.h"\
+	".\vncProperties.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncService.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\WallpaperUtils.h"\
+	".\WinVNC.h"\
+	
+
+.\vncProperties.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\AdministrationControls.h"\
+	".\IncomingConnectionsControls.h"\
+	".\InputHandlingControls.h"\
+	".\Log.h"\
+	".\MatchWindow.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\PollControls.h"\
+	".\QuerySettingsControls.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\SharedDesktopArea.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\VNCHelp.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncProperties.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncService.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\WinVNC.h"\
+	
+
+.\vncRegion.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\Log.h"\
+	".\RectList.h"\
+	".\stdhdrs.h"\
+	".\vncRegion.h"\
+	
+
+.\vncServer.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\VNCHelp.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncService.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\WinVNC.h"\
+	
+
+.\vncService.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\shldisp.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\AdministrationControls.h"\
+	".\IncomingConnectionsControls.h"\
+	".\InputHandlingControls.h"\
+	".\Log.h"\
+	".\MatchWindow.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\PollControls.h"\
+	".\QuerySettingsControls.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\SharedDesktopArea.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncAbout.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\VNCHelp.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncMenu.h"\
+	".\vncPasswd.h"\
+	".\vncProperties.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncService.h"\
+	".\vncSockConnect.h"\
+	".\vncTimedMsgBox.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\WallpaperUtils.h"\
+	".\WinVNC.h"\
+	
+
+.\vncSockConnect.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\vncHTTPConnect.h"\
+	".\vncKeymap.h"\
+	".\vncPasswd.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\vncTimedMsgBox.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\stdhdrs.h"\
+	".\vncTimedMsgBox.h"\
+	
+
+.\VSocket.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\stdhdrs.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	
+
+.\WallpaperUtils.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\shldisp.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	".\Log.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\WallpaperUtils.h"\
+	".\WinVNC.h"\
+	
+
+.\WinVNC.cpp : \
+	"..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\platform sdk\include\shldisp.h"\
+	"..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\platform sdk\include\winefs.h"\
+	"..\rfb\rfbproto.h"\
+	".\AdministrationControls.h"\
+	".\IncomingConnectionsControls.h"\
+	".\InputHandlingControls.h"\
+	".\Log.h"\
+	".\MatchWindow.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\ParseHost.h"\
+	".\PollControls.h"\
+	".\QuerySettingsControls.h"\
+	".\RectList.h"\
+	".\rfb.h"\
+	".\SharedDesktopArea.h"\
+	".\stdhdrs.h"\
+	".\translate.h"\
+	".\VideoDriver.h"\
+	".\vncAbout.h"\
+	".\vncauth.h"\
+	".\vncBuffer.h"\
+	".\vncClient.h"\
+	".\vncCorbaConnect.h"\
+	".\vncDesktop.h"\
+	".\vncEncoder.h"\
+	".\VNCHelp.h"\
+	".\vncHTTPConnect.h"\
+	".\vncInstHandler.h"\
+	".\vncKeymap.h"\
+	".\vncMenu.h"\
+	".\vncPasswd.h"\
+	".\vncProperties.h"\
+	".\vncRegion.h"\
+	".\vncServer.h"\
+	".\vncService.h"\
+	".\vncSockConnect.h"\
+	".\VSocket.h"\
+	".\VTypes.h"\
+	".\WallpaperUtils.h"\
+	".\WinVNC.h"\
+	
+
+.\WinVNC.rc : \
+	".\res\AuthPanel.class"\
+	".\res\bitmap1.bmp"\
+	".\res\bitmap2.bmp"\
+	".\res\bitmap3.bmp"\
+	".\res\ButtonPanel.class"\
+	".\res\CapabilityInfo.class"\
+	".\res\CapsContainer.class"\
+	".\res\ClipboardFrame.class"\
+	".\res\cursor1.cur"\
+	".\res\DesCipher.class"\
+	".\res\ico00001.ico"\
+	".\res\ico00002.ico"\
+	".\res\ico00003.ico"\
+	".\res\ico00004.ico"\
+	".\res\icon1.ico"\
+	".\res\InStream.class"\
+	".\res\MemInStream.class"\
+	".\res\OptionsFrame.class"\
+	".\res\RecordingFrame.class"\
+	".\res\ReloginPanel.class"\
+	".\res\RfbProto.class"\
+	".\res\SessionRecorder.class"\
+	".\res\SocketFactory.class"\
+	".\res\tightvnc.bmp"\
+	".\res\VncCanvas.class"\
+	".\res\VncCanvas2.class"\
+	".\res\VncViewer.class"\
+	".\res\VncViewer.jar"\
+	".\res\WinVNC.ico"\
+	".\res\ZlibInStream.class"\
+	

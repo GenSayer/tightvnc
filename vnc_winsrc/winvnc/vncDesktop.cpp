@@ -48,6 +48,14 @@
 #include <fstream.h>
 #endif
 
+#ifndef SM_CMONITORS
+#define SM_CMONITORS		80
+#define SM_XVIRTUALSCREEN	76
+#define SM_YVIRTUALSCREEN	77
+#define SM_CXVIRTUALSCREEN	78
+#define SM_CYVIRTUALSCREEN	79
+#endif
+
 // Constants
 const UINT RFB_SCREEN_UPDATE = RegisterWindowMessage("WinVNC.Update.DrawRect");
 const UINT RFB_COPYRECT_UPDATE = RegisterWindowMessage("WinVNC.Update.CopyRect");

@@ -1,0 +1,11 @@
+# Microsoft Developer Studio Generated Dependency File, included by omnithread.mak
+
+.\nt.cpp : \
+	"..\..\..\..\..\platform sdk\include\basetsd.h"\
+	"..\..\..\..\..\platform sdk\include\guiddef.h"\
+	"..\..\..\..\..\platform sdk\include\propidl.h"\
+	"..\..\..\..\..\platform sdk\include\tvout.h"\
+	"..\..\..\..\..\platform sdk\include\winefs.h"\
+	".\nt.h"\
+	".\omnithread.h"\
+	

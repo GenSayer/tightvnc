@@ -43,6 +43,27 @@
 #include "vncClient.h"
 #include "vncService.h"
 
+#ifndef HMONITOR
+DECLARE_HANDLE(HMONITOR);
+#endif
+
+#ifndef MONITORINFO
+typedef struct tagMONITORINFO {
+	DWORD cbSize;
+	RECT rcMonitor;
+	RECT rcWork;
+	DWORD dwFlags;
+} MONITORINFO, *LPMONITORINFO;
+#endif
+
+#ifndef MONITOR_DEFAULTTONEAREST
+#define MONITOR_DEFAULTTONEAREST 0x00000002
+#endif
+
+// function pointer types for dynamic loading
+typedef HMONITOR (WINAPI *pfnMonitorFromPoint)(POINT, DWORD);
+typedef BOOL	 (WINAPI *pfnGetMonitorInfo)(HMONITOR, LPMONITORINFO);
+
 // Constructor/destructor
 vncServer::vncServer()
 {
