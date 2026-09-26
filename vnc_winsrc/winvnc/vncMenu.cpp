@@ -59,12 +59,35 @@ const UINT fileTransferDownloadMessage = RegisterWindowMessage("VNCServer.1.3.Fi
 
 const char *MENU_CLASS_NAME = "WinVNC Tray Icon";
 
+BOOL WINAPI MyShell_NotifyIcon_init(DWORD dwMessage, NOTIFYICONDATA *lpData);
+typedef BOOL (WINAPI *pfnShell_NotifyIconA)(DWORD dwMessage, NOTIFYICONDATA *lpData);
+static pfnShell_NotifyIconA MyShell_NotifyIcon = MyShell_NotifyIcon_init;
+BOOL WINAPI MyShell_NotifyIcon_fallback(DWORD dwMessage, NOTIFYICONDATA *lpData) {
+	return FALSE;
+}
+BOOL WINAPI MyShell_NotifyIcon_init(DWORD dwMessage, NOTIFYICONDATA *lpData) {
+	if (MyShell_NotifyIcon == MyShell_NotifyIcon_init) {
+		HMODULE hShell32 = LoadLibrary("shell32.dll");
+		if (hShell32) {
+			MyShell_NotifyIcon = (pfnShell_NotifyIconA)GetProcAddress(hShell32, "Shell_NotifyIconA");
+			if (!MyShell_NotifyIcon) {
+				MyShell_NotifyIcon = (pfnShell_NotifyIconA)GetProcAddress(hShell32, "Shell_NotifyIcon");
+			}
+		}
+	}
+	if (!MyShell_NotifyIcon || MyShell_NotifyIcon == MyShell_NotifyIcon_init) {
+		MyShell_NotifyIcon = MyShell_NotifyIcon_fallback;
+	}
+	return MyShell_NotifyIcon(dwMessage, lpData);
+}
+
 // Implementation
 
 vncMenu::vncMenu(vncServer *server)
 {
 	// Save the server pointer
 	m_server = server;
+	m_no_tray_icon = FALSE;
 
 	// Set the initial user name to something sensible...
 	vncService::CurrentUser((char *)&m_username, sizeof(m_username));
@@ -127,6 +150,28 @@ vncMenu::vncMenu(vncServer *server)
 		vnclog.Print(LL_INTERR, VNCLOG("unable to initialise Properties dialog\n"));
 		PostQuitMessage(0);
 		return;
+	}
+
+	ZeroMemory(&m_nid, sizeof(m_nid));
+	m_nid.cbSize = sizeof(m_nid);
+	m_nid.hWnd = m_hwnd;
+	m_nid.uID = IDI_WINVNC;
+	DWORD winver = GetVersion();
+	MyShell_NotifyIcon(NIM_DELETE, &m_nid);
+	if (MyShell_NotifyIcon == MyShell_NotifyIcon_fallback || (winver & 0xFF) < 4)
+		m_no_tray_icon = TRUE;
+	HMENU hSysMenu = GetSystemMenu(m_hwnd, FALSE);
+	if (hSysMenu) {
+		AppendMenu(hSysMenu, MF_SEPARATOR, 0, NULL);
+		AppendMenu(hSysMenu, MF_STRING, ID_PROPERTIES, "&Properties...");
+		AppendMenu(hSysMenu, MF_SEPARATOR, 0, NULL);
+		AppendMenu(hSysMenu, MF_STRING, ID_OUTGOING_CONN, "Add &New Client...");
+		AppendMenu(hSysMenu, MF_STRING, ID_KILLCLIENTS, "&Kill All Clients");
+		AppendMenu(hSysMenu, MF_STRING, ID_DISABLE_CONN, "&Disable New Clients");
+		AppendMenu(hSysMenu, MF_SEPARATOR, 0, NULL);
+		AppendMenu(hSysMenu, MF_STRING, ID_ABOUT, "&About...");
+		AppendMenu(hSysMenu, MF_SEPARATOR, 0, NULL);
+		AppendMenu(hSysMenu, MF_STRING, ID_CLOSE, "&Close TightVNC Server");
 	}
 
 	// Install the tray icon!
@@ -241,8 +286,41 @@ vncMenu::SendTrayMsg(DWORD msg, BOOL flash)
 	if (flash)
 		m_nid.hIcon = m_flash_icon;
 
+	if (m_no_tray_icon) {
+		switch (msg) {
+			case NIM_ADD:
+				ShowWindow(m_hwnd, SW_SHOWMINNOACTIVE);
+				UpdateWindow(m_hwnd);
+				break;
+
+			case NIM_MODIFY:
+				if (m_nid.uFlags & NIF_ICON) {
+					SetClassLong(m_hwnd, GCL_HICON, (LONG)m_nid.hIcon);
+					#ifndef WM_SETICON
+					#define WM_SETICON 0x0080
+					#endif
+					SendMessage(m_hwnd, WM_SETICON, 0, (LPARAM)m_nid.hIcon);
+					SendMessage(m_hwnd, WM_SETICON, 1, (LPARAM)m_nid.hIcon);
+				}
+				if (m_nid.uFlags & NIF_TIP) {
+					SetWindowText(m_hwnd, m_nid.szTip);
+				}
+				RedrawWindow(
+					m_hwnd,
+					NULL,
+					NULL,
+					RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW
+				);
+				break;
+
+			case NIM_DELETE:
+				ShowWindow(m_hwnd, SW_HIDE);
+		}
+		return;
+	}
+
 	// Send the message
-	if (Shell_NotifyIcon(msg, &m_nid))
+	if (MyShell_NotifyIcon(msg, &m_nid))
 	{
 		// Set the enabled/disabled state of the menu items
 		vnclog.Print(LL_INTINFO, VNCLOG("tray icon updated ok\n"));
@@ -383,6 +461,25 @@ LRESULT CALLBACK vncMenu::WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lP
 
 		}
 		return 0;
+
+	case WM_SYSCOMMAND:
+		if (_this && _this->m_no_tray_icon) {
+			WORD cmd = LOWORD(wParam) & 0xFFF0;
+			if (cmd == SC_RESTORE || cmd == SC_MAXIMIZE) {
+				PostMessage(hwnd, WM_COMMAND, ID_PROPERTIES, 0);
+				return 0;
+			}
+			if (wParam == ID_PROPERTIES ||
+				wParam == ID_OUTGOING_CONN ||
+				wParam == ID_KILLCLIENTS ||
+				wParam == ID_DISABLE_CONN ||
+				wParam == ID_ABOUT ||
+				wParam == ID_CLOSE) {
+				PostMessage(hwnd, WM_COMMAND, wParam, lParam);
+				return 0;
+			}
+		}
+		break;
 
 	case WM_TRAYNOTIFY:
 		// User has clicked on the tray icon or the menu

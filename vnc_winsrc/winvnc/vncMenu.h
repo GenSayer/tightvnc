@@ -92,6 +92,7 @@ protected:
 
 	HWND			m_hwnd;
 	HMENU			m_hmenu;
+	BOOL			m_no_tray_icon;
 	NOTIFYICONDATA		m_nid;
 
 	char			m_username[UNLEN+1];

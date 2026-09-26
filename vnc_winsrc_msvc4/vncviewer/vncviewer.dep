@@ -1,0 +1,819 @@
+# Microsoft Developer Studio Generated Dependency File, included by vncviewer.mak
+
+.\AboutBox.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\CapsContainer.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	
+
+.\ClientConnection.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\AboutBox.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\d3des.h"\
+	".\Daemon.h"\
+	".\Exception.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\LoginAuthDialog.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\SessionDialog.h"\
+	".\stdhdrs.h"\
+	".\vncauth.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\VNCviewerApp32.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ClientConnectionClipboard.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\Exception.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ClientConnectionCopyRect.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ClientConnectionCoRRE.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ClientConnectionCursor.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ClientConnectionFile.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\Exception.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\vncauth.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ClientConnectionFullScreen.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ClientConnectionHextile.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ClientConnectionRaw.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ClientConnectionRRE.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ClientConnectionTight.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ClientConnectionZlib.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ClientConnectionZlibHex.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\ConnectingDialog.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\d3des.c : \
+	".\d3des.h"\
+	
+
+.\Daemon.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\AboutBox.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\Daemon.h"\
+	".\Exception.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\Exception.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\Exception.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	
+
+.\FileTransfer.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\Daemon.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\VNCviewerApp32.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\FileTransferItemInfo.cpp : \
+	".\FileTransferItemInfo.h"\
+	
+
+.\HotKeys.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\KeyMap.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\Log.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\Log.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	
+
+.\LoginAuthDialog.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\Exception.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\LoginAuthDialog.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\SessionDialog.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\Daemon.h"\
+	".\Exception.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\Htmlhelp.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\SessionDialog.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\VNCviewerApp32.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\stdhdrs.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	
+
+.\vncauth.c : \
+	"..\rfb\rfbproto.h"\
+	".\d3des.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\vncauth.h"\
+	
+
+.\VNCHelp.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\Htmlhelp.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\VNCOptions.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\AboutBox.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\Exception.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\Htmlhelp.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\vncviewer.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\Daemon.h"\
+	".\Exception.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\VNCviewerApp32.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\res\vncviewer.rc : \
+	".\res\cursor1.cur"\
+	".\res\filereload.ico"\
+	".\res\fileup.ico"\
+	".\res\idr_tray.ico"\
+	".\res\nocursor.cur"\
+	".\res\smalldot.cur"\
+	".\res\tightvnc.bmp"\
+	".\res\tightvnc48.bmp"\
+	".\res\toolbar.bmp"\
+	".\res\vncviewer.ico"\
+	
+
+.\VNCviewerApp.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\Exception.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	
+
+.\VNCviewerApp32.cpp : \
+	"..\rfb\rfbproto.h"\
+	".\CapsContainer.h"\
+	".\ClientConnection.h"\
+	".\ConnectingDialog.h"\
+	".\Daemon.h"\
+	".\Exception.h"\
+	".\FileTransfer.h"\
+	".\FileTransferItemInfo.h"\
+	".\HotKeys.h"\
+	".\KeyMap.h"\
+	".\keysymdef.h"\
+	".\libjpeg\jconfig.h"\
+	".\libjpeg\jerror.h"\
+	".\libjpeg\jmorecfg.h"\
+	".\libjpeg\jpegint.h"\
+	".\libjpeg\jpeglib.h"\
+	".\Log.h"\
+	".\omnithread\nt.h"\
+	".\omnithread\omnithread.h"\
+	".\rfb.h"\
+	".\stdhdrs.h"\
+	".\VNCHelp.h"\
+	".\VNCOptions.h"\
+	".\vncviewer.h"\
+	".\VNCviewerApp.h"\
+	".\VNCviewerApp32.h"\
+	".\zlib\zconf.h"\
+	".\zlib\zlib.h"\
+	

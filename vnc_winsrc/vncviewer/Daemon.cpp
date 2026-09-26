@@ -33,6 +33,28 @@
 #include "ClientConnection.h"
 #include "AboutBox.h"
 
+BOOL WINAPI MyShell_NotifyIcon_init(DWORD dwMessage, NOTIFYICONDATA *lpData);
+typedef BOOL (WINAPI *pfnShell_NotifyIconA)(DWORD dwMessage, NOTIFYICONDATA *lpData);
+static pfnShell_NotifyIconA MyShell_NotifyIcon = MyShell_NotifyIcon_init;
+BOOL WINAPI MyShell_NotifyIcon_fallback(DWORD dwMessage, NOTIFYICONDATA *lpData) {
+	return FALSE;
+}
+BOOL WINAPI MyShell_NotifyIcon_init(DWORD dwMessage, NOTIFYICONDATA *lpData) {
+	if (MyShell_NotifyIcon == MyShell_NotifyIcon_init) {
+		HMODULE hShell32 = LoadLibrary("shell32.dll");
+		if (hShell32) {
+			MyShell_NotifyIcon = (pfnShell_NotifyIconA)GetProcAddress(hShell32, "Shell_NotifyIconA");
+			if (!MyShell_NotifyIcon) {
+				MyShell_NotifyIcon = (pfnShell_NotifyIconA)GetProcAddress(hShell32, "Shell_NotifyIcon");
+			}
+		}
+	}
+	if (!MyShell_NotifyIcon || MyShell_NotifyIcon == MyShell_NotifyIcon_init) {
+		MyShell_NotifyIcon = MyShell_NotifyIcon_fallback;
+	}
+	return MyShell_NotifyIcon(dwMessage, lpData);
+}
+
 //////////////////////////////////////////////////////////////////////
 // Construction/Destruction
 //////////////////////////////////////////////////////////////////////
@@ -42,9 +64,8 @@ Daemon::Daemon(int port)
 {
 
 	// Create a dummy window
-	WNDCLASSEX wndclass;
+	WNDCLASS wndclass;
 
-	wndclass.cbSize			= sizeof(wndclass);
 	wndclass.style			= CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
 	wndclass.lpfnWndProc	= Daemon::WndProc;
 	wndclass.cbClsExtra		= 0;
@@ -55,12 +76,11 @@ Daemon::Daemon(int port)
 	wndclass.hbrBackground	= (HBRUSH) GetStockObject(WHITE_BRUSH);
 	wndclass.lpszMenuName	= (const char *) NULL;
 	wndclass.lpszClassName	= DAEMON_CLASS_NAME;
-	wndclass.hIconSm		= LoadIcon(NULL, IDI_APPLICATION);
 
-	RegisterClassEx(&wndclass);
+	RegisterClass(&wndclass);
 
 	m_hwnd = CreateWindow(DAEMON_CLASS_NAME,
-				DAEMON_CLASS_NAME,
+				"VNCViewer Listening Daemon",
 				WS_OVERLAPPEDWINDOW,
 				CW_USEDEFAULT,
 				CW_USEDEFAULT,
@@ -75,6 +95,24 @@ Daemon::Daemon(int port)
 
 	// Load a popup menu
 	m_hmenu = LoadMenu(pApp->m_instance, MAKEINTRESOURCE(IDR_TRAYMENU));
+
+	m_no_tray_icon = FALSE;
+	ZeroMemory(&m_nid, sizeof(m_nid));
+	m_nid.cbSize = sizeof(m_nid);
+	m_nid.hWnd = m_hwnd;
+	m_nid.uID = IDR_TRAY;
+	DWORD winver = GetVersion();
+	MyShell_NotifyIcon(NIM_DELETE, &m_nid);
+	if (MyShell_NotifyIcon == MyShell_NotifyIcon_fallback || (winver & 0xFF) < 4)
+		m_no_tray_icon = TRUE;
+	HMENU hSysMenu = GetSystemMenu(m_hwnd, FALSE);
+	if (hSysMenu) {
+		AppendMenu(hSysMenu, MF_SEPARATOR, 0, NULL);
+		AppendMenu(hSysMenu, MF_STRING, ID_NEWCONN, "&New connection...");
+		AppendMenu(hSysMenu, MF_STRING, IDC_OPTIONBUTTON, "&Properties...");
+		AppendMenu(hSysMenu, MF_STRING, IDD_APP_ABOUT, "&About VNCviewer...");
+		AppendMenu(hSysMenu, MF_STRING, ID_CLOSEDAEMON, "&Close listening daemon");
+	}
 
 	// Create a listening socket
     struct sockaddr_in addr;
@@ -150,7 +188,40 @@ bool Daemon::SendTrayMsg(DWORD msg)
 	if (LoadString(pApp->m_instance, IDR_TRAY, m_nid.szTip, sizeof(m_nid.szTip))) {
 		m_nid.uFlags |= NIF_TIP;
 	}
-	return (bool) (Shell_NotifyIcon(msg, &m_nid) != 0);
+	if(!m_no_tray_icon) {
+		return (bool) (MyShell_NotifyIcon(msg, &m_nid) != 0);
+	} else {
+		switch (msg) {
+			case NIM_ADD:
+				ShowWindow(m_hwnd, SW_SHOWMINNOACTIVE);
+				UpdateWindow(m_hwnd);
+				break;
+
+			case NIM_MODIFY:
+				if (m_nid.uFlags & NIF_ICON) {
+					SetClassLong(m_hwnd, GCL_HICON, (LONG)m_nid.hIcon);
+					#ifndef WM_SETICON
+					#define WM_SETICON 0x0080
+					#endif
+					SendMessage(m_hwnd, WM_SETICON, 0, (LPARAM)m_nid.hIcon);
+					SendMessage(m_hwnd, WM_SETICON, 1, (LPARAM)m_nid.hIcon);
+				}
+				if (m_nid.uFlags & NIF_TIP) {
+					SetWindowText(m_hwnd, m_nid.szTip);
+				}
+				RedrawWindow(
+					m_hwnd,
+					NULL,
+					NULL,
+					RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW
+				);
+				break;
+
+			case NIM_DELETE:
+				ShowWindow(m_hwnd, SW_HIDE);
+		}
+		return TRUE;
+	}
 }
 
 // Process window messages
@@ -221,6 +292,46 @@ LRESULT CALLBACK Daemon::WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 			break;
 		}
 		return 0;
+	case WM_RBUTTONUP:
+	case WM_NCRBUTTONUP:
+		if (_this && _this->m_no_tray_icon) {
+			POINT pt;
+			HMENU hSubMenu;
+			GetCursorPos(&pt);
+			SetForegroundWindow(hwnd);
+			hSubMenu = GetSubMenu(_this->m_hmenu, 0);
+			if (hSubMenu) {
+				TrackPopupMenu(hSubMenu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
+				PostMessage(hwnd, WM_NULL, 0, 0);
+			}
+			return 0;
+		}
+		break;
+
+	case WM_LBUTTONDBLCLK:
+	case WM_NCLBUTTONDBLCLK:
+		if (_this && _this->m_no_tray_icon) {
+			PostMessage(hwnd, WM_COMMAND, IDC_OPTIONBUTTON, 0);
+			return 0;
+		}
+		break;
+
+	case WM_SYSCOMMAND:
+		if (_this && _this->m_no_tray_icon) {
+			WORD cmd = LOWORD(wParam) & 0xFFF0;
+			if (cmd == SC_RESTORE || cmd == SC_MAXIMIZE) {
+				PostMessage(hwnd, WM_COMMAND, IDC_OPTIONBUTTON, 0);
+				return 0;
+			}
+			if (wParam == ID_NEWCONN ||
+				wParam == IDC_OPTIONBUTTON ||
+				wParam == IDD_APP_ABOUT ||
+				wParam == ID_CLOSEDAEMON) {
+				PostMessage(hwnd, WM_COMMAND, wParam, lParam);
+				return 0;
+			}
+		}
+		break;
 	case WM_TRAYNOTIFY:
 		{
 			HMENU hSubMenu = GetSubMenu(_this->m_hmenu, 0);

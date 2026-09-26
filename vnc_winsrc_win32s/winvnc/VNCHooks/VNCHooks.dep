@@ -1,0 +1,10 @@
+# Microsoft Developer Studio Generated Dependency File, included by VNCHooks.mak
+
+.\VNCHooks.cpp : \
+	".\basetsd.h"\
+	".\guiddef.h"\
+	".\propidl.h"\
+	".\tvout.h"\
+	".\winefs.h"\
+	".\VNCHooks.h"\
+	
