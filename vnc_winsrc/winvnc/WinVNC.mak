@@ -120,7 +120,7 @@ BSC32_FLAGS=/nologo /o"$(OUTDIR)\WinVNC.bsc"
 BSC32_SBRS= \
 	
 LINK32=link.exe
-LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comctl32.lib htmlhelp.lib /nologo /subsystem:windows /incremental:no /pdb:"$(OUTDIR)\WinVNC.pdb" /machine:ALPHA /out:"$(OUTDIR)\WinVNC.exe" 
+LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comctl32.lib htmlhelp.lib /nologo /subsystem:windows /incremental:no /pdb:"$(OUTDIR)\WinVNC.pdb" /machine:I386 /out:"$(OUTDIR)\WinVNC.exe" 
 LINK32_OBJS= \
 	"$(INTDIR)\AdministrationControls.obj" \
 	"$(INTDIR)\BuildTime.obj" \
@@ -379,7 +379,7 @@ BSC32_SBRS= \
 <<
 
 LINK32=link.exe
-LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comctl32.lib htmlhelp.lib /nologo /subsystem:windows /incremental:yes /pdb:"$(OUTDIR)\WinVNC.pdb" /map:"$(INTDIR)\WinVNC.map" /debug /machine:ALPHA /out:"$(OUTDIR)\WinVNC.exe" /pdbtype:sept 
+LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comctl32.lib htmlhelp.lib /nologo /subsystem:windows /incremental:yes /pdb:"$(OUTDIR)\WinVNC.pdb" /map:"$(INTDIR)\WinVNC.map" /debug /machine:I386 /out:"$(OUTDIR)\WinVNC.exe" /pdbtype:sept 
 LINK32_OBJS= \
 	"$(INTDIR)\AdministrationControls.obj" \
 	"$(INTDIR)\BuildTime.obj" \
@@ -534,7 +534,7 @@ BSC32_FLAGS=/nologo /o"$(OUTDIR)\WinVNC.bsc"
 BSC32_SBRS= \
 	
 LINK32=link.exe
-LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comctl32.lib htmlhelp.lib /nologo /subsystem:windows /profile /map:"$(INTDIR)\WinVNC.map" /debug /machine:ALPHA /out:"$(OUTDIR)\WinVNC.exe" 
+LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comctl32.lib htmlhelp.lib /nologo /subsystem:windows /profile /map:"$(INTDIR)\WinVNC.map" /debug /machine:I386 /out:"$(OUTDIR)\WinVNC.exe" 
 LINK32_OBJS= \
 	"$(INTDIR)\AdministrationControls.obj" \
 	"$(INTDIR)\BuildTime.obj" \
@@ -684,7 +684,7 @@ BSC32_FLAGS=/nologo /o"$(OUTDIR)\WinVNC.bsc"
 BSC32_SBRS= \
 	
 LINK32=link.exe
-LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comctl32.lib htmlhelp.lib /nologo /subsystem:windows /incremental:no /pdb:"$(OUTDIR)\AppShare.pdb" /machine:ALPHA /nodefaultlib:"LIBC" /out:"$(OUTDIR)\AppShare.exe" 
+LINK32_FLAGS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comctl32.lib htmlhelp.lib /nologo /subsystem:windows /incremental:no /pdb:"$(OUTDIR)\AppShare.pdb" /machine:I386 /nodefaultlib:"LIBC" /out:"$(OUTDIR)\AppShare.exe" 
 LINK32_OBJS= \
 	"$(INTDIR)\AdministrationControls.obj" \
 	"$(INTDIR)\BuildTime.obj" \

@@ -178,7 +178,7 @@ BSC32_SBRS= \
 <<
 
 LINK32=link.exe
-LINK32_FLAGS=winmm.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib uuid.lib wsock32.lib comctl32.lib htmlhelp.lib /nologo /subsystem:windows /incremental:no /pdb:"$(OUTDIR)\vncviewer.pdb" /machine:ALPHA /out:"$(OUTDIR)\vncviewer.exe" 
+LINK32_FLAGS=winmm.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib uuid.lib wsock32.lib comctl32.lib htmlhelp.lib /nologo /subsystem:windows /incremental:no /pdb:"$(OUTDIR)\vncviewer.pdb" /machine:I386 /out:"$(OUTDIR)\vncviewer.exe" 
 LINK32_OBJS= \
 	"$(INTDIR)\AboutBox.obj" \
 	"$(INTDIR)\BuildTime.obj" \
@@ -381,7 +381,7 @@ BSC32_SBRS= \
 <<
 
 LINK32=link.exe
-LINK32_FLAGS=winmm.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib uuid.lib wsock32.lib comctl32.lib htmlhelp.lib /nologo /subsystem:windows /incremental:yes /pdb:"$(OUTDIR)\vncviewer.pdb" /map:"$(INTDIR)\vncviewer.map" /debug /machine:ALPHA /out:"$(OUTDIR)\vncviewer.exe" /pdbtype:sept 
+LINK32_FLAGS=winmm.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib uuid.lib wsock32.lib comctl32.lib htmlhelp.lib /nologo /subsystem:windows /incremental:yes /pdb:"$(OUTDIR)\vncviewer.pdb" /map:"$(INTDIR)\vncviewer.map" /debug /machine:I386 /out:"$(OUTDIR)\vncviewer.exe" /pdbtype:sept 
 LINK32_OBJS= \
 	"$(INTDIR)\AboutBox.obj" \
 	"$(INTDIR)\BuildTime.obj" \
