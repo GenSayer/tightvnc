@@ -96,7 +96,13 @@ void CentreWindow(HWND hwnd)
 	RECT winrect, workrect;
 	
 	// Find how large the desktop work area is
-	SystemParametersInfo(SPI_GETWORKAREA, 0, &workrect, 0);
+	if (!SystemParametersInfo(SPI_GETWORKAREA, 0, &workrect, 0) ||
+		workrect.right <= workrect.left || workrect.bottom <= workrect.top) {
+		workrect.left = 0;
+		workrect.top = 0;
+		workrect.right = GetSystemMetrics(SM_CXSCREEN);
+		workrect.bottom = GetSystemMetrics(SM_CYSCREEN);
+	}
 	int workwidth = workrect.right -  workrect.left;
 	int workheight = workrect.bottom - workrect.top;
 	

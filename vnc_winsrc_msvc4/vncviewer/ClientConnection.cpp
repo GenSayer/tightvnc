@@ -68,6 +68,37 @@ extern "C" {
 #define SD_BOTH 2
 #endif
 
+typedef HWND (WINAPI *pfnCreateToolbarEx)(HWND hwndParent, DWORD ws, UINT wID, int nBitmaps, HINSTANCE hBMInst, UINT wBMID, LPTBBUTTON lpButtons, int iNumButtons, int dxButton, int dyButton, int dxBitmap, int dyBitmap, UINT uStructSize);
+typedef HWND (WINAPI *pfnCreateToolbar)(HWND hwndParent, DWORD ws, UINT wID, int nBitmaps, HINSTANCE hBMInst, UINT wBMID, LPTBBUTTON lpButtons, int iNumButtons);
+HWND WINAPI MyCreateToolbarEx_init(HWND hwndParent, DWORD ws, UINT wID, int nBitmaps, HINSTANCE hBMInst, UINT wBMID, LPTBBUTTON lpButtons, int iNumButtons, int dxButton, int dyButton, int dxBitmap, int dyBitmap, UINT uStructSize);
+static pfnCreateToolbarEx MyCreateToolbarEx = MyCreateToolbarEx_init;
+static pfnCreateToolbar MyCreateToolbar = NULL;
+HWND WINAPI MyCreateToolbarEx_fallback(HWND hwndParent, DWORD ws, UINT wID, int nBitmaps, HINSTANCE hBMInst, UINT wBMID, LPTBBUTTON lpButtons, int iNumButtons, int dxButton, int dyButton, int dxBitmap, int dyBitmap, UINT uStructSize) {
+	return NULL;
+}
+HWND WINAPI MyCreateToolbarEx_init(HWND hwndParent, DWORD ws, UINT wID, int nBitmaps, HINSTANCE hBMInst, UINT wBMID, LPTBBUTTON lpButtons, int iNumButtons, int dxButton, int dyButton, int dxBitmap, int dyBitmap, UINT uStructSize) {
+	if (MyCreateToolbarEx == MyCreateToolbarEx_init) {
+		HMODULE hComCtl32 = GetModuleHandle("comctl32.dll");
+		if (!hComCtl32) {
+			hComCtl32 = LoadLibrary("comctl32.dll");
+		}
+		if (hComCtl32) {
+			MyCreateToolbarEx = (pfnCreateToolbarEx)GetProcAddress(hComCtl32, "CreateToolbarEx");
+			if (!MyCreateToolbarEx || MyCreateToolbarEx == MyCreateToolbarEx_init) {
+				MyCreateToolbar = (pfnCreateToolbar)GetProcAddress(hComCtl32, "CreateToolbar");
+			}
+		}
+	}
+	if (MyCreateToolbarEx && MyCreateToolbarEx != MyCreateToolbarEx_init) {
+		return MyCreateToolbarEx(hwndParent, ws, wID, nBitmaps, hBMInst, wBMID, lpButtons, iNumButtons, dxButton, dyButton, dxBitmap, dyBitmap, uStructSize);
+	}
+	if (MyCreateToolbar) {
+		return MyCreateToolbar(hwndParent, ws & ~(TBSTYLE_FLAT | TBSTYLE_TOOLTIPS), wID, nBitmaps, hBMInst, wBMID, lpButtons, iNumButtons);
+	}
+	MyCreateToolbarEx = MyCreateToolbarEx_fallback;
+	return NULL;
+}
+
 #define INITIALNETBUFSIZE 4096
 #define MAX_ENCODINGS 20
 #define VWR_WND_CLASS_NAME _T("VNCviewer")
@@ -610,7 +641,7 @@ HWND ClientConnection::CreateToolbar()
 	int numButtons = i;
 	assert(numButtons <= MAX_TOOLBAR_BUTTONS);
 
-	HWND hwndToolbar = CreateToolbarEx(m_hwnd1,
+	HWND hwndToolbar = MyCreateToolbarEx(m_hwnd1,
 		WS_CHILD | TBSTYLE_TOOLTIPS | 
 		WS_CLIPSIBLINGS | TBSTYLE_FLAT,
 		ID_TOOLBAR, 12, m_pApp->m_instance,
@@ -1326,7 +1357,13 @@ void ClientConnection::SizeWindow(bool centered)
 {
 	// Find how large the desktop work area is
 	RECT workrect;
-	SystemParametersInfo(SPI_GETWORKAREA, 0, &workrect, 0);
+	if (!SystemParametersInfo(SPI_GETWORKAREA, 0, &workrect, 0) ||
+		workrect.right <= workrect.left || workrect.bottom <= workrect.top) {
+		workrect.left = 0;
+		workrect.top = 0;
+		workrect.right = GetSystemMetrics(SM_CXSCREEN);
+		workrect.bottom = GetSystemMetrics(SM_CYSCREEN);
+	}
 	int workwidth = workrect.right -  workrect.left;
 	int workheight = workrect.bottom - workrect.top;
 	vnclog.Print(2, _T("Screen work area is %d x %d\n"),

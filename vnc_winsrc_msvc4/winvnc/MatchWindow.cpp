@@ -28,6 +28,44 @@
 #include "MatchWindow.h"
 #include "vncProperties.h"
 
+BOOL WINAPI MySetWindowRgn_init(HWND hWnd, HRGN hRgn, BOOL bRedraw);
+typedef BOOL (WINAPI *pfnSetWindowRgn)(HWND hWnd, HRGN hRgn, BOOL bRedraw);
+static pfnSetWindowRgn MySetWindowRgn = MySetWindowRgn_init;
+BOOL WINAPI MySetWindowRgn_fallback(HWND hWnd, HRGN hRgn, BOOL bRedraw) {
+	return FALSE;
+}
+BOOL WINAPI MySetWindowRgn_init(HWND hWnd, HRGN hRgn, BOOL bRedraw) {
+	if (MySetWindowRgn == MySetWindowRgn_init) {
+		HMODULE hUser32 = GetModuleHandle("user32.dll");
+		if (hUser32) {
+			MySetWindowRgn = (pfnSetWindowRgn)GetProcAddress(hUser32, "SetWindowRgn");
+		}
+	}
+	if (!MySetWindowRgn || MySetWindowRgn == MySetWindowRgn_init) {
+		MySetWindowRgn = MySetWindowRgn_fallback;
+	}
+	return MySetWindowRgn(hWnd, hRgn, bRedraw);
+}
+
+int WINAPI MyGetWindowRgn_init(HWND hWnd, HRGN hRgn);
+typedef int (WINAPI *pfnGetWindowRgn)(HWND hWnd, HRGN hRgn);
+static pfnGetWindowRgn MyGetWindowRgn = MyGetWindowRgn_init;
+int WINAPI MyGetWindowRgn_fallback(HWND hWnd, HRGN hRgn) {
+	return ERROR;
+}
+int WINAPI MyGetWindowRgn_init(HWND hWnd, HRGN hRgn) {
+	if (MyGetWindowRgn == MyGetWindowRgn_init) {
+		HMODULE hUser32 = GetModuleHandle("user32.dll");
+		if (hUser32) {
+			MyGetWindowRgn = (pfnGetWindowRgn)GetProcAddress(hUser32, "GetWindowRgn");
+		}
+	}
+	if (!MyGetWindowRgn || MyGetWindowRgn == MyGetWindowRgn_init) {
+		MyGetWindowRgn = MyGetWindowRgn_fallback;
+	}
+	return MyGetWindowRgn(hWnd, hRgn);
+}
+
 #define MW_WIDTH 5
 #define MW_MARGRIN MW_WIDTH/2+1
 
@@ -45,9 +83,7 @@ CMatchWindow::CMatchWindow(vncServer* pServer,int left,int top,int right,int bot
 	m_bSized=FALSE;
 	m_pServer=pServer;
 
-	WNDCLASSEX wcex;
-
-	wcex.cbSize = sizeof(WNDCLASSEX); 
+	WNDCLASS wcex;
 
 	wcex.style			= CS_HREDRAW | CS_VREDRAW;
 	wcex.lpfnWndProc	= (WNDPROC)CMatchWindow::WndProc;
@@ -59,9 +95,8 @@ CMatchWindow::CMatchWindow(vncServer* pServer,int left,int top,int right,int bot
 	wcex.hbrBackground	= (HBRUSH)(COLOR_WINDOW+1);
 	wcex.lpszMenuName	= NULL;
 	wcex.lpszClassName	= szMatchWindowClass;
-	wcex.hIconSm		= NULL;
 
-	RegisterClassEx(&wcex);
+	RegisterClass(&wcex);
 
 	m_hWnd=CreateWindowEx(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,			//dwExStyle
 		szMatchWindowClass,		//pointer to registered class name
@@ -375,8 +410,10 @@ void CMatchWindow::CanModify(BOOL bModify)
 {	
 	m_bSized=bModify;
 	HRGN windowRgn=CreateRectRgn(0,0,1,1);
-	GetWindowRgn(m_hWnd, windowRgn);
-	InvalidateRgn(m_hWnd,windowRgn,false);
+	if (MyGetWindowRgn(m_hWnd, windowRgn) == ERROR)
+		InvalidateRect(m_hWnd, NULL, FALSE);
+	else
+		InvalidateRgn(m_hWnd,windowRgn,false);
 	DeleteObject(windowRgn);
 }
 
@@ -410,7 +447,7 @@ void CMatchWindow::ChangeRegion()
     InflateRect(&rect,-MW_WIDTH,-MW_WIDTH);
     wndLoRgn=CreateRectRgnIndirect(&rect);
     CombineRgn(wndRgn,wndHiRgn,wndLoRgn,RGN_DIFF);
-    SetWindowRgn(m_hWnd,wndRgn, TRUE);
+    MySetWindowRgn(m_hWnd,wndRgn, TRUE);
     DeleteObject(wndHiRgn);
     DeleteObject(wndLoRgn);
 }

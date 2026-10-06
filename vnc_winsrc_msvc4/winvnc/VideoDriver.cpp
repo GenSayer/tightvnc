@@ -34,6 +34,7 @@ BOOL IsWinNT();
 BOOL IsNtVer(ULONG mj, ULONG mn);
 BOOL IsWinVerOrHigher(ULONG mj, ULONG mn);
 
+BOOL WINAPI MyEnumDisplaySettingsA_init(LPCTSTR lpszDeviceName, DWORD iModeNum, LPDEVMODE lpDevMode);
 
 vncVideoDriver::vncVideoDriver()
 {
@@ -456,7 +457,7 @@ BOOL vncVideoDriver::Activate_NT50(
 	FillMemory(&devmode, sizeof(DEVMODE), 0);
 	devmode.dmSize = sizeof(DEVMODE);
 	devmode.dmDriverExtra = 0;
-	BOOL change = EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+	BOOL change = MyEnumDisplaySettingsA_init(NULL, ENUM_CURRENT_SETTINGS, &devmode);
 	devmode.dmFields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
 	if (prcltarget)
 	{
@@ -640,7 +641,7 @@ void vncVideoDriver::Deactivate_NT50()
 	FillMemory(&devmode, sizeof(DEVMODE), 0);
 	devmode.dmSize = sizeof(DEVMODE);
 	devmode.dmDriverExtra = 0;
-	BOOL change = EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+	BOOL change = MyEnumDisplaySettingsA_init(NULL, ENUM_CURRENT_SETTINGS, &devmode);
 	devmode.dmFields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
 	devmode.dmDeviceName[0] = '\0';
 

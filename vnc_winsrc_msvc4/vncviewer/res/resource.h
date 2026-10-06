@@ -174,6 +174,10 @@
 #define ID_NEWCONN                      40006
 #define IDS_HELP                        40007
 #define IDD_FILETRANSFER                40010
+#define IDC_COMPRESSDOWN                1150
+#define IDC_COMPRESSUP                  1151
+#define IDC_QUALITYDOWN                 1152
+#define IDC_QUALITYUP                   1153
 
 // Next default values for new objects
 // 
@@ -181,7 +185,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        246
 #define _APS_NEXT_COMMAND_VALUE         40011
-#define _APS_NEXT_CONTROL_VALUE         1150
+#define _APS_NEXT_CONTROL_VALUE         1154
 #define _APS_NEXT_SYMED_VALUE           244
 #endif
 #endif

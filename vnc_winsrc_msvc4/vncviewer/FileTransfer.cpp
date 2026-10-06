@@ -126,6 +126,9 @@ FileTransfer::FileTransfer(ClientConnection * pCC, VNCviewerApp * pApp)
 	m_ServerPathTmp[0] = '\0';
 	m_numOfFilesToDownload = -1;
 	m_currentDownloadIndex = -1;
+	m_oldClientListProc = NULL;
+	m_oldServerListProc = NULL;
+	m_oldBrowseTreeProc = NULL;
 }
 
 FileTransfer::~FileTransfer()
@@ -134,6 +137,288 @@ FileTransfer::~FileTransfer()
 	m_FTServerItemInfo.Free();
 }
 
+#ifndef BS_PUSHBUTTON
+#define BS_PUSHBUTTON 0x00000000L
+#endif
+#ifndef BS_ICON
+#define BS_ICON 0x00000040L
+#endif
+#ifndef BS_BITMAP
+#define BS_BITMAP 0x00000080L
+#endif
+
+typedef HANDLE (WINAPI *pfnLoadImageA)(HINSTANCE hInst, LPCSTR name, UINT type, int cx, int cy, UINT fuLoad);
+static pfnLoadImageA MyLoadImageA = NULL;
+static BOOL MyLoadImageAResolved = FALSE;
+static BOOL IsPreNT4(void) {
+	return (GetVersion() & 0xFF) < 4;
+}
+static HANDLE MyLoadImageIcon(HINSTANCE hInst, LPCSTR name, int cx, int cy) {
+	if (!MyLoadImageAResolved) {
+		HMODULE hUser32 = GetModuleHandle("user32.dll");
+		if (hUser32) {
+			MyLoadImageA = (pfnLoadImageA)GetProcAddress(hUser32, "LoadImageA");
+		}
+		MyLoadImageAResolved = TRUE;
+	}
+	if (MyLoadImageA != NULL) {
+		HANDLE hImage = MyLoadImageA(hInst, name, IMAGE_ICON, cx, cy, LR_SHARED);
+		if (hImage != NULL) {
+			return hImage;
+		}
+	}
+	return LoadIcon(hInst, name);
+}
+static BOOL IsWinNT35(void) {
+	DWORD winver = GetVersion();
+	return ((winver & 0xFF) == 3) && (((winver >> 8) & 0xFF) < 51);
+}
+static void FTUpdateScrollbars(HWND hwndList) {
+	if (!IsWinNT35()) {
+		return;
+	}
+	int nItems = ListView_GetItemCount(hwndList);
+	RECT rcClient;
+	GetClientRect(hwndList, &rcClient);
+	RECT rcItem;
+	int itemH = 0;
+	if (nItems > 0 && ListView_GetItemRect(hwndList, 0, &rcItem, LVIR_BOUNDS)) {
+		itemH = rcItem.bottom - rcItem.top;
+	}
+	int perPage = 1;
+	if (itemH > 0) {
+		perPage = (rcClient.bottom - rcClient.top) / itemH;
+		if (perPage < 1) perPage = 1;
+	}
+	int maxV = nItems - perPage;
+	if (maxV < 0) maxV = 0;
+	int maxH = ListView_GetColumnWidth(hwndList, 0) + ListView_GetColumnWidth(hwndList, 1) - (rcClient.right - rcClient.left);
+	if (maxH < 0) maxH = 0;
+	SetScrollRange(hwndList, SB_VERT, 0, maxV, FALSE);
+	SetScrollPos(hwndList, SB_VERT, ListView_GetTopIndex(hwndList), TRUE);
+	ShowScrollBar(hwndList, SB_VERT, maxV > 0);
+	SetScrollRange(hwndList, SB_HORZ, 0, maxH, FALSE);
+	ShowScrollBar(hwndList, SB_HORZ, maxH > 0);
+}
+static DWORD FTLastDblClkTick = 0;
+static HWND FTLastDblClkHwnd = NULL;
+static int FTLastDblClkItem = -1;
+static void FTDriveListScrollV(HWND hwndList, WPARAM wParam) {
+	int nItems = ListView_GetItemCount(hwndList);
+	if (nItems <= 0) {
+		return;
+	}
+	RECT rcClient, rcItem;
+	GetClientRect(hwndList, &rcClient);
+	int itemH = 0;
+	if (ListView_GetItemRect(hwndList, 0, &rcItem, LVIR_BOUNDS)) {
+		itemH = rcItem.bottom - rcItem.top;
+	}
+	if (itemH <= 0) {
+		return;
+	}
+	int top = ListView_GetTopIndex(hwndList);
+	int perPage = (rcClient.bottom - rcClient.top) / itemH;
+	if (perPage < 1) perPage = 1;
+	int maxTop = nItems - perPage;
+	if (maxTop < 0) maxTop = 0;
+	int newTop = top;
+	switch (LOWORD(wParam)) {
+		case SB_LINEUP: newTop = top - 1; break;
+		case SB_LINEDOWN: newTop = top + 1; break;
+		case SB_PAGEUP: newTop = top - perPage; break;
+		case SB_PAGEDOWN: newTop = top + perPage; break;
+		case SB_THUMBTRACK:
+		case SB_THUMBPOSITION: newTop = HIWORD(wParam); break;
+		case SB_TOP: newTop = 0; break;
+		case SB_BOTTOM: newTop = maxTop; break;
+		default: return;
+	}
+	if (newTop < 0) newTop = 0;
+	if (newTop > maxTop) newTop = maxTop;
+	if (newTop == top) {
+		return;
+	}
+	if (newTop > top) {
+		int u = newTop + perPage - 1;
+		if (u > nItems - 1) u = nItems - 1;
+		ListView_EnsureVisible(hwndList, u, FALSE);
+	} else {
+		ListView_EnsureVisible(hwndList, newTop, FALSE);
+	}
+	SetScrollPos(hwndList, SB_VERT, ListView_GetTopIndex(hwndList), TRUE);
+}
+static void FTDriveListScrollH(HWND hwndList, WPARAM wParam) {
+	RECT rcClient;
+	GetClientRect(hwndList, &rcClient);
+	int maxH = ListView_GetColumnWidth(hwndList, 0) + ListView_GetColumnWidth(hwndList, 1) - (rcClient.right - rcClient.left);
+	if (maxH < 0) maxH = 0;
+	int pos = GetScrollPos(hwndList, SB_HORZ);
+	int newPos = pos;
+	switch (LOWORD(wParam)) {
+		case SB_LINELEFT: newPos = pos - 10; break;
+		case SB_LINERIGHT: newPos = pos + 10; break;
+		case SB_PAGELEFT: newPos = pos - (rcClient.right - rcClient.left); break;
+		case SB_PAGERIGHT: newPos = pos + (rcClient.right - rcClient.left); break;
+		case SB_THUMBTRACK:
+		case SB_THUMBPOSITION: newPos = HIWORD(wParam); break;
+		case SB_LEFT: newPos = 0; break;
+		case SB_RIGHT: newPos = maxH; break;
+		default: return;
+	}
+	if (newPos < 0) newPos = 0;
+	if (newPos > maxH) newPos = maxH;
+	if (newPos == pos) {
+		return;
+	}
+	ListView_Scroll(hwndList, newPos - pos, 0);
+	SetScrollPos(hwndList, SB_HORZ, newPos, TRUE);
+}
+LRESULT CALLBACK FTListViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+	FileTransfer *_this = (FileTransfer *)GetWindowLong(hwnd, GWL_USERDATA);
+	WNDPROC oldProc = NULL;
+	if (_this != NULL) {
+		oldProc = (hwnd == _this->m_hwndFTClientList) ? _this->m_oldClientListProc : _this->m_oldServerListProc;
+	}
+	if (_this != NULL && oldProc != NULL && (msg == WM_VSCROLL || msg == WM_HSCROLL)) {
+		if (msg == WM_VSCROLL) {
+			FTDriveListScrollV(hwnd, wParam);
+		} else {
+			FTDriveListScrollH(hwnd, wParam);
+		}
+		return 0;
+	}
+	if (oldProc == NULL) {
+		return DefWindowProc(hwnd, msg, wParam, lParam);
+	}
+	return CallWindowProc((FARPROC)oldProc, hwnd, msg, wParam, lParam);
+}
+static int FTBrowseTreeVisibleCount(HWND hwndTree) {
+	int n = 0;
+	HTREEITEM h = TreeView_GetRoot(hwndTree);
+	while (h != NULL && n < 32767) {
+		n++;
+		h = TreeView_GetNextVisible(hwndTree, h);
+	}
+	return n;
+}
+static int FTBrowseTreeTopIndex(HWND hwndTree) {
+	HTREEITEM hTop = TreeView_GetFirstVisible(hwndTree);
+	int n = 0;
+	HTREEITEM h = TreeView_GetRoot(hwndTree);
+	while (h != NULL && h != hTop && n < 32767) {
+		n++;
+		h = TreeView_GetNextVisible(hwndTree, h);
+	}
+	return n;
+}
+static HTREEITEM FTBrowseTreeItemAt(HWND hwndTree, int index) {
+	int n = 0;
+	HTREEITEM h = TreeView_GetRoot(hwndTree);
+	while (h != NULL) {
+		if (n == index) return h;
+		n++;
+		h = TreeView_GetNextVisible(hwndTree, h);
+	}
+	return NULL;
+}
+#ifndef TVM_GETITEMHEIGHT
+#define TVM_GETITEMHEIGHT (0x1100 + 28)
+#endif
+#ifndef TreeView_GetItemHeight
+#define TreeView_GetItemHeight(hwnd) (int)SNDMSG((hwnd), TVM_GETITEMHEIGHT, 0, 0)
+#endif
+static void FTUpdateTreeScrollbars(HWND hwndTree) {
+	if (!IsWinNT35() || hwndTree == NULL) {
+		return;
+	}
+	int nVis = FTBrowseTreeVisibleCount(hwndTree);
+	RECT rcClient;
+	GetClientRect(hwndTree, &rcClient);
+	RECT rcItem;
+	int itemH = 0;
+	HTREEITEM hFirstItem = TreeView_GetFirstVisible(hwndTree);
+	if (hFirstItem != NULL && TreeView_GetItemRect(hwndTree, hFirstItem, &rcItem, FALSE)) {
+		itemH = rcItem.bottom - rcItem.top;
+	}
+	int perPage = 1;
+	if (itemH > 0) {
+		perPage = (rcClient.bottom - rcClient.top) / itemH;
+		if (perPage < 1) perPage = 1;
+	}
+	int maxV = nVis - perPage;
+	if (maxV < 0) maxV = 0;
+	SetScrollRange(hwndTree, SB_VERT, 0, maxV, FALSE);
+	SetScrollPos(hwndTree, SB_VERT, FTBrowseTreeTopIndex(hwndTree), TRUE);
+	ShowScrollBar(hwndTree, SB_VERT, maxV > 0);
+}
+static void FTDriveBrowseTreeV(HWND hwndTree, WPARAM wParam) {
+	int nVis = FTBrowseTreeVisibleCount(hwndTree);
+	if (nVis <= 0) {
+		return;
+	}
+	RECT rcClient, rcItem;
+	GetClientRect(hwndTree, &rcClient);
+	int itemH = 0;
+	HTREEITEM hFirstItem = TreeView_GetFirstVisible(hwndTree);
+	if (hFirstItem != NULL && TreeView_GetItemRect(hwndTree, hFirstItem, &rcItem, FALSE)) {
+		itemH = rcItem.bottom - rcItem.top;
+	}
+	if (itemH <= 0) {
+		return;
+	}
+	int perPage = (rcClient.bottom - rcClient.top) / itemH;
+	if (perPage < 1) perPage = 1;
+	int top = FTBrowseTreeTopIndex(hwndTree);
+	int maxTop = nVis - perPage;
+	if (maxTop < 0) maxTop = 0;
+	int newTop = top;
+	switch (LOWORD(wParam)) {
+		case SB_LINEUP: newTop = top - 1; break;
+		case SB_LINEDOWN: newTop = top + 1; break;
+		case SB_PAGEUP: newTop = top - perPage; break;
+		case SB_PAGEDOWN: newTop = top + perPage; break;
+		case SB_THUMBTRACK:
+		case SB_THUMBPOSITION: newTop = HIWORD(wParam); break;
+		case SB_TOP: newTop = 0; break;
+		case SB_BOTTOM: newTop = maxTop; break;
+		default: return;
+	}
+	if (newTop < 0) newTop = 0;
+	if (newTop > maxTop) newTop = maxTop;
+	if (newTop == top) {
+		return;
+	}
+	if (newTop > top) {
+		int u = newTop + perPage - 1;
+		if (u > nVis - 1) u = nVis - 1;
+		HTREEITEM h = FTBrowseTreeItemAt(hwndTree, u);
+		if (h != NULL) {
+			TreeView_EnsureVisible(hwndTree, h);
+		}
+	} else {
+		HTREEITEM h = FTBrowseTreeItemAt(hwndTree, newTop);
+		if (h != NULL) {
+			TreeView_EnsureVisible(hwndTree, h);
+		}
+	}
+	SetScrollPos(hwndTree, SB_VERT, FTBrowseTreeTopIndex(hwndTree), TRUE);
+}
+LRESULT CALLBACK FTBrowseTreeProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+	FileTransfer *_this = (FileTransfer *)GetWindowLong(hwnd, GWL_USERDATA);
+	WNDPROC oldProc = NULL;
+	if (_this != NULL) {
+		oldProc = _this->m_oldBrowseTreeProc;
+	}
+	if (_this != NULL && oldProc != NULL && msg == WM_VSCROLL) {
+		FTDriveBrowseTreeV(hwnd, wParam);
+		return 0;
+	}
+	if (oldProc == NULL) {
+		return DefWindowProc(hwnd, msg, wParam, lParam);
+	}
+	return CallWindowProc((FARPROC)oldProc, hwnd, msg, wParam, lParam);
+}
 void
 FileTransfer::CreateFileTransferDialog()
 {
@@ -152,6 +437,16 @@ FileTransfer::CreateFileTransferDialog()
 	m_hwndFTProgress = GetDlgItem(m_hwndFileTransfer, IDC_FTPROGRESS);
 	m_hwndFTClientList = GetDlgItem(m_hwndFileTransfer, IDC_FTCLIENTLIST);
 	m_hwndFTServerList = GetDlgItem(m_hwndFileTransfer, IDC_FTSERVERLIST);
+	if (IsWinNT35()) {
+		if (m_hwndFTClientList != NULL) {
+			SetWindowLong(m_hwndFTClientList, GWL_USERDATA, (LONG)this);
+			m_oldClientListProc = (WNDPROC)SetWindowLong(m_hwndFTClientList, GWL_WNDPROC, (LONG)FTListViewProc);
+		}
+		if (m_hwndFTServerList != NULL) {
+			SetWindowLong(m_hwndFTServerList, GWL_USERDATA, (LONG)this);
+			m_oldServerListProc = (WNDPROC)SetWindowLong(m_hwndFTServerList, GWL_WNDPROC, (LONG)FTListViewProc);
+		}
+	}
 	m_hwndFTClientPath = GetDlgItem(m_hwndFileTransfer, IDC_CLIENTPATH);
 	m_hwndFTServerPath = GetDlgItem(m_hwndFileTransfer, IDC_SERVERPATH);
 	m_hwndFTStatus = GetDlgItem(m_hwndFileTransfer, IDC_FTSTATUS);
@@ -159,14 +454,26 @@ FileTransfer::CreateFileTransferDialog()
 	ListView_SetExtendedListViewStyleEx(m_hwndFTClientList, LVS_EX_FULLROWSELECT, LVS_EX_FULLROWSELECT);
 	ListView_SetExtendedListViewStyleEx(m_hwndFTServerList, LVS_EX_FULLROWSELECT, LVS_EX_FULLROWSELECT);
 
-	HANDLE hIcon = LoadImage(m_pApp->m_instance, MAKEINTRESOURCE(IDI_FILEUP), IMAGE_ICON, 16, 16, LR_SHARED);
+	HANDLE hIcon = MyLoadImageIcon(m_pApp->m_instance, MAKEINTRESOURCE(IDI_FILEUP), 16, 16);
 	SendMessage(GetDlgItem(m_hwndFileTransfer, IDC_CLIENTUP), BM_SETIMAGE, (WPARAM) IMAGE_ICON, (LPARAM) hIcon);
 	SendMessage(GetDlgItem(m_hwndFileTransfer, IDC_SERVERUP), BM_SETIMAGE, (WPARAM) IMAGE_ICON, (LPARAM) hIcon);
-	DestroyIcon((HICON) hIcon);
-	hIcon = LoadImage(m_pApp->m_instance, MAKEINTRESOURCE(IDI_FILERELOAD), IMAGE_ICON, 16, 16, LR_SHARED);
-	SendMessage(GetDlgItem(m_hwndFileTransfer, IDC_CLIENTRELOAD), BM_SETIMAGE, (WPARAM) IMAGE_ICON, (LPARAM) hIcon);
-	SendMessage(GetDlgItem(m_hwndFileTransfer, IDC_SERVERRELOAD), BM_SETIMAGE, (WPARAM) IMAGE_ICON, (LPARAM) hIcon);
-	DestroyIcon((HICON) hIcon);
+	HANDLE hIconReload = MyLoadImageIcon(m_pApp->m_instance, MAKEINTRESOURCE(IDI_FILERELOAD), 16, 16);
+	SendMessage(GetDlgItem(m_hwndFileTransfer, IDC_CLIENTRELOAD), BM_SETIMAGE, (WPARAM) IMAGE_ICON, (LPARAM) hIconReload);
+	SendMessage(GetDlgItem(m_hwndFileTransfer, IDC_SERVERRELOAD), BM_SETIMAGE, (WPARAM) IMAGE_ICON, (LPARAM) hIconReload);
+	if (IsPreNT4()) {
+		int ids[] = { IDC_CLIENTUP, IDC_SERVERUP, IDC_CLIENTRELOAD, IDC_SERVERRELOAD };
+		const char *texts[] = { "Up", "Up", "Ref", "Ref" };
+		for (int bi = 0; bi < 4; bi++) {
+			HWND hBtn = GetDlgItem(m_hwndFileTransfer, ids[bi]);
+			if (hBtn != NULL) {
+				SetWindowLong(hBtn, GWL_STYLE, (GetWindowLong(hBtn, GWL_STYLE) & ~(BS_ICON | BS_BITMAP)) | BS_PUSHBUTTON);
+				SetWindowText(hBtn, texts[bi]);
+			}
+		}
+	} else {
+		DestroyIcon((HICON) hIcon);
+		DestroyIcon((HICON) hIconReload);
+	}
 
 	RECT Rect;
 	GetClientRect(m_hwndFTClientList, &Rect);
@@ -375,12 +682,18 @@ FileTransfer::FileTransferDlgProc(HWND hwnd,
 						// Find which item index was actually double clicked
 						int iItem = ListView_GetNextItem(_this->m_hwndFTClientList, -1, LVNI_FOCUSED);
 						if (iItem != -1) {
+							FTLastDblClkTick = GetTickCount();
+							FTLastDblClkHwnd = _this->m_hwndFTClientList;
+							FTLastDblClkItem = iItem;
 							_this->ProcessListViewDBLCLK(_this->m_hwndFTClientList, _this->m_ClientPath, _this->m_ClientPathTmp, iItem);
 						}
 					}
 					return TRUE;
 				case LVN_ITEMACTIVATE:
 					LPNMITEMACTIVATE lpnmia = (LPNMITEMACTIVATE)lParam;
+					if (FTLastDblClkHwnd == _this->m_hwndFTClientList && lpnmia->iItem == FTLastDblClkItem && (GetTickCount() - FTLastDblClkTick) < (DWORD)(GetDoubleClickTime() + 100)) {
+						return TRUE;
+					}
 					_this->ProcessListViewDBLCLK(_this->m_hwndFTClientList, _this->m_ClientPath, _this->m_ClientPathTmp, lpnmia->iItem);
 					return TRUE;
 			}
@@ -402,12 +715,18 @@ FileTransfer::FileTransferDlgProc(HWND hwnd,
 						LPNMHDR lpnmh = (LPNMHDR)lParam;
 						int iItem = ListView_GetNextItem(_this->m_hwndFTServerList, -1, LVNI_FOCUSED);
 						if (iItem != -1) {
+							FTLastDblClkTick = GetTickCount();
+							FTLastDblClkHwnd = _this->m_hwndFTServerList;
+							FTLastDblClkItem = iItem;
 							_this->ProcessListViewDBLCLK(_this->m_hwndFTServerList, _this->m_ServerPath, _this->m_ServerPathTmp, iItem);
 						}
 					}
 					return TRUE;
 				case LVN_ITEMACTIVATE:
 					LPNMITEMACTIVATE lpnmia = (LPNMITEMACTIVATE)lParam;
+					if (FTLastDblClkHwnd == _this->m_hwndFTServerList && lpnmia->iItem == FTLastDblClkItem && (GetTickCount() - FTLastDblClkTick) < (DWORD)(GetDoubleClickTime() + 100)) {
+						return TRUE;
+					}
 					_this->ProcessListViewDBLCLK(_this->m_hwndFTServerList, _this->m_ServerPath, _this->m_ServerPathTmp, lpnmia->iItem);
 					return TRUE;
 			}
@@ -856,6 +1175,7 @@ FileTransfer::ShowClientItems(char *path)
 			SetWindowText(m_hwndFTClientPath, m_ClientPath);
 			FindClose(m_handle);
 			ListView_DeleteAllItems(m_hwndFTClientList);
+			FTUpdateScrollbars(m_hwndFTClientList);
 			BlockingFileTransferDialog(TRUE);
 			return;
 		}
@@ -923,6 +1243,14 @@ FileTransfer::FTBrowseDlgProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 					i += 3;
 				}
 			}
+			if (IsWinNT35()) {
+				HWND hTree = GetDlgItem(hwnd, IDC_FTBROWSETREE);
+				if (hTree != NULL) {
+					SetWindowLong(hTree, GWL_USERDATA, (LONG)_this);
+					_this->m_oldBrowseTreeProc = (WNDPROC)SetWindowLong(hTree, GWL_WNDPROC, (LONG)FTBrowseTreeProc);
+					FTUpdateTreeScrollbars(hTree);
+				}
+			}
 			return TRUE;
 		}
 	break;
@@ -985,6 +1313,7 @@ FileTransfer::FTBrowseDlgProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 						_this->ShowTreeViewItems(hwnd, m_lParam);
 					}
 				}
+				FTUpdateTreeScrollbars(GetDlgItem(hwnd, IDC_FTBROWSETREE));
 				return TRUE;
 				}
 			}
@@ -1140,7 +1469,8 @@ FileTransfer::ShowServerItems()
 			BlockingFileTransferDialog(TRUE);
 			strcpy(m_ServerPath, m_ServerPathTmp);
 			SetWindowText(m_hwndFTServerPath, m_ServerPath);
-			ListView_DeleteAllItems(m_hwndFTServerList); 
+			ListView_DeleteAllItems(m_hwndFTServerList);
+			FTUpdateScrollbars(m_hwndFTServerList);
 			delete [] pftSD;
 			delete [] pFilenames;
 			return;
@@ -1178,6 +1508,9 @@ FileTransfer::ShowServerItems()
 	}
 	delete [] pftSD;
 	delete [] pFilenames;
+	if (m_bServerBrowseRequest && m_hwndFTBrowse != NULL) {
+		FTUpdateTreeScrollbars(GetDlgItem(m_hwndFTBrowse, IDC_FTBROWSETREE));
+	}
 	BlockingFileTransferDialog(TRUE);
 }
 
@@ -1245,6 +1578,7 @@ FileTransfer::ShowListViewItems(HWND hwnd, FileTransferItemInfo *ftii)
 		LVItem.pszText = LPSTR_TEXTCALLBACK;
 		ListView_InsertItem(hwnd, &LVItem);
 	}
+	FTUpdateScrollbars(hwnd);
 }
 
 void

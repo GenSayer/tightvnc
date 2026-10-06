@@ -43,6 +43,7 @@
 #include "vncMenu.h"
 #include "vncInstHandler.h"
 #include "vncService.h"
+#include <commctrl.h>
 
 extern "C" {
 #include "ParseHost.h"
@@ -359,6 +360,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 
 int WinVNCAppMain()
 {
+	InitCommonControls();
+
 	// Set this process to be the last application to be shut down.
 	SetProcessShutdownParameters(0x100, 0);
 	

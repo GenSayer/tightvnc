@@ -22,6 +22,8 @@
 
 #include "SharedDesktopArea.h"
 
+int WINAPI MyGetWindowRgn_init(HWND hWnd, HRGN hRgn);
+
 //////////////////////////////////////////////////////////////////////
 // Construction/Destruction
 //////////////////////////////////////////////////////////////////////
@@ -291,7 +293,7 @@ void SharedDesktopArea::DrawFrameAroundWindow(HWND hWnd)
 	HDC hWindowDc=::GetWindowDC(hWnd);
 	HBRUSH hBrush=CreateSolidBrush(RGB(0,0,0));
 	HRGN Rgn=CreateRectRgn(0,0,1,1);
-	int iRectResult=GetWindowRgn(hWnd,Rgn);
+	int iRectResult=MyGetWindowRgn_init(hWnd,Rgn);
 	if (iRectResult==ERROR || iRectResult==NULLREGION || Rgn==NULL)
 	{
 		RECT rect;

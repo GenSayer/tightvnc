@@ -93,9 +93,8 @@ vncMenu::vncMenu(vncServer *server)
 	vncService::CurrentUser((char *)&m_username, sizeof(m_username));
 
 	// Create a dummy window to handle tray icon messages
-	WNDCLASSEX wndclass;
+	WNDCLASS wndclass;
 
-	wndclass.cbSize			= sizeof(wndclass);
 	wndclass.style			= 0;
 	wndclass.lpfnWndProc	= vncMenu::WndProc;
 	wndclass.cbClsExtra		= 0;
@@ -106,12 +105,11 @@ vncMenu::vncMenu(vncServer *server)
 	wndclass.hbrBackground	= (HBRUSH) GetStockObject(WHITE_BRUSH);
 	wndclass.lpszMenuName	= (const char *) NULL;
 	wndclass.lpszClassName	= MENU_CLASS_NAME;
-	wndclass.hIconSm		= LoadIcon(NULL, IDI_APPLICATION);
 
-	RegisterClassEx(&wndclass);
+	RegisterClass(&wndclass);
 
 	m_hwnd = CreateWindow(MENU_CLASS_NAME,
-				MENU_CLASS_NAME,
+				"TightVNC Server",
 				WS_OVERLAPPEDWINDOW,
 				CW_USEDEFAULT,
 				CW_USEDEFAULT,

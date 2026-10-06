@@ -123,6 +123,11 @@ public:
 
 	ClientConnection * m_clientconn;
 	VNCviewerApp * m_pApp; 
+	HWND m_hwndFTClientList;
+	HWND m_hwndFTServerList;
+	WNDPROC m_oldClientListProc;
+	WNDPROC m_oldServerListProc;
+	WNDPROC m_oldBrowseTreeProc;
 	
 private:
 	DWORD m_dwDownloadRead;
@@ -139,8 +144,6 @@ private:
 	void CreateServerItemInfoList(FileTransferItemInfo *pftii, FTSIZEDATA *ftsd, int ftsdNum, char *pfnames, int fnamesSize);
 	void InitProgressBar(int nPosition, int nMinRange, int nMaxRange, int nStep);
 	HWND m_hwndFileTransfer;
-	HWND m_hwndFTClientList;
-	HWND m_hwndFTServerList;
 	HWND m_hwndFTClientPath;
 	HWND m_hwndFTServerPath;
 	HWND m_hwndFTProgress;

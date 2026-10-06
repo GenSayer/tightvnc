@@ -194,7 +194,38 @@ inline bool SwitchMatch(LPCTSTR arg, LPCTSTR swtch) {
 }
 
 static void ArgError(LPTSTR msg) {
-    MessageBox(NULL,  msg, _T("Argument error"),MB_OK | MB_TOPMOST | MB_ICONSTOP);
+    	MessageBox(NULL,  msg, _T("Argument error"),MB_OK | MB_TOPMOST | MB_ICONWARNING);
+}
+
+static BOOL IsWinNT35(void) {
+	DWORD winver = GetVersion();
+	return ((winver & 0xFF) == 3) && (((winver >> 8) & 0xFF) < 51);
+}
+static void MySlider_SetRange(HWND hwndSlider, int lo, int hi) {
+	if (IsWinNT35())
+		SendMessage(hwndSlider, SBM_SETRANGE, TRUE, MAKELONG(lo, hi));
+	else
+		SendMessage(hwndSlider, TBM_SETRANGE, TRUE, (LPARAM)MAKELONG(lo, hi));
+}
+static void MySlider_SetPos(HWND hwndSlider, int pos) {
+	if (IsWinNT35())
+		SendMessage(hwndSlider, SBM_SETPOS, pos, TRUE);
+	else
+		SendMessage(hwndSlider, TBM_SETPOS, TRUE, pos);
+}
+static int MySlider_GetPos(HWND hwndSlider) {
+	if (IsWinNT35())
+		return SendMessage(hwndSlider, SBM_GETPOS, 0, 0);
+	return SendMessage(hwndSlider, TBM_GETPOS, 0, 0);
+}
+static int MySlider_GetValue(HWND hwndDlg, int idSlider) {
+	if (IsWinNT35()) {
+		int v = GetDlgItemInt(hwndDlg, idSlider, NULL, FALSE);
+		if (v < 1) v = 1;
+		if (v > 9) v = 9;
+		return v;
+	}
+	return MySlider_GetPos(GetDlgItem(hwndDlg, idSlider));
 }
 
 // Greatest common denominator, by Euclid
@@ -862,9 +893,40 @@ BOOL CALLBACK VNCOptions::DlgProcConnOptions(HWND hwnd, UINT uMsg,
 			
 			EnableWindow(hAllowJpeg, !_this->m_Use8Bit);
 			
+			if (IsWinNT35()) {
+				HWND hOld[] = { GetDlgItem(hwnd, IDC_COMPRESSLEVEL), GetDlgItem(hwnd, IDC_QUALITYLEVEL) };
+				int levels[] = { _this->m_compressLevel, _this->m_jpegQualityLevel };
+				int downs[] = { IDC_COMPRESSDOWN, IDC_QUALITYDOWN };
+				int ups[] = { IDC_COMPRESSUP, IDC_QUALITYUP };
+				HFONT hFont = (HFONT)SendMessage(hwnd, WM_GETFONT, 0, 0);
+				for (int si = 0; si < 2; si++) {
+					if (hOld[si] != NULL) {
+						RECT rc;
+						GetWindowRect(hOld[si], &rc);
+						MapWindowPoints(NULL, hwnd, (POINT *)&rc, 2);
+						DestroyWindow(hOld[si]);
+						int btnW = 16;
+						int editW = rc.right - rc.left - btnW * 2 - 2;
+						if (editW < 16) editW = 16;
+						HWND hDown = CreateWindow("BUTTON", "<", WS_CHILD | WS_VISIBLE | WS_TABSTOP, rc.left, rc.top, btnW, rc.bottom - rc.top, hwnd, (HMENU)downs[si], pApp->m_instance, NULL);
+						HWND hEdit = CreateWindow("EDIT", "", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL, rc.left + btnW + 1, rc.top, editW, rc.bottom - rc.top, hwnd, (HMENU)(si == 0 ? IDC_COMPRESSLEVEL : IDC_QUALITYLEVEL), pApp->m_instance, NULL);
+						HWND hUp = CreateWindow("BUTTON", ">", WS_CHILD | WS_VISIBLE | WS_TABSTOP, rc.left + btnW + 1 + editW + 1, rc.top, btnW, rc.bottom - rc.top, hwnd, (HMENU)ups[si], pApp->m_instance, NULL);
+						if (hFont != NULL) {
+							if (hDown != NULL) SendMessage(hDown, WM_SETFONT, (WPARAM)hFont, MAKELPARAM(FALSE, 0));
+							if (hEdit != NULL) SendMessage(hEdit, WM_SETFONT, (WPARAM)hFont, MAKELPARAM(FALSE, 0));
+							if (hUp != NULL) SendMessage(hUp, WM_SETFONT, (WPARAM)hFont, MAKELPARAM(FALSE, 0));
+						}
+						if (hEdit != NULL) {
+							SetDlgItemInt(hwnd, (si == 0 ? IDC_COMPRESSLEVEL : IDC_QUALITYLEVEL), levels[si], FALSE);
+						}
+					}
+				}
+				ShowWindow(GetDlgItem(hwnd, IDC_STATIC_LEVEL), SW_HIDE);
+				ShowWindow(GetDlgItem(hwnd, IDC_STATIC_QUALITY), SW_HIDE);
+			}
 			HWND hCompressLevel = GetDlgItem(hwnd, IDC_COMPRESSLEVEL);
-			SendMessage(hCompressLevel, TBM_SETRANGE, TRUE, (LPARAM) MAKELONG(1, 9)); 
-			SendMessage(hCompressLevel, TBM_SETPOS, TRUE, _this->m_compressLevel);
+			MySlider_SetRange(hCompressLevel, 1, 9);
+			MySlider_SetPos(hCompressLevel, _this->m_compressLevel);
 			
 			SetDlgItemInt(hwnd, IDC_STATIC_LEVEL, _this->m_compressLevel, FALSE);
 			
@@ -873,8 +935,8 @@ BOOL CALLBACK VNCOptions::DlgProcConnOptions(HWND hwnd, UINT uMsg,
 				(_this->m_PreferredEncoding == rfbEncodingZlibHex)) && _this->m_useCompressLevel));
 			
 			HWND hJpeg = GetDlgItem(hwnd, IDC_QUALITYLEVEL);
-			SendMessage(hJpeg, TBM_SETRANGE, TRUE, (LPARAM) MAKELONG(1, 9));
-			SendMessage(hJpeg, TBM_SETPOS, TRUE, _this->m_jpegQualityLevel);
+			MySlider_SetRange(hJpeg, 1, 9);
+			MySlider_SetPos(hJpeg, _this->m_jpegQualityLevel);
 			
 			SetDlgItemInt(hwnd, IDC_STATIC_QUALITY, _this->m_jpegQualityLevel, FALSE);
 			
@@ -928,6 +990,32 @@ BOOL CALLBACK VNCOptions::DlgProcConnOptions(HWND hwnd, UINT uMsg,
 					SendMessage(hAllowJpeg, BM_SETCHECK, FALSE, 0);
 				}
 				return 0;
+			}
+			return 0;
+		case IDC_COMPRESSDOWN:
+		case IDC_COMPRESSUP:
+			switch (HIWORD(wParam)) {
+			case BN_CLICKED: {
+				int v = GetDlgItemInt(hwnd, IDC_COMPRESSLEVEL, NULL, FALSE);
+				if (LOWORD(wParam) == IDC_COMPRESSUP) v++; else v--;
+				if (v < 1) v = 1;
+				if (v > 9) v = 9;
+				SetDlgItemInt(hwnd, IDC_COMPRESSLEVEL, v, FALSE);
+				return 0;
+			}
+			}
+			return 0;
+		case IDC_QUALITYDOWN:
+		case IDC_QUALITYUP:
+			switch (HIWORD(wParam)) {
+			case BN_CLICKED: {
+				int v = GetDlgItemInt(hwnd, IDC_QUALITYLEVEL, NULL, FALSE);
+				if (LOWORD(wParam) == IDC_QUALITYUP) v++; else v--;
+				if (v < 1) v = 1;
+				if (v > 9) v = 9;
+				SetDlgItemInt(hwnd, IDC_QUALITYLEVEL, v, FALSE);
+				return 0;
+			}
 			}
 			return 0;
 		case IDC_8BITCHECK:
@@ -1033,16 +1121,14 @@ BOOL CALLBACK VNCOptions::DlgProcConnOptions(HWND hwnd, UINT uMsg,
 				HWND hAllowCompressLevel = GetDlgItem(hwnd, IDC_ALLOW_COMPRESSLEVEL);
 				_this->m_useCompressLevel = 
 					(SendMessage(hAllowCompressLevel, BM_GETCHECK, 0, 0) == BST_CHECKED);
-				HWND hCompressLevel = GetDlgItem(hwnd, IDC_COMPRESSLEVEL);
-				_this->m_compressLevel = SendMessage(hCompressLevel,TBM_GETPOS , 0, 0);
+				_this->m_compressLevel = MySlider_GetValue(hwnd, IDC_COMPRESSLEVEL);
 				
 				
 				
 				HWND hAllowJpeg = GetDlgItem(hwnd, IDC_ALLOW_JPEG);
 				_this->m_enableJpegCompression = 
 					(SendMessage(hAllowJpeg, BM_GETCHECK, 0, 0) == BST_CHECKED);
-				HWND hJpeg = GetDlgItem(hwnd, IDC_QUALITYLEVEL);
-				_this->m_jpegQualityLevel = SendMessage(hJpeg,TBM_GETPOS , 0, 0);
+				_this->m_jpegQualityLevel = MySlider_GetValue(hwnd, IDC_QUALITYLEVEL);
 				
 				
 				_this->m_requestShapeUpdates = false;
@@ -1095,11 +1181,11 @@ BOOL CALLBACK VNCOptions::DlgProcConnOptions(HWND hwnd, UINT uMsg,
 			HWND hCompressLevel = GetDlgItem(hwnd, IDC_COMPRESSLEVEL);
 			HWND hJpeg = GetDlgItem(hwnd, IDC_QUALITYLEVEL);
 			if (HWND(lParam) == hCompressLevel) {
-				dwPos = SendMessage(hCompressLevel, TBM_GETPOS, 0, 0);
+				dwPos = MySlider_GetValue(hwnd, IDC_COMPRESSLEVEL);
 				SetDlgItemInt(hwnd, IDC_STATIC_LEVEL, dwPos, FALSE);
 			}
 			if (HWND(lParam) == hJpeg) {
-				dwPos = SendMessage(hJpeg, TBM_GETPOS, 0, 0);
+				dwPos = MySlider_GetValue(hwnd, IDC_QUALITYLEVEL);
 				SetDlgItemInt(hwnd, IDC_STATIC_QUALITY, dwPos, FALSE);
 			}
 			return 0;

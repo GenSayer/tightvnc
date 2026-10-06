@@ -70,6 +70,63 @@ const char szDesktopSink[] = "WinVNC desktop sink";
 const char *VNC_WINDOWPOS_ATOMNAME = "VNCHooks.CopyRect.WindowPos";
 ATOM VNC_WINDOWPOS_ATOM = NULL;
 
+BOOL WINAPI MyEnumDesktopWindows_init(HDESK hDesktop, WNDENUMPROC lpfn, LPARAM lParam);
+typedef BOOL (WINAPI *pfnEnumDesktopWindows)(HDESK hDesktop, WNDENUMPROC lpfn, LPARAM lParam);
+static pfnEnumDesktopWindows MyEnumDesktopWindows = MyEnumDesktopWindows_init;
+BOOL WINAPI MyEnumDesktopWindows_fallback(HDESK hDesktop, WNDENUMPROC lpfn, LPARAM lParam) {
+	return FALSE;
+}
+BOOL WINAPI MyEnumDesktopWindows_init(HDESK hDesktop, WNDENUMPROC lpfn, LPARAM lParam) {
+	if (MyEnumDesktopWindows == MyEnumDesktopWindows_init) {
+		HMODULE hUser32 = GetModuleHandle("user32.dll");
+		if (hUser32) {
+			MyEnumDesktopWindows = (pfnEnumDesktopWindows)GetProcAddress(hUser32, "EnumDesktopWindows");
+		}
+	}
+	if (!MyEnumDesktopWindows || MyEnumDesktopWindows == MyEnumDesktopWindows_init) {
+		MyEnumDesktopWindows = MyEnumDesktopWindows_fallback;
+	}
+	return MyEnumDesktopWindows(hDesktop, lpfn, lParam);
+}
+
+BOOL WINAPI MyEnumDisplaySettingsA_init(LPCTSTR lpszDeviceName, DWORD iModeNum, LPDEVMODE lpDevMode);
+typedef BOOL (WINAPI *pfnEnumDisplaySettingsA)(LPCTSTR lpszDeviceName, DWORD iModeNum, LPDEVMODE lpDevMode);
+static pfnEnumDisplaySettingsA MyEnumDisplaySettingsA = MyEnumDisplaySettingsA_init;
+BOOL WINAPI MyEnumDisplaySettingsA_fallback(LPCTSTR lpszDeviceName, DWORD iModeNum, LPDEVMODE lpDevMode) {
+	return FALSE;
+}
+BOOL WINAPI MyEnumDisplaySettingsA_init(LPCTSTR lpszDeviceName, DWORD iModeNum, LPDEVMODE lpDevMode) {
+	if (MyEnumDisplaySettingsA == MyEnumDisplaySettingsA_init) {
+		HMODULE hUser32 = GetModuleHandle("user32.dll");
+		if (hUser32) {
+			MyEnumDisplaySettingsA = (pfnEnumDisplaySettingsA)GetProcAddress(hUser32, "EnumDisplaySettingsA");
+		}
+	}
+	if (!MyEnumDisplaySettingsA || MyEnumDisplaySettingsA == MyEnumDisplaySettingsA_init) {
+		MyEnumDisplaySettingsA = MyEnumDisplaySettingsA_fallback;
+	}
+	return MyEnumDisplaySettingsA(lpszDeviceName, iModeNum, lpDevMode);
+}
+
+LONG WINAPI MyChangeDisplaySettingsA_init(LPDEVMODE lpDevMode, DWORD dwFlags);
+typedef LONG (WINAPI *pfnChangeDisplaySettingsA)(LPDEVMODE lpDevMode, DWORD dwFlags);
+static pfnChangeDisplaySettingsA MyChangeDisplaySettingsA = MyChangeDisplaySettingsA_init;
+LONG WINAPI MyChangeDisplaySettingsA_fallback(LPDEVMODE lpDevMode, DWORD dwFlags) {
+	return DISP_CHANGE_FAILED;
+}
+LONG WINAPI MyChangeDisplaySettingsA_init(LPDEVMODE lpDevMode, DWORD dwFlags) {
+	if (MyChangeDisplaySettingsA == MyChangeDisplaySettingsA_init) {
+		HMODULE hUser32 = GetModuleHandle("user32.dll");
+		if (hUser32) {
+			MyChangeDisplaySettingsA = (pfnChangeDisplaySettingsA)GetProcAddress(hUser32, "ChangeDisplaySettingsA");
+		}
+	}
+	if (!MyChangeDisplaySettingsA || MyChangeDisplaySettingsA == MyChangeDisplaySettingsA_init) {
+		MyChangeDisplaySettingsA = MyChangeDisplaySettingsA_fallback;
+	}
+	return MyChangeDisplaySettingsA(lpDevMode, dwFlags);
+}
+
 // Static members to use with new polling algorithm
 const int vncDesktop::m_pollingOrder[32] = {
 	 0, 16,  8, 24,  4, 20, 12, 28,
@@ -696,7 +753,7 @@ vncDesktop::KillScreenSaver()
 				vnclog.Print(LL_INTINFO, VNCLOG("Killing ScreenSaver\n"));
 
 				// Close all windows on the screen saver desktop
-				EnumDesktopWindows(hDesk, (WNDENUMPROC) &KillScreenSaverFunc, 0);
+				MyEnumDesktopWindows(hDesk, (WNDENUMPROC) &KillScreenSaverFunc, 0);
 				CloseDesktop(hDesk);
 				// Pause long enough for the screen-saver to close
 				//Sleep(2000);
@@ -730,7 +787,7 @@ void vncDesktop::ChangeResNow()
 
 	// *** WBB - Obtain the current display settings.
 	// only on unimon
-	if (! EnumDisplaySettings(0, ENUM_CURRENT_SETTINGS, m_lpAlternateDevMode))
+	if (! MyEnumDisplaySettingsA(0, ENUM_CURRENT_SETTINGS, m_lpAlternateDevMode))
 	{
 		vnclog.Print(LL_INTINFO,
 					 VNCLOG("SCR-WBB: could not get current display settings!\n"));
@@ -800,9 +857,9 @@ void vncDesktop::ChangeResNow()
 				// *** make res change - Jeremy Peaks
 				// testing: predefined Width/Height may become incompatible
 				// with new clrdepth/timings
-				long resultOfResChange = ChangeDisplaySettings(m_lpAlternateDevMode, CDS_TEST);
+				long resultOfResChange = MyChangeDisplaySettingsA(m_lpAlternateDevMode, CDS_TEST);
 				if (resultOfResChange == DISP_CHANGE_SUCCESSFUL) {
-					ChangeDisplaySettings(m_lpAlternateDevMode, CDS_UPDATEREGISTRY);
+					MyChangeDisplaySettingsA(m_lpAlternateDevMode, CDS_UPDATEREGISTRY);
 					settingsUpdated = true;
 				}
 			} 
@@ -836,9 +893,9 @@ vncDesktop::ResetDisplayToNormal()
 		m_lpAlternateDevMode->dmPelsWidth = origPelsWidth;
 		m_lpAlternateDevMode->dmPelsHeight = origPelsHeight;
 
-		long resultOfResChange = ChangeDisplaySettings(m_lpAlternateDevMode, CDS_TEST);
+		long resultOfResChange = MyChangeDisplaySettingsA(m_lpAlternateDevMode, CDS_TEST);
 		if (resultOfResChange == DISP_CHANGE_SUCCESSFUL)
-			ChangeDisplaySettings(m_lpAlternateDevMode, CDS_UPDATEREGISTRY);
+			MyChangeDisplaySettingsA(m_lpAlternateDevMode, CDS_UPDATEREGISTRY);
 
 		delete m_lpAlternateDevMode;
 		m_lpAlternateDevMode = NULL;
@@ -1246,9 +1303,8 @@ vncDesktop::InitWindow()
 {
 	if (m_wndClass == 0) {
 		// Create the window class
-		WNDCLASSEX wndclass;
+		WNDCLASS wndclass;
 
-		wndclass.cbSize			= sizeof(wndclass);
 		wndclass.style			= 0;
 		wndclass.lpfnWndProc	= &DesktopWndProc;
 		wndclass.cbClsExtra		= 0;
@@ -1259,10 +1315,9 @@ vncDesktop::InitWindow()
 		wndclass.hbrBackground	= (HBRUSH) GetStockObject(WHITE_BRUSH);
 		wndclass.lpszMenuName	= (const char *) NULL;
 		wndclass.lpszClassName	= szDesktopSink;
-		wndclass.hIconSm		= NULL;
 
 		// Register it
-		m_wndClass = RegisterClassEx(&wndclass);
+		m_wndClass = RegisterClass(&wndclass);
 	}
 
 	// And create a window

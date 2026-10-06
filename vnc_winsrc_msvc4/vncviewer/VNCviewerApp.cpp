@@ -27,6 +27,7 @@
 #include "vncviewer.h"
 #include "VNCviewerApp.h"
 #include "Exception.h"
+#include <commctrl.h>
 
 // For WinCE Palm, you might want to use this for debugging, since it
 // seems impossible to give the command some arguments.
@@ -37,6 +38,8 @@ VNCviewerApp *pApp;
 VNCviewerApp::VNCviewerApp(HINSTANCE hInstance, LPTSTR szCmdLine) {
 	pApp = this;
 	m_instance = hInstance;
+
+	InitCommonControls();
 
 	// Read the command line
 	m_options.SetFromCommandLine(szCmdLine);

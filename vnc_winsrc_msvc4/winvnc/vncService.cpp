@@ -58,6 +58,28 @@ HANDLE	g_impersonation_token = 0;
 DWORD	g_version_major;
 DWORD	g_version_minor;
 
+BOOL WINAPI MyImpersonateLoggedOnUser_init(HANDLE hToken);
+typedef BOOL (WINAPI *pfnImpersonateLoggedOnUser)(HANDLE hToken);
+static pfnImpersonateLoggedOnUser MyImpersonateLoggedOnUser = MyImpersonateLoggedOnUser_init;
+BOOL WINAPI MyImpersonateLoggedOnUser_fallback(HANDLE hToken) {
+	return FALSE;
+}
+BOOL WINAPI MyImpersonateLoggedOnUser_init(HANDLE hToken) {
+	if (MyImpersonateLoggedOnUser == MyImpersonateLoggedOnUser_init) {
+		HMODULE hAdvApi32 = GetModuleHandle("advapi32.dll");
+		if (!hAdvApi32) {
+			hAdvApi32 = LoadLibrary("advapi32.dll");
+		}
+		if (hAdvApi32) {
+			MyImpersonateLoggedOnUser = (pfnImpersonateLoggedOnUser)GetProcAddress(hAdvApi32, "ImpersonateLoggedOnUser");
+		}
+	}
+	if (!MyImpersonateLoggedOnUser || MyImpersonateLoggedOnUser == MyImpersonateLoggedOnUser_init) {
+		MyImpersonateLoggedOnUser = MyImpersonateLoggedOnUser_fallback;
+	}
+	return MyImpersonateLoggedOnUser(hToken);
+}
+
 #ifdef HORIZONLIVE
 BOOL	g_nosettings_flag;
 #endif
@@ -810,7 +832,7 @@ vncService::ProcessUserHelperMessage(DWORD processId) {
 	CloseHandle(processHandle);
 
 	// - Set this thread to impersonate them
-	if (!ImpersonateLoggedOnUser(userToken)) {
+	if (!MyImpersonateLoggedOnUser(userToken)) {
 		vnclog.Print(LL_INTERR, VNCLOG("failed to impersonate user, error=%d\n"),
 					 GetLastError());
 		CloseHandle(userToken);
@@ -832,7 +854,7 @@ bool vncService::tryImpersonate()
 		vnclog.Print(LL_INTERR, VNCLOG("impersonation failure, user unknown\n"));
 		return false;
 	}
-	if (!ImpersonateLoggedOnUser(g_impersonation_token)) {
+	if (!MyImpersonateLoggedOnUser(g_impersonation_token)) {
 		vnclog.Print(LL_INTERR, VNCLOG("user impersonation failure, error=%d\n"),
 					 GetLastError());
 		return false;
