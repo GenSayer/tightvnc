@@ -57,6 +57,8 @@ extern DWORD		mainthreadId;
 extern VNCHelp		help;
 // Main VNC server routine
 extern int WinVNCAppMain();
+// Log structured exceptions raised in the calling thread (per-thread)
+extern void WinVNCInstallExceptionLogger();
 
 // Standard command-line flag definitions
 const char winvncRunService[]		= "-service";

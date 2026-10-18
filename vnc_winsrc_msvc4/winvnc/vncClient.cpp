@@ -63,6 +63,9 @@ extern "C" {
 #include "FileTransferItemInfo.h"
 #include "vncMenu.h"
 
+// Defined in WinVNC.cpp
+extern void WinVNCInstallExceptionLogger();
+
 //
 // Normally, using macros is no good, but this macro saves us from
 // writing constants twice -- it constructs signature names from codes.
@@ -679,6 +682,8 @@ vncClientThread::run(void *arg)
 {
 	// All this thread does is go into a socket-recieve loop,
 	// waiting for stuff on the given socket
+
+	WinVNCInstallExceptionLogger();
 
 	// IMPORTANT : ALWAYS call RemoveClient on the server before quitting
 	// this thread.

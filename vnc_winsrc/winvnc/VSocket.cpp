@@ -401,6 +401,8 @@ VSocket::TryAccept(VSocket **new_socket, long ms)
 		return VTrue;
 	} else if (ready != 1) {
 		// Error
+		vnclog.Print(LL_SOCKERR, VNCLOG("socket error in select() on listening socket, wsa_error = %d\n"),
+					 WSAGetLastError());
 		return VFalse;
 	}
 	// Ready to accept new connection
@@ -551,7 +553,8 @@ VSocket::SendExact(const char *buff, const VCard bufflen)
 			count = select(sock + 1, NULL, &write_fds, NULL, &tm);
 		} while (count == 0);
 		if (count < 0 || count > 1) {
-			vnclog.Print(LL_SOCKERR, VNCLOG("socket error in select()\n"));
+			vnclog.Print(LL_SOCKERR, VNCLOG("socket error in select(), count = %d, wsa_error = %d\n"),
+						 count, WSAGetLastError());
 			return VFalse;
 		}
 		// Actually send some data
@@ -662,7 +665,8 @@ VSocket::ReadExact(char *buff, const VCard bufflen)
 			count = select(sock + 1, &read_fds, &write_fds, NULL, &tm);
 		} while (count == 0);
 		if (count < 0 || count > 2) {
-			vnclog.Print(LL_SOCKERR, VNCLOG("socket error in select()\n"));
+			vnclog.Print(LL_SOCKERR, VNCLOG("socket error in select(), count = %d, wsa_error = %d\n"),
+						 count, WSAGetLastError());
 			return VFalse;
 		}
 		if (FD_ISSET((unsigned int)sock, &write_fds)) {
@@ -678,7 +682,8 @@ VSocket::ReadExact(char *buff, const VCard bufflen)
 				buff += bytes;
 				currlen -= bytes;
 			} else if (bytes < 0 && errno != EWOULDBLOCK) {
-				vnclog.Print(LL_SOCKERR, VNCLOG("socket error\n"));
+				vnclog.Print(LL_SOCKERR, VNCLOG("socket error in recv(), wsa_error = %d\n"),
+							 WSAGetLastError());
 				return VFalse;
 			} else if (bytes == 0) {
 				vnclog.Print(LL_SOCKERR, VNCLOG("zero bytes read\n"));

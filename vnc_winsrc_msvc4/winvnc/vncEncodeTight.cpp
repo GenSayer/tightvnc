@@ -556,7 +556,10 @@ vncEncodeTight::SendMonoRect(BYTE *dest, int w, int h)
 {
 	const int streamId = 1;
 	int paletteLen, dataLen;
-	CARD8 paletteBuf[8];
+	// Declared as CARD32 so the CARD32/CARD16 stores below are aligned;
+	// a CARD8 array may be byte-aligned on the stack, which faults on Alpha.
+	CARD32 paletteBuf32[2];
+	CARD8 *paletteBuf = (CARD8 *)paletteBuf32;
 
 	// Prepare tight encoding header.
 	dataLen = (w + 7) / 8;
@@ -611,7 +614,9 @@ vncEncodeTight::SendIndexedRect(BYTE *dest, int w, int h)
 {
 	const int streamId = 2;
 	int i, entryLen;
-	CARD8 paletteBuf[256*4];
+	// See SendMonoRect() for why this is declared as CARD32.
+	CARD32 paletteBuf32[256];
+	CARD8 *paletteBuf = (CARD8 *)paletteBuf32;
 
 	// Prepare tight encoding header.
 	m_hdrBuffer[m_hdrBufferBytes++] = (streamId | rfbTightExplicitFilter) << 4;

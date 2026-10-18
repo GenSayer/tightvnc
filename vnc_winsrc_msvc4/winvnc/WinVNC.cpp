@@ -49,11 +49,50 @@ extern "C" {
 #include "ParseHost.h"
 }
 
+#include <eh.h>
+
 // Application instance and name
 HINSTANCE	hAppInstance;
 const char	*szAppName = "WinVNC";
 
 DWORD		mainthreadId;
+
+#ifndef SEM_NOALIGNMENTFAULTEXCEPT
+#define SEM_NOALIGNMENTFAULTEXCEPT 0x0004
+#endif
+
+// Log fatal exceptions, so that a crash on a machine without a debugger
+// (e.g. NT 3.51 on Alpha) still leaves the exception code and address in
+// the log. Subtract the module base from the address to get the RVA.
+static LONG WINAPI
+WinVNCUnhandledExceptionFilter(EXCEPTION_POINTERS *info)
+{
+	EXCEPTION_RECORD *rec = info->ExceptionRecord;
+	vnclog.Print(LL_INTERR, VNCLOG("unhandled exception 0x%08lx at %p, module base %p, thread %lu\n"),
+				 (unsigned long)rec->ExceptionCode, rec->ExceptionAddress,
+				 (void *)hAppInstance, (unsigned long)GetCurrentThreadId());
+	for (DWORD i = 0; i < rec->NumberParameters && i < 2; i++)
+		vnclog.Print(LL_INTERR, VNCLOG("exception parameter %lu = %p\n"),
+					 (unsigned long)i, (void *)rec->ExceptionInformation[i]);
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// The catch(...) blocks around the update code rethrow, which hides the
+// original exception from the filter above. This translator sees it first.
+// It only logs; returning lets the exception propagate unchanged.
+static void
+WinVNCSETranslator(unsigned int code, EXCEPTION_POINTERS *info)
+{
+	vnclog.Print(LL_INTERR, VNCLOG("structured exception 0x%08lx at %p, module base %p, thread %lu\n"),
+				 (unsigned long)code, info->ExceptionRecord->ExceptionAddress,
+				 (void *)hAppInstance, (unsigned long)GetCurrentThreadId());
+}
+
+void
+WinVNCInstallExceptionLogger()
+{
+	_set_se_translator(WinVNCSETranslator);
+}
 
 // WinMain parses the command line and either calls the main App
 // routine or, under NT, the main service routine.
@@ -75,6 +114,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 	// Save the application instance and main thread id
 	hAppInstance = hInstance;
 	mainthreadId = GetCurrentThreadId();
+
+	// On RISC NT (Alpha, MIPS, PowerPC), have the kernel fix up misaligned
+	// accesses instead of raising an exception. Has no effect on x86.
+	SetErrorMode(SetErrorMode(0) | SEM_NOALIGNMENTFAULTEXCEPT);
+	SetUnhandledExceptionFilter(WinVNCUnhandledExceptionFilter);
 
 	// Initialise the VSocket system
 	VSocketSystem socksys;

@@ -223,6 +223,8 @@ vncDesktopThread::ReturnVal(BOOL result)
 
 void *vncDesktopThread::run_undetached(void *arg)
 {
+	WinVNCInstallExceptionLogger();
+
 	// Save the thread's "home" desktop, under NT (no effect under 9x)
 	HDESK home_desktop = GetThreadDesktop(GetCurrentThreadId());
 
