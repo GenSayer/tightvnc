@@ -56,13 +56,24 @@ typedef unsigned char  CARD8;
 
 #ifdef LITTLE_ENDIAN_HOST
 
-#define Swap16IfLE(s) \
-    ((CARD16) ((((s) & 0xff) << 8) | (((s) >> 8) & 0xff)))
-#define Swap32IfLE(l) \
-    ((CARD32) ((((l) & 0xff000000) >> 24) | \
-     (((l) & 0x00ff0000) >> 8)  | \
-	 (((l) & 0x0000ff00) << 8)  | \
-	 (((l) & 0x000000ff) << 24)))
+// MSVC 4.x for PowerPC NT miscompiles the shift/mask swap macros: the
+// 32-bit one drops bit 7 of the least significant input byte (0x8d came out
+// as 0x0d in the top byte). Swap through byte accesses on a memory copy.
+__inline CARD16 RfbSwap16(CARD16 v)
+{
+	unsigned char *p = (unsigned char *) &v;
+	return (CARD16) (((CARD16) p[0] << 8) | (CARD16) p[1]);
+}
+
+__inline CARD32 RfbSwap32(CARD32 v)
+{
+	unsigned char *p = (unsigned char *) &v;
+	return ((CARD32) p[0] << 24) | ((CARD32) p[1] << 16) |
+		((CARD32) p[2] << 8) | (CARD32) p[3];
+}
+
+#define Swap16IfLE(s) RfbSwap16((CARD16)(s))
+#define Swap32IfLE(l) RfbSwap32((CARD32)(l))
 
 #else
 
