@@ -1243,6 +1243,11 @@ vncClient::HandleOneMessage()
 		{
 			vnclog.Print(LL_INTINFO, VNCLOG("KeyEvent message received\n"));
 
+			// Real keystrokes may leave or change the menu loop, so stop
+			// trusting the tracked menu-bar position.
+			m_menuBarWindow = NULL;
+			m_menuBarIdx = -1;
+
 			// ==============================================================
 			// WIN32S DIAGNOSTIC: report the RAW BYTES of the key message.
 			//
@@ -1428,6 +1433,12 @@ vncClient::HandleOneMessage()
 					// non-client branch below), move the window too.  This replaces
 					// the system's modal move loop, which cannot be driven by
 					// posted messages - see the long note there.
+					// WIN32S: safety net for a lost release - see the clear
+					// after the resize block.  It must run AFTER the move
+					// below, because the release event carries the final drop
+					// position and the window must be placed there first.
+					BOOL leftHeld = (msg.pe.buttonMask & rfbButton1Mask) != 0;
+
 					if ((flags & MOUSEEVENTF_MOVE) && m_dragWindow != NULL)
 					{
 						if (IsWindow(m_dragWindow))
@@ -1459,6 +1470,18 @@ vncClient::HandleOneMessage()
 										 0, 0,
 										 SWP_NOSIZE | SWP_NOZORDER |
 										 SWP_NOACTIVATE);
+							// The title is a sibling of the icon, so the same
+							// (screen or parent-client) origin plus the stored
+							// offset applies.
+							if (m_dragTitle != NULL && IsWindow(m_dragTitle))
+							{
+								SetWindowPos(m_dragTitle, NULL,
+											 newX + m_dragTitleDX,
+											 newY + m_dragTitleDY,
+											 0, 0,
+											 SWP_NOSIZE | SWP_NOZORDER |
+											 SWP_NOACTIVATE);
+							}
 						}
 						else
 						{
@@ -1532,6 +1555,13 @@ vncClient::HandleOneMessage()
 									 r.right - r.left, r.bottom - r.top,
 									 SWP_NOZORDER | SWP_NOACTIVATE);
 						}
+					}
+
+					// Lost-release safety net, now AFTER the final placement.
+					if (!leftHeld)
+					{
+						m_dragWindow = NULL;
+						m_resizeActive = FALSE;
 					}
 
 					// WIN32S scrollbar thumb tracking (started in the non-client
@@ -1718,6 +1748,17 @@ vncClient::HandleOneMessage()
 							m_resizeActive = FALSE;
 						}
 
+						// Any press that is not on a menu-bar title ends the menu
+						// session we were tracking (item chosen, click away...).
+						if ((buttonBitsOnly & (MOUSEEVENTF_LEFTDOWN |
+											   MOUSEEVENTF_RIGHTDOWN |
+											   MOUSEEVENTF_MIDDLEDOWN)) &&
+							!(nonClient && hit == HTMENU))
+						{
+							m_menuBarWindow = NULL;
+							m_menuBarIdx = -1;
+						}
+
 						if (nonClient)
 						{
 							// ======================================
@@ -1865,6 +1906,58 @@ vncClient::HandleOneMessage()
 										GetWindowRect(target, &wr);
 										m_dragOffsetX = (int)msg.pe.x - wr.left;
 										m_dragOffsetY = (int)msg.pe.y - wr.top;
+
+										// WIN32S: a minimized program on the desktop is
+										// TWO windows - the 32x32 icon and a separate
+										// icon-title window beneath it.  Windows 3.1's
+										// SetWindowPos moves only the icon, which left
+										// the label behind (the "dragged icon never
+										// completes" screenshot).  Find the title - by
+										// class first, then by sitting just under the
+										// icon - and remember its offset so the move
+										// code can carry it along.
+										m_dragTitle = NULL;
+										// Progman group icons (MDI children) have the
+										// same two-window structure, with the title a
+										// sibling inside the MDIClient, so search the
+										// icon's own sibling list.
+										if (IsIconic(target))
+										{
+											HWND c;
+											HWND sibParent = GetParent(target);
+											for (c = GetWindow(sibParent != NULL ? sibParent
+																		: GetDesktopWindow(),
+																GW_CHILD);
+												 c != NULL; c = GetWindow(c, GW_HWNDNEXT))
+											{
+												RECT cr;
+												char cls[32];
+												int cx, icx;
+												if (c == target || !IsWindowVisible(c) ||
+													IsIconic(c))
+													continue;
+												GetWindowRect(c, &cr);
+												cls[0] = '\0';
+												GetClassName(c, cls, sizeof(cls) - 1);
+												cx = (cr.left + cr.right) / 2;
+												icx = (wr.left + wr.right) / 2;
+												if (cr.top >= wr.bottom - 4 &&
+													cr.top <= wr.bottom + 12 &&
+													abs(cx - icx) <= (wr.right - wr.left) &&
+													(lstrcmp(cls, "#32772") == 0 ||
+													 m_dragTitle == NULL))
+												{
+													m_dragTitle = c;
+													m_dragTitleDX = cr.left - wr.left;
+													m_dragTitleDY = cr.top - wr.top;
+													vnclog.Print(LL_INTINFO,
+														VNCLOG("icon title window class '%s'\n"),
+														cls);
+													if (lstrcmp(cls, "#32772") == 0)
+														break;
+												}
+											}
+										}
 									}
 									break;
 
@@ -1911,9 +2004,124 @@ vncClient::HandleOneMessage()
 									// a specific menu title, but it makes menus
 									// reachable, and keyboard navigation works from
 									// there.
-									Win32sSetForegroundWindow(target);
-									PostMessage(target, WM_SYSCOMMAND,
-												(WPARAM)SC_KEYMENU, (LPARAM)0);
+									//
+									// WIN32S: pick the clicked title by measuring the
+									// menu bar, then step to it with Right-arrow keys
+									// posted behind SC_KEYMENU.  (HiliteMenuItem was
+									// considered and rejected: it only repaints, the
+									// tracking loop still starts at the first item.)
+									// The title widths are an ESTIMATE of the system's
+									// layout (no GetMenuItemRect before Win95), so the
+									// padding constant below may need tuning.
+									{
+										int steps = 0;
+										int n = 0;
+										HMENU hMenu = GetMenu(target);
+										if (hMenu != NULL)
+										{
+											n = GetMenuItemCount(hMenu);
+											HDC hdc = GetDC(target);
+											if (hdc != NULL && n > 1)
+											{
+												HFONT oldFont = (HFONT)SelectObject(hdc,
+													GetStockObject(SYSTEM_FONT));
+												TEXTMETRIC tm;
+												GetTextMetrics(hdc, &tm);
+												RECT wr;
+												GetWindowRect(target, &wr);
+												int x0 = wr.left + GetSystemMetrics(SM_CXFRAME);
+												int i;
+												for (i = 0; i < n; i++)
+												{
+													char txt[64];
+													char shown[64];
+													int j = 0, k;
+													txt[0] = '\0';
+													GetMenuString(hMenu, i, txt,
+																  sizeof(txt) - 1,
+																  MF_BYPOSITION);
+													// Drop '&' mnemonic markers.
+													for (k = 0; txt[k] != '\0'; k++)
+														if (txt[k] != '&' ||
+															(k > 0 && txt[k - 1] == '&'))
+															shown[j++] = txt[k];
+													shown[j] = '\0';
+													SIZE sz;
+													GetTextExtentPoint(hdc, shown, j, &sz);
+													int w = sz.cx + tm.tmAveCharWidth * 2;
+													if (pt.x < x0 + w || i == n - 1)
+													{
+														steps = i;
+														break;
+													}
+													x0 += w;
+												}
+												SelectObject(hdc, oldFont);
+											}
+											if (hdc != NULL)
+												ReleaseDC(target, hdc);
+										}
+										// 'steps' is the clicked title's index.  If we
+										// already left the tracking loop open on this
+										// window (earlier title click, nothing else
+										// pressed since), the loop is sitting on
+										// m_menuBarIdx, NOT on the first title - so
+										// SC_KEYMENU must not be sent again and the
+										// Right-arrow count is relative to the current
+										// highlight, wrapping past the last title.
+										// (Clicking Window after Options used to
+										// overshoot to Help for exactly this reason.)
+										BOOL wasOpen = (m_menuBarWindow == target &&
+														m_menuBarIdx >= 0 && n > 0);
+										int clicked = steps;
+										Win32sSetForegroundWindow(target);
+										if (wasOpen && clicked == m_menuBarIdx)
+										{
+											// Click on the active title closes the menu.
+											PostMessage(target, WM_KEYDOWN, VK_ESCAPE, 0x00010001L);
+											PostMessage(target, WM_KEYUP, VK_ESCAPE, 0xC0010001L);
+											PostMessage(target, WM_KEYDOWN, VK_ESCAPE, 0x00010001L);
+											PostMessage(target, WM_KEYUP, VK_ESCAPE, 0xC0010001L);
+											m_menuBarWindow = NULL;
+											m_menuBarIdx = -1;
+											steps = 0;
+										}
+										else
+										{
+											if (wasOpen && clicked < m_menuBarIdx)
+											{
+												// Backwards: use Left arrows.  Wrapping
+												// with Right is unreliable - on 3.1 the
+												// loop passes through the control-menu
+												// box between the last and first titles,
+												// which is why Help -> Options landed
+												// on File.
+												int back = m_menuBarIdx - clicked;
+												steps = 0;
+												while (back-- > 0)
+												{
+													PostMessage(target, WM_KEYDOWN, VK_LEFT,
+																0x014B0001L);
+													PostMessage(target, WM_KEYUP, VK_LEFT,
+																0xC14B0001L);
+												}
+											}
+											else if (wasOpen)
+												steps = clicked - m_menuBarIdx;
+											else
+												PostMessage(target, WM_SYSCOMMAND,
+															(WPARAM)SC_KEYMENU, (LPARAM)0);
+											m_menuBarWindow = target;
+											m_menuBarIdx = clicked;
+										}
+										while (steps-- > 0)
+										{
+											PostMessage(target, WM_KEYDOWN, VK_RIGHT,
+														0x014D0001L);
+											PostMessage(target, WM_KEYUP, VK_RIGHT,
+														0xC14D0001L);
+										}
+									}
 									break;
 
 								case HTMINBUTTON:
@@ -3105,6 +3313,10 @@ vncClient::vncClient()
 
 	// WIN32S input synthesis state.
 	m_dragWindow = NULL;
+	m_dragTitle = NULL;
+	m_dragTitleDX = m_dragTitleDY = 0;
+	m_menuBarWindow = NULL;
+	m_menuBarIdx = -1;
 	m_dragOffsetX = 0;
 	m_dragOffsetY = 0;
 	m_resizeWindow = NULL;

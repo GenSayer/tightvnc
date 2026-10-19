@@ -256,6 +256,11 @@ protected:
 	// Caption drag: the window being dragged, and the grab point relative to its
 	// top-left corner.  NULL when no drag is in progress.
 	HWND			m_dragWindow;
+	HWND			m_menuBarWindow;	// window whose menu bar we believe is active
+	HWND			m_dragTitle;		// icon-title window travelling with a dragged icon
+	int				m_dragTitleDX;
+	int				m_dragTitleDY;
+	int				m_menuBarIdx;		// highlighted title there, -1 if none
 	int				m_dragOffsetX;
 	int				m_dragOffsetY;
 

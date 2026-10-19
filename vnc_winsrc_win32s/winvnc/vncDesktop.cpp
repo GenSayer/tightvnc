@@ -1978,6 +1978,12 @@ vncDesktop::GetRichCursorData(BYTE *databuf, HCURSOR hcursor, int width, int hei
 		return FALSE;
 	}
 
+	// WIN32S: CreateCompatibleBitmap does not guarantee zeroed contents - some
+	// drivers (S3, Matrox) hand back video-memory-backed bitmaps with stale data.
+	// DI_IMAGE on a monochrome cursor XORs the image onto whatever is there, so a
+	// non-black start turns the white parts of the cursor black.  Clear first.
+	PatBlt(m_hmemdc, 0, 0, width, height, BLACKNESS);
+
 	// Draw the cursor
 	DrawIconEx(m_hmemdc, 0, 0, hcursor, 0, 0, 0, NULL, DI_IMAGE);
 	SelectObject(m_hmemdc, oldbitmap);
