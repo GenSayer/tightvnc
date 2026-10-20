@@ -57,6 +57,45 @@ FileTransfer::~FileTransfer()
 	m_FTServerItemInfo.Free();
 }
 
+#ifndef BS_PUSHBUTTON
+#define BS_PUSHBUTTON 0x00000000L
+#endif
+#ifndef BS_ICON
+#define BS_ICON 0x00000040L
+#endif
+#ifndef BS_BITMAP
+#define BS_BITMAP 0x00000080L
+#endif
+
+// LoadImage is not exported by NT 3.x, so resolve it at runtime and fall
+// back to LoadIcon.
+typedef HANDLE (WINAPI *pfnLoadImageA)(HINSTANCE hInst, LPCSTR name, UINT type, int cx, int cy, UINT fuLoad);
+static pfnLoadImageA MyLoadImageA = NULL;
+static BOOL MyLoadImageAResolved = FALSE;
+
+static BOOL IsPreNT4(void)
+{
+	return (GetVersion() & 0xFF) < 4;
+}
+
+static HANDLE MyLoadImageIcon(HINSTANCE hInst, LPCSTR name, int cx, int cy)
+{
+	if (!MyLoadImageAResolved) {
+		HMODULE hUser32 = GetModuleHandle("user32.dll");
+		if (hUser32) {
+			MyLoadImageA = (pfnLoadImageA)GetProcAddress(hUser32, "LoadImageA");
+		}
+		MyLoadImageAResolved = TRUE;
+	}
+	if (MyLoadImageA != NULL) {
+		HANDLE hImage = MyLoadImageA(hInst, name, IMAGE_ICON, cx, cy, LR_SHARED);
+		if (hImage != NULL) {
+			return hImage;
+		}
+	}
+	return LoadIcon(hInst, name);
+}
+
 void
 FileTransfer::CreateFileTransferDialog()
 {
@@ -82,14 +121,27 @@ FileTransfer::CreateFileTransferDialog()
 	ListView_SetExtendedListViewStyleEx(m_hwndFTClientList, LVS_EX_FULLROWSELECT, LVS_EX_FULLROWSELECT);
 	ListView_SetExtendedListViewStyleEx(m_hwndFTServerList, LVS_EX_FULLROWSELECT, LVS_EX_FULLROWSELECT);
 
-	HANDLE hIcon = LoadImage(m_pApp->m_instance, MAKEINTRESOURCE(IDI_FILEUP), IMAGE_ICON, 16, 16, LR_SHARED);
+	HANDLE hIcon = MyLoadImageIcon(m_pApp->m_instance, MAKEINTRESOURCE(IDI_FILEUP), 16, 16);
 	SendMessage(GetDlgItem(m_hwndFileTransfer, IDC_CLIENTUP), BM_SETIMAGE, (WPARAM) IMAGE_ICON, (LPARAM) hIcon);
 	SendMessage(GetDlgItem(m_hwndFileTransfer, IDC_SERVERUP), BM_SETIMAGE, (WPARAM) IMAGE_ICON, (LPARAM) hIcon);
-	DestroyIcon((HICON) hIcon);
-	hIcon = LoadImage(m_pApp->m_instance, MAKEINTRESOURCE(IDI_FILERELOAD), IMAGE_ICON, 16, 16, LR_SHARED);
-	SendMessage(GetDlgItem(m_hwndFileTransfer, IDC_CLIENTRELOAD), BM_SETIMAGE, (WPARAM) IMAGE_ICON, (LPARAM) hIcon);
-	SendMessage(GetDlgItem(m_hwndFileTransfer, IDC_SERVERRELOAD), BM_SETIMAGE, (WPARAM) IMAGE_ICON, (LPARAM) hIcon);
-	DestroyIcon((HICON) hIcon);
+	HANDLE hIconReload = MyLoadImageIcon(m_pApp->m_instance, MAKEINTRESOURCE(IDI_FILERELOAD), 16, 16);
+	SendMessage(GetDlgItem(m_hwndFileTransfer, IDC_CLIENTRELOAD), BM_SETIMAGE, (WPARAM) IMAGE_ICON, (LPARAM) hIconReload);
+	SendMessage(GetDlgItem(m_hwndFileTransfer, IDC_SERVERRELOAD), BM_SETIMAGE, (WPARAM) IMAGE_ICON, (LPARAM) hIconReload);
+	if (IsPreNT4()) {
+		// BS_ICON buttons don't display on NT 3.x, use text captions instead.
+		int ids[] = { IDC_CLIENTUP, IDC_SERVERUP, IDC_CLIENTRELOAD, IDC_SERVERRELOAD };
+		const char *texts[] = { "Up", "Up", "Ref", "Ref" };
+		for (int bi = 0; bi < 4; bi++) {
+			HWND hBtn = GetDlgItem(m_hwndFileTransfer, ids[bi]);
+			if (hBtn != NULL) {
+				SetWindowLong(hBtn, GWL_STYLE, (GetWindowLong(hBtn, GWL_STYLE) & ~(BS_ICON | BS_BITMAP)) | BS_PUSHBUTTON);
+				SetWindowText(hBtn, texts[bi]);
+			}
+		}
+	} else {
+		DestroyIcon((HICON) hIcon);
+		DestroyIcon((HICON) hIconReload);
+	}
 
 	RECT Rect;
 	GetClientRect(m_hwndFTClientList, &Rect);
