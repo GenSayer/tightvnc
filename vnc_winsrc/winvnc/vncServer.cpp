@@ -43,20 +43,19 @@
 #include "vncClient.h"
 #include "vncService.h"
 
-#ifndef HMONITOR
+// HMONITOR / MONITORINFO are only declared by SDKs with multimon support
+// (WINVER >= 0x0500). Plain VC6 (also used for DEC Alpha builds, where no SDK
+// newer than Win2000 RC2 exists) lacks them, while VS2015+ (ARM) already has
+// them and would fail on redefinition. MONITOR_DEFAULTTONEAREST is a real
+// macro defined together with them, so it is a reliable discriminator.
+#ifndef MONITOR_DEFAULTTONEAREST
 DECLARE_HANDLE(HMONITOR);
-#endif
-
-#ifndef MONITORINFO
 typedef struct tagMONITORINFO {
 	DWORD cbSize;
 	RECT rcMonitor;
 	RECT rcWork;
 	DWORD dwFlags;
 } MONITORINFO, *LPMONITORINFO;
-#endif
-
-#ifndef MONITOR_DEFAULTTONEAREST
 #define MONITOR_DEFAULTTONEAREST 0x00000002
 #endif
 
@@ -1736,9 +1735,14 @@ BOOL vncServer::SetShareMonitorFromPoint(POINT pt)
 		FreeLibrary(hInstUser32);
 		return FALSE;
 	}
-	MONITORINFO	moninfo;
+
+	// Explicitly reference the global namespace tag to avoid macro hijacking
+	struct tagMONITORINFO moninfo;
+	memset(&moninfo, 0, sizeof(moninfo));
 	moninfo.cbSize = sizeof(moninfo);
-	if (!pGMI(hm, &moninfo))
+
+	// Cast specifically to LPMONITORINFO to satisfy older structural alignments 
+	if (!pGMI(hm, (LPMONITORINFO)&moninfo))
 	{
 		FreeLibrary(hInstUser32);
 		return FALSE;
@@ -1749,11 +1753,12 @@ BOOL vncServer::SetShareMonitorFromPoint(POINT pt)
 	ScreenAreaShared(TRUE);
 	PrimaryDisplayOnlyShared(FALSE);
 
-	SetMatchSizeFields(
-		moninfo.rcMonitor.left,
-		moninfo.rcMonitor.top,
-		moninfo.rcMonitor.right,
-		moninfo.rcMonitor.bottom);
+	// Explicitly resolve parameters as standard primitive data types 
+	this->SetMatchSizeFields(
+		(int)moninfo.rcMonitor.left,
+		(int)moninfo.rcMonitor.top,
+		(int)moninfo.rcMonitor.right,
+		(int)moninfo.rcMonitor.bottom);
 
 	FreeLibrary(hInstUser32);
 	return TRUE;
