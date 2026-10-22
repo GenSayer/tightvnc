@@ -3,18 +3,6 @@ This is a specialized, unofficial, comprehensive fork of TightVNC 1.3.10 built n
 
 > Looking for the official, untouched upstream x86 TightVNC 1.3.10 source and binaries?
 > You can grab them from the [Official TightVNC Archive](https://www.tightvnc.com/download-old.php).
-
-## Repository Branch Guide
-Because each legacy and modern architecture requires unique toolchains, compiler workarounds, and source code tweaks (see Notes for why I separated the branches), each platform has it's own dedicated development branch. To view the source code or compile for a specific platform, switch to its corresponding branch using the branch dropdown menu at the top of this repository:
-- main – The default branch containing this README, overall status updates, and universal project documentation.
-- AMD64 – Native 64-bit Windows development.
-- ARM64 – Modern Windows on ARM devices.
-- ARM – ARM32 Windows configurations.
-- IA64 – Intel Itanium platform code and fixes.
-- AXP & AXP64 – Vintage DEC Alpha (32-bit and 64-bit) Windows NT/2000 adaptations.
-- PowerPC – Vintage Windows NT PowerPC adaptations.
-- MIPS – Vintage NT MIPS adaptations & compiler workarounds.
-- win32s - Specialized Windows 3.1x win32s port of TightVNC 1.3.10.
   
 ## Supported Windows Architectures
 This project provides native binaries compiled explicitly for the following target environments:
