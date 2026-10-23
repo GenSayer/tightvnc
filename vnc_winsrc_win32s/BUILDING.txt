@@ -62,3 +62,19 @@ HtmlHelp.h and HtmlHelp.lib. Copy both files to the following folders:
 
 After zlib, JPEG and HtmlHelp files are in place, the source is ready
 to compile with either MS Visual C++ 6.0 or MS Visual C++ 2008.
+
+
+Command-line build (NMAKE)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+As an alternative to the Developer Studio files, build.cmd drives a set of
+hand-written win32s.mak files (shared settings in win32s.inc).  With the
+Visual C++ environment set (PATH, INCLUDE, LIB), from this directory:
+
+    build.cmd [debug]
+
+Output goes to Rel_i386 or Dbg_i386 in each directory.  VNCHooks.dll is not
+built by this route, as with the per-directory build.cmd files.  Each
+directory can also be
+built on its own: nmake /f win32s.mak [DEBUG=1].  The existing .mak,
+.dsp and per-directory build.cmd files are unchanged.
