@@ -1,0 +1,163 @@
+
+  TightVNC version 1.3.10 - VC++ 2.x tree (vnc_winsrc_vc2)
+  BUILDING vncviewer and WinVNC for Windows NT 3.1 and Win32s 1.15a+
+
+======================================================================
+
+  What this tree is
+  ~~~~~~~~~~~~~~~~~
+
+A copy of vnc_winsrc_win32s (the MSVC 4.1 Win32s port) adapted to build
+with Visual C++ 2.x for x86, MIPS and Alpha, so that one set of binaries
+per CPU runs on:
+
+  * Windows NT 3.1 and later (x86, MIPS, Alpha)
+  * Windows 3.1x with Win32s 1.15a, 1.2 or 1.30 (x86)
+  * Windows 95/98/Me (x86)
+
+Platform differences are decided at RUN TIME, not at build time:
+
+                         NT (3.1+)                Win32s
+  Screen changes         VNCHooks.dll + polling   polling only
+  Service mode           -install / -service      "not available" message
+  Settings               registry                 WINVNC.INI next to the EXE
+  Tray icon              NT 4.0+ only; NT 3.x     minimised window with a
+                         gets the msvc4 tree's    status line; right-click
+                         fallback: a minimised    or double-click it for
+                         window whose system      the menu
+                         menu has the tray
+                         commands (restore it
+                         for Properties)
+
+All APIs newer than NT 3.1 / Win32s 1.15a are looked up by name at run time
+(winvnc\Win32sApi.cpp, vncviewer\Win32sApi.cpp, winvnc\VNCHooksStub.cpp),
+so none of them appears in an import table.
+
+The .mak.prewin32s / .rc.prewin32s / vncService.cpp.nt-original files are
+the pre-Win32s originals, kept for reference.  They are not built.
+
+  Requirements
+  ~~~~~~~~~~~~
+
+  * Visual C++ 2.0, 2.1 or 2.2 (the x86 edition, or the MIPS / Alpha RISC
+    editions for those CPUs), with its environment set up (PATH, INCLUDE,
+    LIB - e.g. MSVCVARS.BAT / VCVARS32.BAT).
+
+  * Nothing extra for the common controls.  VC++ 2.x's commctrl.h predates
+    the list view, tree view, tab, up-down, trackbar and progress controls
+    the dialogs use, so vc2commctl.h (in vncviewer\ and winvnc\) supplies the
+    Windows 95 / NT 3.51 declarations for whatever the installed commctrl.h
+    lacks.  It is included after every commctrl.h and by the viewer's .rc.
+
+  Common controls at run time (vc2ctl)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+NT 3.1 has none of those controls and no CreateToolbarEx, and a dialog that
+names a missing control class cannot be created at all.  NT 3.51's COMCTL32
+does not run on NT 3.1 and is unreliable on NT 3.5.  So the tree has its own
+implementation of what the two programs use, in vc2ctl\ (built as
+vc2ctl.lib and linked into both):
+
+    tab control, trackbar, up-down, progress bar, list view (report view),
+    tree view, and the viewer's toolbar with its tooltips
+
+They are registered as application-local classes under the standard names,
+so the dialog templates and the code that drives them are unchanged.
+
+                         Built-in controls used
+  NT 3.1, NT 3.5         always (a copied NT 3.51 COMCTL32 is ignored)
+  NT 3.51, NT 4, Win9x   only for a control COMCTL32 does not provide
+  Win32s                 only for a control COMCTL32 does not provide (so:
+                         all of them when COMCTL32.DLL is absent)
+
+On NT before 4.0 and on Win32s the Options and Properties dialogs also get
+keyboard navigation into their tab pages (Tab / Shift+Tab, arrow keys,
+Ctrl+Tab to switch pages), which those systems cannot do by themselves.
+
+The built-ins use only NT 3.1 / Win32s 1.15a USER and GDI calls; see the
+rules at the top of vc2ctl\vc2ctli.h before changing them.
+
+zlib, libjpeg and omnithread are included in the tree.  HTML Help has been
+removed from this port (no HtmlHelp.h, no VNCHelp, no WM_HELP handling).
+
+  Building
+  ~~~~~~~~
+
+From the vnc_winsrc_vc2 directory:
+
+    build.cmd i386            release build for x86
+    build.cmd MIPS            release build for MIPS
+    build.cmd ALPHA           release build for Alpha
+    build.cmd i386 debug      unoptimised build with debug info
+
+With no CPU argument PROCESSOR_ARCHITECTURE picks one.  Each directory gets
+its output in Rel_<CPU> (or Dbg_<CPU>), so builds for different CPUs can
+live side by side.  The results are:
+
+    vncviewer\Rel_<CPU>\vncviewer.exe
+    winvnc\Rel_<CPU>\WinVNC.exe
+    winvnc\Rel_<CPU>\VNCHooks.dll       (copied there by build.cmd)
+
+Ship VNCHooks.dll next to WinVNC.exe for NT.  On Win32s it is never loaded
+and may be left out.
+
+Each directory can also be built on its own:
+
+    cd winvnc
+    nmake /f vc2.mak CPU=i386 [DEBUG=1] [WITH_JAVA_VIEWER=]
+
+(build ..\vc2ctl and the omnithread, zlib, libjpeg and VNCHooks
+subdirectories first).
+Shared settings are in vc2.inc.
+
+  Compiler switches that may need adjusting
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  * win32s_fix.h is force-included with /FI (the FORCEINC macro in
+    vc2.inc).  It supplies bool/true/false and Win95-era constants and must
+    be seen before windows.h.  If your cl rejects /FI, report it: the
+    include then has to be added to the top of each source file.
+
+  * There is no debug CRT before VC++ 4.0, so both configurations link
+    libc.lib (/ML).  <crtdbg.h> is only included when _MSC_VER >= 1000;
+    win32s_fix.h stubs the _RPTn / _ASSERT macros otherwise.
+
+  * _snprintf / _vsnprintf are used throughout.  If the VC++ 2.x CRT turns
+    out not to have them, report it and a bounded fallback will be added.
+
+  Checking the import tables
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+VC++ 2.x's import libraries describe NT 3.5, so a missing function on NT
+3.1 or Win32s 1.15a is NOT a link error - the EXE simply fails to load on
+the target, usually silently.  After building, check each image against the
+target's real DLLs:
+
+    tools/checkimports.sh tools/exports/nt31-x86 winvnc/Rel_i386/WinVNC.exe \
+        winvnc/Rel_i386/VNCHooks.dll vncviewer/Rel_i386/vncviewer.exe
+
+See tools/exports/README.txt for how to capture the export lists, and for
+MIPS/Alpha (use dumpbin /imports listings).
+
+  Known limitations
+  ~~~~~~~~~~~~~~~~~
+
+  * The server is single-threaded (inherited from the Win32s port).  As an
+    NT service it serves the desktop that is current when it starts
+    capturing; it cannot follow a switch to the Winlogon desktop or a
+    locked workstation, and clients are dropped while that desktop is
+    active - the same as WinVNC in application mode.
+
+  * Ctrl+Alt+Del simulation needs NT's desktop API; it is unavailable on
+    Win32s and on any NT that lacks it.
+
+  * ImpersonateLoggedOnUser is NT 3.51+.  On NT 3.1 / 3.5 the service-helper
+    cannot load per-user settings, so a service uses the default settings.
+
+  * The built-in controls (see above) look like their NT 3.x counterparts
+    rather than Windows 95 ones, show the list view in report view only, and
+    have no image lists - which is all the dialogs use.
+
+  * The "local input takes priority" hooks are not enabled (their message
+    handler was removed in the Win32s port).  "Disable local input" works on
+    NT through VNCHooks.dll.

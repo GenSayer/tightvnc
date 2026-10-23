@@ -25,6 +25,7 @@ This project provides native binaries compiled explicitly for the following targ
 | PowerPC | IBM / Motorola / Mac & Wii Systems | Legacy Windows NT 3.51 / 4.0 PowerPC editions. |
 | MIPS | MIPS R4000 and higher | Legacy Windows NT 3.51 / 4.0 MIPS editions. |
 | win32s | Intel 386+ | Windows 3.1x with Win32s (1.30 recommended, prior versions untested) |
+| x86 / MIPS / AXP (VC++ 2.x) | Windows NT 3.1+ and Win32s 1.15a+ | Work in progress in `vnc_winsrc_vc2`: one binary per CPU for NT 3.1 and early Win32s (see its BUILDING.txt). |
 
 ## Features & Enhancements
 * Native Execution: No emulation layers or performance overhead; built explicitly for each instruction set for maximum performance on each architecture.
@@ -42,6 +43,7 @@ I have every port separated into separate branches because that is how I origina
 
 ### Toolchains used:
 * PowerPC/MIPS/win32s: MSVC 4.1 with the Windows NT 4.0 SDK and the Microsoft Internet Explorer 3.01 Internet Client SDK for wininet.h for the OS architecture corresponding versions
+* NT 3.1 / early Win32s (x86, MIPS, AXP): Visual C++ 2.x (`vnc_winsrc_vc2`, work in progress)
 * AXP: Visual Studio 6.0 for DEC Alpha Platforms with the October 1999 Microsoft Platform SDK
 * AXP64: The AXP64 cross-compiler from the October 1999 Platform SDK, which is a very early version of the MSVC 7.0 compiler
 * IA64: MSVC 7.1 cross-compiler from the February 2003 Platform SDK

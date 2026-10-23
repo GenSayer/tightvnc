@@ -1,0 +1,20 @@
+; VNCHooks.def : Declares the module parameters for the DLL.
+
+LIBRARY      "VNCHooks"
+; DESCRIPTION  'WinVNC 3.0 Hook Library'
+
+SECTIONS
+	.SharedData read write shared
+
+; Named here rather than with __declspec(dllexport) so the export names are
+; the plain extern "C" names that winvnc/VNCHooksStub.cpp passes to
+; GetProcAddress.
+EXPORTS
+	SetHook
+	UnSetHook
+	SetKeyboardFilterHook
+	SetMouseFilterHook
+	SetKeyboardPriorityHook
+	SetMousePriorityHook
+	SetKeyboardPriorityLLHook
+	SetMousePriorityLLHook
