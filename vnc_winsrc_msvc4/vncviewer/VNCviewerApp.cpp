@@ -28,6 +28,9 @@
 #include "VNCviewerApp.h"
 #include "Exception.h"
 #include <commctrl.h>
+#ifdef USE_VC2CTL
+#include "vc2gate.h"	// built-in common controls on NT before 3.51
+#endif
 
 // For WinCE Palm, you might want to use this for debugging, since it
 // seems impossible to give the command some arguments.
@@ -39,7 +42,13 @@ VNCviewerApp::VNCviewerApp(HINSTANCE hInstance, LPTSTR szCmdLine) {
 	pApp = this;
 	m_instance = hInstance;
 
+#ifdef USE_VC2CTL
+	// Before any window exists: on NT before 3.51 this registers the built-in
+	// controls the toolbar and the dialogs use; elsewhere it loads COMCTL32.
+	Vc2GateInitCommonControls(VC2CTL_ALL);
+#else
 	InitCommonControls();
+#endif
 
 	// Read the command line
 	m_options.SetFromCommandLine(szCmdLine);

@@ -40,6 +40,9 @@
 #include "vncServer.h"
 #include "vncPasswd.h"
 #include "commctrl.h"
+#ifdef USE_VC2CTL
+#include "vc2gate.h"	// built-in common controls on NT before 3.51
+#endif
 
 // ============================================================================
 // TCITEM Structure Mapping Fallback for Legacy Toolchains (CommCtrl)
@@ -292,7 +295,11 @@ vncProperties::ParentDlgProc(HWND hwnd,
 			_this->m_hDialog = hwnd;
 			_this->m_dlgvisible = TRUE;
 
+#ifdef USE_VC2CTL
+			Vc2GateInitCommonControls(VC2CTL_TAB);
+#else
 			InitCommonControls();
+#endif
 
 			_this->m_hTab = GetDlgItem(hwnd, IDC_TAB);
 
@@ -362,6 +369,21 @@ vncProperties::ParentDlgProc(HWND hwnd,
 						 rc.right - rc.left, rc.bottom - rc.top,
 						 (tab_id == 4) ? SWP_SHOWWINDOW : SWP_HIDEWINDOW);
 
+#ifdef USE_VC2CTL
+			// NT before 3.51 does not honour WS_EX_CONTROLPARENT, so Tab
+			// cannot reach the pages' controls; vc2ctl's message-filter hook
+			// does it there.  Not used on NT 3.51 and later.
+			if (Vc2CtlForceBuiltins()) {
+				HWND pages[5];
+				pages[0] = _this->m_hIncoming;
+				pages[1] = _this->m_hPoll;
+				pages[2] = _this->m_hShared;
+				pages[3] = _this->m_hQuerySettings;
+				pages[4] = _this->m_hAdministration;
+				Vc2CtlBeginPagedDialog(hwnd, _this->m_hTab, pages, 5);
+			}
+#endif
+
 			// Set the dialog box's title to indicate which Properties we're editting
 			if (_this->m_usersettings) {
 				SetWindowText(hwnd, "TightVNC Server: Current User Properties");
@@ -375,7 +397,12 @@ vncProperties::ParentDlgProc(HWND hwnd,
 			// we set the keyboard focus explicitly (on the password field).
 			return (tab_id != 0);
 		}
-	case WM_HELP:	
+#ifdef USE_VC2CTL
+	case WM_DESTROY:
+		Vc2CtlEndPagedDialog(hwnd);
+		return FALSE;
+#endif
+	case WM_HELP:
 		VNCHelp::Popup(lParam);
 		return 0;
     case WM_NOTIFY:

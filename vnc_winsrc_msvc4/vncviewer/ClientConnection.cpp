@@ -50,6 +50,9 @@
 #include "AboutBox.h"
 #include "FileTransfer.h"
 #include "commctrl.h"
+#ifdef USE_VC2CTL
+#include "vc2ctl.h"		// built-in toolbar on NT before 3.51
+#endif
 #include "Exception.h"
 extern "C" {
 #include "vncauth.h"
@@ -77,6 +80,13 @@ HWND WINAPI MyCreateToolbarEx_fallback(HWND hwndParent, DWORD ws, UINT wID, int 
 	return NULL;
 }
 HWND WINAPI MyCreateToolbarEx_init(HWND hwndParent, DWORD ws, UINT wID, int nBitmaps, HINSTANCE hBMInst, UINT wBMID, LPTBBUTTON lpButtons, int iNumButtons, int dxButton, int dyButton, int dxBitmap, int dyBitmap, UINT uStructSize) {
+#ifdef USE_VC2CTL
+	// NT before 3.51: the built-in toolbar from vc2ctl (registered by
+	// VNCviewerApp), never COMCTL32's.
+	if (Vc2CtlForceBuiltins()) {
+		return Vc2CtlCreateToolbarEx(hwndParent, ws, wID, nBitmaps, hBMInst, wBMID, lpButtons, iNumButtons, dxButton, dyButton, dxBitmap, dyBitmap, uStructSize);
+	}
+#endif
 	if (MyCreateToolbarEx == MyCreateToolbarEx_init) {
 		HMODULE hComCtl32 = GetModuleHandle("comctl32.dll");
 		if (!hComCtl32) {

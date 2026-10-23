@@ -169,10 +169,19 @@ static HANDLE MyLoadImageIcon(HINSTANCE hInst, LPCSTR name, int cx, int cy) {
 	}
 	return LoadIcon(hInst, name);
 }
+#ifdef USE_VC2CTL
+// The msvc4.mak build: NT before 3.51 gets the built-in list and tree views
+// from vc2ctl, which keep their own scroll bars, so the NT 3.5 scroll-bar
+// workaround below is switched off.
+static BOOL IsWinNT35(void) {
+	return FALSE;
+}
+#else
 static BOOL IsWinNT35(void) {
 	DWORD winver = GetVersion();
 	return ((winver & 0xFF) == 3) && (((winver >> 8) & 0xFF) < 51);
 }
+#endif
 static void FTUpdateScrollbars(HWND hwndList) {
 	if (!IsWinNT35()) {
 		return;

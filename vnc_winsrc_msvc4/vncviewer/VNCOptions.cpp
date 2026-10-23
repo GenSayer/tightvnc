@@ -33,6 +33,9 @@
 //#include "Htmlhelp.h"
 #include "commctrl.h"
 #include "AboutBox.h"
+#ifdef USE_VC2CTL
+#include "vc2gate.h"	// built-in common controls on NT before 3.51
+#endif
 
 #ifndef TCITEM
 #define TCITEM TC_ITEM
@@ -197,10 +200,19 @@ static void ArgError(LPTSTR msg) {
     	MessageBox(NULL,  msg, _T("Argument error"),MB_OK | MB_TOPMOST | MB_ICONWARNING);
 }
 
+#ifdef USE_VC2CTL
+// The msvc4.mak build: NT before 3.51 gets the built-in trackbar from vc2ctl,
+// which takes the normal TBM_ messages, so the NT 3.5 slider workaround below
+// is switched off.
+static BOOL IsWinNT35(void) {
+	return FALSE;
+}
+#else
 static BOOL IsWinNT35(void) {
 	DWORD winver = GetVersion();
 	return ((winver & 0xFF) == 3) && (((winver >> 8) & 0xFF) < 51);
 }
+#endif
 static void MySlider_SetRange(HWND hwndSlider, int lo, int hi) {
 	if (IsWinNT35())
 		SendMessage(hwndSlider, SBM_SETRANGE, TRUE, MAKELONG(lo, hi));
@@ -694,7 +706,11 @@ BOOL CALLBACK VNCOptions::DlgProc(HWND hwndDlg, UINT uMsg,
 			// to the calling VNCOptions object
 			SetWindowLong(hwndDlg, GWL_USERDATA, lParam);
 			VNCOptions *_this = (VNCOptions *) lParam;
+#ifdef USE_VC2CTL
+			Vc2GateInitCommonControls(VC2CTL_ALL);
+#else
 			InitCommonControls();
+#endif
 			CentreWindow(hwndDlg);
 
 			_this->m_hParent = hwndDlg;
@@ -731,10 +747,28 @@ BOOL CALLBACK VNCOptions::DlgProc(HWND hwndDlg, UINT uMsg,
 						 rc.right - rc.left, rc.bottom - rc.top,
 						 SWP_HIDEWINDOW);
 
+#ifdef USE_VC2CTL
+			// NT before 3.51 does not honour WS_EX_CONTROLPARENT, so Tab
+			// cannot reach the pages' controls; vc2ctl's message-filter hook
+			// does it there.  Not used on NT 3.51 and later.
+			if (Vc2CtlForceBuiltins()) {
+				HWND pages[2];
+				pages[0] = _this->m_hPageConnection;
+				pages[1] = _this->m_hPageGeneral;
+				Vc2CtlBeginPagedDialog(hwndDlg, _this->m_hTab, pages, 2);
+			}
+#endif
+
 			return TRUE;
 		}
 
-	case WM_HELP:	
+#ifdef USE_VC2CTL
+	case WM_DESTROY:
+		Vc2CtlEndPagedDialog(hwndDlg);
+		return FALSE;
+#endif
+
+	case WM_HELP:
 		help.Popup(lParam);
 		return 0;
 

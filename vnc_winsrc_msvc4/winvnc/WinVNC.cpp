@@ -44,6 +44,9 @@
 #include "vncInstHandler.h"
 #include "vncService.h"
 #include <commctrl.h>
+#ifdef USE_VC2CTL
+#include "vc2gate.h"	// built-in common controls on NT before 3.51
+#endif
 
 extern "C" {
 #include "ParseHost.h"
@@ -404,7 +407,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 
 int WinVNCAppMain()
 {
+#ifdef USE_VC2CTL
+	// Here and not only in the Properties dialog: its tab control is created
+	// before WM_INITDIALOG, so on NT before 3.51 the built-in
+	// SysTabControl32 must already be registered.  Elsewhere this loads
+	// COMCTL32.
+	Vc2GateInitCommonControls(VC2CTL_TAB);
+#else
 	InitCommonControls();
+#endif
 
 	// Set this process to be the last application to be shut down.
 	SetProcessShutdownParameters(0x100, 0);
