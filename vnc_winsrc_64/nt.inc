@@ -52,6 +52,8 @@ CPU=i386
 # defines its makefiles use.
 #
 #   MACHINE  /machine: value for the linker.
+#   LMACH    /machine: value for lib.exe; only ARM64EC needs one (lib refuses
+#            the EC objects without it), the others take it from the objects.
 #   EHFLAG   exception handling switch.  /GX is the spelling of the old
 #            compilers; Visual C++ 2005 and later still take it but warn, so
 #            the CPUs that only ever see those use /EHsc (which VC6 knows too).
@@ -68,6 +70,7 @@ CPU=i386
 # to every directory so all objects agree).  Warning level stays /W3.
 !IF "$(CPU)" == "X64"
 MACHINE=/machine:X64
+LMACH=
 EHFLAG=/EHsc
 HHWARN=0
 WINVER=0x0500
@@ -75,6 +78,7 @@ CEXTRA=
 VEXTRA=/DWIN64 /D_WIN64 /D_WIN32_IE=0x600
 !ELSEIF "$(CPU)" == "ARM64"
 MACHINE=/machine:ARM64
+LMACH=
 EHFLAG=/EHsc
 HHWARN=0
 WINVER=0x0500
@@ -82,6 +86,7 @@ CEXTRA=
 VEXTRA=/DWIN64 /D_WIN64 /D_WIN32_IE=0x600
 !ELSEIF "$(CPU)" == "ARM64EC"
 MACHINE=/machine:ARM64EC
+LMACH=/machine:ARM64EC
 EHFLAG=/EHsc
 HHWARN=0
 WINVER=0x0500
@@ -89,6 +94,7 @@ CEXTRA=/arm64EC
 VEXTRA=/DWIN64 /D_WIN64 /D_WIN32_IE=0x600
 !ELSEIF "$(CPU)" == "AXP64"
 MACHINE=/machine:ALPHA64
+LMACH=
 EHFLAG=/GX
 HHWARN=1
 WINVER=0x0500
@@ -96,6 +102,7 @@ CEXTRA=/Ap64 /Gt0 /DWIN64 /D_WIN64 /DWp64 /DAp64 /D_AXP64_ /D_ALPHA64_ /DALPHA
 VEXTRA=
 !ELSEIF "$(CPU)" == "IA64"
 MACHINE=/machine:IA64
+LMACH=
 EHFLAG=/GX
 HHWARN=1
 WINVER=0x0500
@@ -103,6 +110,7 @@ CEXTRA=
 VEXTRA=/DWIN64 /D_WIN64 /D_WIN32_IE=0x600
 !ELSEIF "$(CPU)" == "i386"
 MACHINE=/machine:I386
+LMACH=
 EHFLAG=/GX
 HHWARN=0
 WINVER=0x0400
@@ -110,6 +118,7 @@ CEXTRA=
 VEXTRA=
 !ELSEIF "$(CPU)" == "ALPHA"
 MACHINE=/machine:ALPHA
+LMACH=
 EHFLAG=/GX
 HHWARN=0
 WINVER=0x0400
@@ -117,6 +126,7 @@ CEXTRA=
 VEXTRA=
 !ELSEIF "$(CPU)" == "ARM"
 MACHINE=/machine:ARM
+LMACH=
 EHFLAG=/EHsc
 HHWARN=0
 WINVER=0x0500
@@ -138,19 +148,22 @@ HHLIB=htmlhelp.lib
 HHLIB=
 !ENDIF
 
-# CRTST is the static multithreaded CRT the programs and libraries use; CRTDLL
-# is the DLL CRT that VNCHooks.dll uses.  Both as in the original makefiles.
+# CRTST is the static multithreaded CRT the programs and libraries use.  CRTDLL
+# is what VNCHooks.dll uses; the original makefiles use the DLL CRT (/MD) there,
+# but that makes the DLL import msvcr80.dll (Visual C++ 2005 and later: the
+# matching redistributable), so WinVNC fails to start on a machine without it.
+# Here it is the static CRT as well, so no CRT DLL has to be installed.
 !IF "$(DEBUG)" == "1"
 CDBG=/Zi /Od /D_DEBUG
 LDBG=/debug
 CRTST=/MTd
-CRTDLL=/MDd
+CRTDLL=/MTd
 OUTDIR=Dbg_$(CPU)
 !ELSE
 CDBG=/O2 /DNDEBUG
 LDBG=
 CRTST=/MT
-CRTDLL=/MD
+CRTDLL=/MT
 OUTDIR=Rel_$(CPU)
 !ENDIF
 

@@ -27,7 +27,7 @@ $(OUTDIR):
 	if not exist $(OUTDIR)\nul mkdir $(OUTDIR)
 
 $(OUTDIR)\zlib.lib: $(OBJS)
-	$(LIBEXE) /nologo /out:$@ $(OBJS)
+	$(LIBEXE) /nologo $(LMACH) /out:$@ $(OBJS)
 
 .SUFFIXES: .c
 

@@ -59,7 +59,7 @@ $(OUTDIR):
 	if not exist $(OUTDIR)\nul mkdir $(OUTDIR)
 
 $(OUTDIR)\libjpeg.lib: $(OBJS)
-	$(LIBEXE) /nologo /out:$@ $(OBJS)
+	$(LIBEXE) /nologo $(LMACH) /out:$@ $(OBJS)
 
 .SUFFIXES: .c
 

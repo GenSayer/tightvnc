@@ -3,7 +3,8 @@
 #
 # WinVNC links VNCHooks.lib (the import library made here), so build this
 # before ..\nt.mak and ship VNCHooks.dll next to WinVNC.exe; build.cmd
-# copies it there.  Uses the DLL CRT (/MD), as the original makefile does.
+# copies it there.  Uses the static CRT (see CRTDLL in nt.inc) so that the DLL
+# needs no msvcr80.dll or other CRT DLL.
 
 !INCLUDE ..\..\nt.inc
 

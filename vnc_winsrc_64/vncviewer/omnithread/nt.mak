@@ -13,7 +13,7 @@ $(OUTDIR):
 	if not exist $(OUTDIR)\nul mkdir $(OUTDIR)
 
 $(OUTDIR)\omnithread.lib: $(OBJS)
-	$(LIBEXE) /nologo /out:$@ $(OBJS)
+	$(LIBEXE) /nologo $(LMACH) /out:$@ $(OBJS)
 
 .SUFFIXES: .cpp
 
