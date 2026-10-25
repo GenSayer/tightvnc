@@ -1,11 +1,12 @@
 @echo off
-rem build.cmd [i386|ALPHA|ARM] [debug]
+rem build.cmd [i386|ALPHA|ARM] [debug] [staticcrt]
 rem
 rem Builds vncviewer and WinVNC (plus VNCHooks.dll) from the command line.
 rem Run from the vnc_winsrc directory with the compiler environment for the
 rem target CPU set up (PATH, INCLUDE, LIB): Visual C++ 4.x - 6.0 for i386 or
 rem Alpha, a Visual Studio 2015 ARM environment (for example vcvarsall.bat
 rem x86_arm) for ARM.  With no CPU argument, PROCESSOR_ARCHITECTURE picks it.
+rem "staticcrt" links the static CRT into VNCHooks.dll instead of the DLL CRT.
 rem Output: <dir>\Rel_<CPU> or <dir>\Dbg_<CPU>.
 rem
 rem The Developer Studio files (WinVNC.mak, vncviewer.mak, *.dsp, *.vcproj)
@@ -33,16 +34,27 @@ goto end
 
 set NTARGS=CPU=%NTCPU%
 set NTOUT=Rel_%NTCPU%
-if "%2"=="debug" goto dbg
-if "%2"=="DEBUG" goto dbg
-if "%2"=="Debug" goto dbg
-goto nodbg
-:dbg
-set NTARGS=%NTARGS% DEBUG=1
-set NTOUT=Dbg_%NTCPU%
-:nodbg
+set NTDBG=
+set NTSTAT=
+
+rem Options after the CPU: "debug" and "staticcrt", in either order.
+:opts
+shift
+if "%1"=="" goto optsdone
+if "%1"=="debug" set NTDBG=1
+if "%1"=="DEBUG" set NTDBG=1
+if "%1"=="Debug" set NTDBG=1
+if "%1"=="staticcrt" set NTSTAT=1
+if "%1"=="STATICCRT" set NTSTAT=1
+if "%1"=="Staticcrt" set NTSTAT=1
+goto opts
+:optsdone
+if "%NTDBG%"=="1" set NTARGS=%NTARGS% DEBUG=1
+if "%NTDBG%"=="1" set NTOUT=Dbg_%NTCPU%
+if "%NTSTAT%"=="1" set NTARGS=%NTARGS% STATICCRT=1
 
 echo === Building for %NTCPU% into %NTOUT%
+if "%NTSTAT%"=="1" echo === VNCHooks.dll uses the static CRT.
 
 echo === vncviewer\omnithread
 cd vncviewer\omnithread
@@ -98,3 +110,5 @@ echo === Build FAILED.
 set NTCPU=
 set NTARGS=
 set NTOUT=
+set NTDBG=
+set NTSTAT=

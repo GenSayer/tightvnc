@@ -15,6 +15,7 @@ target CPU set up (PATH, INCLUDE, LIB):
     build.cmd ARM             release build for ARM32 (Visual Studio 2015,
                               for example after "vcvarsall.bat x86_arm")
     build.cmd i386 debug      unoptimised build with debug info
+    build.cmd i386 staticcrt  VNCHooks.dll with the static CRT (see below)
 
 With no CPU argument PROCESSOR_ARCHITECTURE picks one.  Each directory
 gets its output in Rel_<CPU> (or Dbg_<CPU>), so builds for different
@@ -25,10 +26,17 @@ CPUs can live side by side.  The results are:
     winvnc\Rel_<CPU>\VNCHooks.dll       (copied there by build.cmd)
 
 Each directory can also be built on its own with
-"nmake /f nt.mak CPU=<CPU> [DEBUG=1]" (build omnithread, zlib, libjpeg
-and VNCHooks first).  Shared settings are in nt.inc.  The compiler
+"nmake /f nt.mak CPU=<CPU> [DEBUG=1] [STATICCRT=1]" (build omnithread,
+zlib, libjpeg and VNCHooks first).  Shared settings are in nt.inc.  The compiler
 switches, defines and libraries are the same as in the Developer Studio
 makefiles described below, which still work as before.
+
+VNCHooks.dll is linked with the DLL CRT (/MD) by default, as in the Developer
+Studio makefiles.  With Visual C++ 2005 and later that makes it import
+msvcr80.dll or its successor, which has to be installed where WinVNC runs.
+"staticcrt" (STATICCRT=1) builds it with the static CRT (/MT) instead, so
+nothing has to be installed.  The executables and libraries always use the
+static CRT.
 
 htmlhelp.lib is linked for every CPU.  The one in the tree is for x86;
 for Alpha and ARM put a matching HtmlHelp.lib in vncviewer\ and winvnc\

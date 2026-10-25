@@ -14,6 +14,8 @@
 #     CPU=i386 | ALPHA | ARM          target CPU; default from
 #                                     PROCESSOR_ARCHITECTURE
 #     DEBUG=1                         unoptimised build with /Zi + /debug
+#     STATICCRT=1                     VNCHooks.dll uses the static CRT (/MT)
+#                                     instead of the DLL CRT (see below)
 #
 # Output goes to Rel_<CPU> or Dbg_<CPU> next to each nt.mak, so builds for
 # different CPUs can live side by side.
@@ -85,6 +87,18 @@ LDBG=
 CRTST=/MT
 CRTDLL=/MD
 OUTDIR=Rel_$(CPU)
+!ENDIF
+
+# VNCHooks.dll uses the DLL CRT by default, as the original makefile does.
+# STATICCRT=1 links the static CRT into it instead, so that no CRT DLL has to
+# be installed (with Visual C++ 2005 and later /MD makes the DLL import
+# msvcr80.dll or its successor, which must then be present where WinVNC runs).
+!IF "$(STATICCRT)" == "1"
+!IF "$(DEBUG)" == "1"
+CRTDLL=/MTd
+!ELSE
+CRTDLL=/MT
+!ENDIF
 !ENDIF
 
 CC=cl
