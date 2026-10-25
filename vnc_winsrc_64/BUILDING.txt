@@ -4,6 +4,53 @@
 
 ======================================================================
 
+  Command-line build (NMAKE): x64, ARM64, ARM64EC, AXP64 and IA64
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+From the vnc_winsrc_64 directory, with the compiler environment for the
+target CPU set up (PATH, INCLUDE, LIB):
+
+    build.cmd X64             release build for x64
+    build.cmd ARM64           release build for ARM64 (Visual Studio 2019 or
+                              2022, ARM64 or cross tools)
+    build.cmd ARM64EC         release build for ARM64EC (same tools; cl gets
+                              /arm64EC and the linker /machine:ARM64EC)
+    build.cmd AXP64           release build for 64-bit Alpha (Alpha64 Win64
+                              compiler)
+    build.cmd IA64            release build for Itanium (Platform SDK
+                              Itanium compiler)
+    build.cmd X64 debug       unoptimised build with debug info
+    build.cmd X64 htmlhelp    link htmlhelp.lib (see below)
+
+"debug" and "htmlhelp" may be given in either order after the CPU.  With no
+CPU argument PROCESSOR_ARCHITECTURE picks one; it cannot pick ARM64EC, so
+ask for that by name.  Each directory gets its output in Rel_<CPU> (or
+Dbg_<CPU>), so builds for different CPUs can live side by side.  The
+results are:
+
+    vncviewer\Rel_<CPU>\vncviewer.exe
+    winvnc\Rel_<CPU>\WinVNC.exe
+    winvnc\Rel_<CPU>\VNCHooks.dll       (copied there by build.cmd)
+
+The 32-bit CPUs i386, ALPHA and ARM are also accepted by build.cmd, with the
+same settings as in the vnc_winsrc tree.  They are there for testing only and
+are not supported in this tree.
+
+Each directory can also be built on its own with
+"nmake /f nt.mak CPU=<CPU> [DEBUG=1] [HTMLHELP=1]" (build omnithread, zlib,
+libjpeg and VNCHooks first).  Shared settings are in nt.inc.  The compiler
+switches, defines and libraries are the same as in the Developer Studio
+makefiles (WinVNC.mak, vncviewer.mak, WinVNC-axp64.mak, vncviewer-axp64.mak,
+WinVNC-ia64.mak, vncviewer-ia64.mak), which still work as before.
+
+htmlhelp.lib is not linked by default: the calls into it are commented out in
+the sources, because HtmlHelp crashed the programs on IA64 before Windows
+Server 2003 SP1.  "htmlhelp" (HTMLHELP=1) links it for the CPU being built;
+put a matching HtmlHelp.lib for that CPU in vncviewer\ and winvnc\ (or on
+LIB) first, since the one in the tree is for x64 only.  A warning is printed
+for IA64 and AXP64 (AXP64 is an Alpha-only Windows build that may be
+unstable).
+
   Building from the source distribution
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
