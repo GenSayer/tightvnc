@@ -19,6 +19,8 @@
 #                                                  PROCESSOR_ARCHITECTURE
 #     DEBUG=1                         unoptimised build with /Zi + /debug
 #     HTMLHELP=1                      link htmlhelp.lib (see below)
+#     DLLCRT=1                        VNCHooks.dll uses the DLL CRT (/MD)
+#                                     instead of the static one (see below)
 #
 # Output goes to Rel_<CPU> or Dbg_<CPU> next to each nt.mak, so builds for
 # different CPUs can live side by side.
@@ -149,10 +151,12 @@ HHLIB=
 !ENDIF
 
 # CRTST is the static multithreaded CRT the programs and libraries use.  CRTDLL
-# is what VNCHooks.dll uses; the original makefiles use the DLL CRT (/MD) there,
+# is what VNCHooks.dll uses.  The original makefiles use the DLL CRT (/MD) there,
 # but that makes the DLL import msvcr80.dll (Visual C++ 2005 and later: the
 # matching redistributable), so WinVNC fails to start on a machine without it.
-# Here it is the static CRT as well, so no CRT DLL has to be installed.
+# The default here is therefore the static CRT as well, so no CRT DLL has to be
+# installed.  DLLCRT=1 selects the DLL CRT for VNCHooks.dll only (the original
+# behaviour; the CRT DLL of the compiler must then be present on the target).
 !IF "$(DEBUG)" == "1"
 CDBG=/Zi /Od /D_DEBUG
 LDBG=/debug
@@ -165,6 +169,14 @@ LDBG=
 CRTST=/MT
 CRTDLL=/MT
 OUTDIR=Rel_$(CPU)
+!ENDIF
+
+!IF "$(DLLCRT)" == "1"
+!IF "$(DEBUG)" == "1"
+CRTDLL=/MDd
+!ELSE
+CRTDLL=/MD
+!ENDIF
 !ENDIF
 
 CC=cl

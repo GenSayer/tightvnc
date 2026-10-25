@@ -1,5 +1,5 @@
 @echo off
-rem build.cmd [X64|ARM64|ARM64EC|AXP64|IA64] [debug] [htmlhelp]
+rem build.cmd [X64|ARM64|ARM64EC|AXP64|IA64] [debug] [htmlhelp] [dllcrt]
 rem
 rem Builds vncviewer and WinVNC (plus VNCHooks.dll) from the command line.
 rem Run from the vnc_winsrc_64 directory with the compiler environment for the
@@ -13,6 +13,8 @@ rem
 rem The 32-bit CPUs i386, ALPHA and ARM are accepted too, but only for
 rem testing; they are not supported in this tree.
 rem
+rem "dllcrt" builds VNCHooks.dll with the DLL CRT (/MD) instead of the static
+rem CRT; the target then needs the compiler's CRT DLL (msvcr80.dll etc.).
 rem "htmlhelp" links htmlhelp.lib (the calls into it are commented out in the
 rem sources; see nt.inc).  Warns for IA64 and AXP64.
 rem
@@ -66,29 +68,31 @@ set NTARGS=CPU=%NTCPU%
 set NTOUT=Rel_%NTCPU%
 set NTHH=
 
-rem Options: "debug" and "htmlhelp" in either order, in the second or third
-rem position.
-if "%2"=="debug" set NTARGS=%NTARGS% DEBUG=1
-if "%2"=="DEBUG" set NTARGS=%NTARGS% DEBUG=1
-if "%2"=="Debug" set NTARGS=%NTARGS% DEBUG=1
-if "%3"=="debug" set NTARGS=%NTARGS% DEBUG=1
-if "%3"=="DEBUG" set NTARGS=%NTARGS% DEBUG=1
-if "%3"=="Debug" set NTARGS=%NTARGS% DEBUG=1
-if "%2"=="htmlhelp" set NTHH=1
-if "%2"=="HTMLHELP" set NTHH=1
-if "%2"=="Htmlhelp" set NTHH=1
-if "%3"=="htmlhelp" set NTHH=1
-if "%3"=="HTMLHELP" set NTHH=1
-if "%3"=="Htmlhelp" set NTHH=1
-if "%2"=="debug" set NTOUT=Dbg_%NTCPU%
-if "%2"=="DEBUG" set NTOUT=Dbg_%NTCPU%
-if "%2"=="Debug" set NTOUT=Dbg_%NTCPU%
-if "%3"=="debug" set NTOUT=Dbg_%NTCPU%
-if "%3"=="DEBUG" set NTOUT=Dbg_%NTCPU%
-if "%3"=="Debug" set NTOUT=Dbg_%NTCPU%
+rem Options after the CPU: "debug", "htmlhelp" and "dllcrt", in any order.
+set NTDBG=
+set NTHH=
+set NTDLL=
+:opts
+shift
+if "%1"=="" goto optsdone
+if "%1"=="debug" set NTDBG=1
+if "%1"=="DEBUG" set NTDBG=1
+if "%1"=="Debug" set NTDBG=1
+if "%1"=="htmlhelp" set NTHH=1
+if "%1"=="HTMLHELP" set NTHH=1
+if "%1"=="Htmlhelp" set NTHH=1
+if "%1"=="dllcrt" set NTDLL=1
+if "%1"=="DLLCRT" set NTDLL=1
+if "%1"=="Dllcrt" set NTDLL=1
+goto opts
+:optsdone
+if "%NTDBG%"=="1" set NTARGS=%NTARGS% DEBUG=1
+if "%NTDBG%"=="1" set NTOUT=Dbg_%NTCPU%
 if "%NTHH%"=="1" set NTARGS=%NTARGS% HTMLHELP=1
+if "%NTDLL%"=="1" set NTARGS=%NTARGS% DLLCRT=1
 
 echo === Building for %NTCPU% into %NTOUT%
+if "%NTDLL%"=="1" echo === VNCHooks.dll uses the DLL CRT: the target needs the compiler's CRT DLL installed.
 
 if not "%NTHH%"=="1" goto hhdone
 echo === htmlhelp.lib will be linked: it must be a %NTCPU% library.
@@ -151,3 +155,5 @@ set NTCPU=
 set NTARGS=
 set NTOUT=
 set NTHH=
+set NTDBG=
+set NTDLL=

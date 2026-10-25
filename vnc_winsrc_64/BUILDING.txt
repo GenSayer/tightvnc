@@ -21,8 +21,9 @@ target CPU set up (PATH, INCLUDE, LIB):
                               Itanium compiler)
     build.cmd X64 debug       unoptimised build with debug info
     build.cmd X64 htmlhelp    link htmlhelp.lib (see below)
+    build.cmd X64 dllcrt      VNCHooks.dll with the DLL CRT (see below)
 
-"debug" and "htmlhelp" may be given in either order after the CPU.  With no
+"debug", "htmlhelp" and "dllcrt" may be given in any order after the CPU.  With no
 CPU argument PROCESSOR_ARCHITECTURE picks one; it cannot pick ARM64EC, so
 ask for that by name.  Each directory gets its output in Rel_<CPU> (or
 Dbg_<CPU>), so builds for different CPUs can live side by side.  The
@@ -37,11 +38,17 @@ same settings as in the vnc_winsrc tree.  They are there for testing only and
 are not supported in this tree.
 
 Each directory can also be built on its own with
-"nmake /f nt.mak CPU=<CPU> [DEBUG=1] [HTMLHELP=1]" (build omnithread, zlib,
+"nmake /f nt.mak CPU=<CPU> [DEBUG=1] [HTMLHELP=1] [DLLCRT=1]" (build omnithread, zlib,
 libjpeg and VNCHooks first).  Shared settings are in nt.inc.  The compiler
 switches, defines and libraries are the same as in the Developer Studio
 makefiles (WinVNC.mak, vncviewer.mak, WinVNC-axp64.mak, vncviewer-axp64.mak,
 WinVNC-ia64.mak, vncviewer-ia64.mak), which still work as before.
+
+VNCHooks.dll is linked with the static CRT by default, so that no CRT DLL
+(msvcr80.dll, vcruntime140.dll, ...) has to be installed on the target.
+"dllcrt" (DLLCRT=1) builds it with the DLL CRT (/MD) as the original makefiles
+do; the compiler's CRT DLL must then be present where WinVNC runs.  The
+executables and libraries always use the static CRT.
 
 htmlhelp.lib is not linked by default: the calls into it are commented out in
 the sources, because HtmlHelp crashed the programs on IA64 before Windows
