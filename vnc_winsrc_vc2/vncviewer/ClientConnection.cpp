@@ -4394,7 +4394,7 @@ void ClientConnection::DrawPixelBlock(char *buffer, int bpp, int x, int y,
 				break;
 			case 16:
 				{
-					CARD16 *p = ((CARD16 *)buffer) + (size_t)srcRow * w;
+					CARD16 __unaligned *p = ((CARD16 __unaligned *)buffer) + (size_t)srcRow * w;
 					for (j = 0; j < w; j++) {
 						CARD16 pix = *p++;
 						*dst++ = (unsigned char)((((pix >> bs) & bm) * 255) / bm);
@@ -4405,7 +4405,7 @@ void ClientConnection::DrawPixelBlock(char *buffer, int bpp, int x, int y,
 				break;
 			case 32:
 				{
-					CARD32 *p = ((CARD32 *)buffer) + (size_t)srcRow * w;
+					CARD32 __unaligned *p = ((CARD32 __unaligned *)buffer) + (size_t)srcRow * w;
 					for (j = 0; j < w; j++) {
 						CARD32 pix = *p++;
 						*dst++ = (unsigned char)((((pix >> bs) & bm) * 255) / bm);
@@ -4524,7 +4524,7 @@ void ClientConnection::DrawColorRefBlock(char *buffer, int x, int y, int w, int 
 		for (r = 0; r < rows; r++) {
 			int srcRow = rowsDone + r;
 			unsigned char *dst = m_dibbuf + (size_t)(rows - 1 - r) * stride;
-			CARD32 *p = ((CARD32 *)buffer) + (size_t)srcRow * w;
+			CARD32 __unaligned *p = ((CARD32 __unaligned *)buffer) + (size_t)srcRow * w;
 			int j;
 			for (j = 0; j < w; j++) {
 				COLORREF c = (COLORREF)(*p++);

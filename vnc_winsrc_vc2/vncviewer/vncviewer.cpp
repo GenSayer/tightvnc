@@ -51,6 +51,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 	// Win32sLoadKeyboardLayout, and Log/CentreWindow need Win32sGetWorkArea.
 	Win32sApiInit();
 
+	// VC2: on RISC NT (MIPS, Alpha), have the kernel fix up any misaligned
+	// access the __unaligned qualifiers miss instead of raising an exception -
+	// the same safety net WinMain sets in WinVNC.  No effect on x86; not on
+	// Win32s, whose SetErrorMode is the 16-bit one and does not know the flag.
+	if (!Win32sIsWin32s())
+		SetErrorMode(SetErrorMode(0) | 0x0004);		// SEM_NOALIGNMENTFAULTEXCEPT
+
 	// The state of the application as a whole is contained in the one app object
 	#ifdef _WIN32_WCE
 		VNCviewerApp app(hInstance, szCmdLine);

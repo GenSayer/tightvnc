@@ -37,13 +37,12 @@ rfbTranslateWithSingleTableINtoOUT (char *table, rfbPixelFormat *in,
 				    int bytesBetweenInputLines,
 				    int width, int height)
 {
-    // (Was: __unaligned qualifiers, a MIPS NT 4 workaround.  Removed - the
-    // Win32s target is x86 only, where unaligned access is handled by the CPU,
-    // and MSVC 4.1 for x86 does not accept the keyword.)
-    IN_T *ip = (IN_T *)iptr;
-    OUT_T *op = (OUT_T *)optr;
+    // VC2: __unaligned restored from the msvc4 tree - the Win32s port had
+    // removed it, which faults on MIPS / Alpha NT (see stdhdrs.h).
+    IN_T __unaligned *ip = (IN_T __unaligned *)iptr;
+    OUT_T __unaligned *op = (OUT_T __unaligned *)optr;
     int ipextra = bytesBetweenInputLines / sizeof(IN_T) - width;
-    OUT_T *opLineEnd;
+    OUT_T __unaligned *opLineEnd;
     OUT_T *t = (OUT_T *)table;
 
     while (height > 0) {
@@ -71,13 +70,12 @@ rfbTranslateWithRGBTablesINtoOUT (char *table, rfbPixelFormat *in,
 				  int bytesBetweenInputLines,
 				  int width, int height)
 {
-    // (Was: __unaligned qualifiers, a MIPS NT 4 workaround.  Removed - the
-    // Win32s target is x86 only, where unaligned access is handled by the CPU,
-    // and MSVC 4.1 for x86 does not accept the keyword.)
-    IN_T *ip = (IN_T *)iptr;
-    OUT_T *op = (OUT_T *)optr;
+    // VC2: __unaligned restored from the msvc4 tree - the Win32s port had
+    // removed it, which faults on MIPS / Alpha NT (see stdhdrs.h).
+    IN_T __unaligned *ip = (IN_T __unaligned *)iptr;
+    OUT_T __unaligned *op = (OUT_T __unaligned *)optr;
     int ipextra = bytesBetweenInputLines / sizeof(IN_T) - width;
-    OUT_T *opLineEnd;
+    OUT_T __unaligned *opLineEnd;
     OUT_T *redTable = (OUT_T *)table;
     OUT_T *greenTable = redTable + in->redMax + 1;
     OUT_T *blueTable = greenTable + in->greenMax + 1;

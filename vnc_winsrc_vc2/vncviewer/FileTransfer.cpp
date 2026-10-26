@@ -196,6 +196,41 @@ FileTransfer::~FileTransfer()
 	m_FTServerItemInfo.Free();
 }
 
+// ==========================================================================
+// One double-click, one navigation.
+//
+// The real COMCTL32 on NT 3.51 / NT 4 (4.70+ with IE) sends BOTH NM_DBLCLK and
+// LVN_ITEMACTIVATE for a single double-click.  Handling both entered the
+// directory twice: two list requests went out, the second one built from
+// whatever path the first reply had already left, so the server answered
+// with its error flag and the pane stayed at the drive list - where
+// m_ServerPath is empty, hence "Cannot transfer files: illegal directory" -
+// and a late reply could land while the Browse dialog was waiting for its
+// own.  The built-in list view (vc2ctl) and COMCTL32 4.00 send only
+// NM_DBLCLK, which is why x86 on NT 3.1 never showed it.
+//
+// Ported from the msvc4 tree's tracker, but order-independent: whichever of
+// the two notifications arrives first acts, and the other one for the same
+// list and row within a double-click time is dropped.
+// ==========================================================================
+static DWORD FTLastActivateTick = 0;
+static HWND  FTLastActivateHwnd = NULL;
+static int   FTLastActivateItem = -1;
+
+static BOOL FTIsDuplicateActivation(HWND hwndList, int iItem)
+{
+	DWORD now = GetTickCount();
+	if (hwndList == FTLastActivateHwnd && iItem == FTLastActivateItem &&
+		(now - FTLastActivateTick) < (DWORD)(GetDoubleClickTime() + 100)) {
+		FTLastActivateHwnd = NULL;		// drop exactly one
+		return TRUE;
+	}
+	FTLastActivateHwnd = hwndList;
+	FTLastActivateItem = iItem;
+	FTLastActivateTick = now;
+	return FALSE;
+}
+
 void
 FileTransfer::CreateFileTransferDialog()
 {
@@ -576,7 +611,7 @@ FileTransfer::FileTransferDlgProc(HWND hwnd,
 				case NM_DBLCLK:
 					{
 						int iItem = _this->FTGetClickedItem(_this->m_hwndFTClientList);
-						if (iItem != -1) {
+						if (iItem != -1 && !FTIsDuplicateActivation(_this->m_hwndFTClientList, iItem)) {
 							_this->ProcessListViewDBLCLK(_this->m_hwndFTClientList, _this->m_ClientPath, _this->m_ClientPathTmp, iItem);
 						}
 					}
@@ -586,8 +621,15 @@ FileTransfer::FileTransferDlgProc(HWND hwnd,
 					{
 						// Only ever delivered by COMCTL32 4.70+ (Win9x/NT4 with
 						// IE3 or later), never under Win32s.
-						LPNMITEMACTIVATE lpnmia = (LPNMITEMACTIVATE)lParam;
-						_this->ProcessListViewDBLCLK(_this->m_hwndFTClientList, _this->m_ClientPath, _this->m_ClientPathTmp, lpnmia->iItem);
+						//
+						// VC2: the row is found the same way as for NM_DBLCLK,
+						// not from lpnmia->iItem.  COMCTL32 4.70 (NT 4) sends
+						// LVN_ITEMACTIVATE with a bare NMHDR - NMITEMACTIVATE
+						// arrived with 4.71 - so iItem was whatever followed
+						// the header.
+						int iItem = _this->FTGetClickedItem(_this->m_hwndFTClientList);
+						if (iItem != -1 && !FTIsDuplicateActivation(_this->m_hwndFTClientList, iItem))
+							_this->ProcessListViewDBLCLK(_this->m_hwndFTClientList, _this->m_ClientPath, _this->m_ClientPathTmp, iItem);
 					}
 					return TRUE;
 #endif
@@ -607,7 +649,7 @@ FileTransfer::FileTransferDlgProc(HWND hwnd,
 				case NM_DBLCLK:
 					{
 						int iItem = _this->FTGetClickedItem(_this->m_hwndFTServerList);
-						if (iItem != -1) {
+						if (iItem != -1 && !FTIsDuplicateActivation(_this->m_hwndFTServerList, iItem)) {
 							_this->ProcessListViewDBLCLK(_this->m_hwndFTServerList, _this->m_ServerPath, _this->m_ServerPathTmp, iItem);
 						}
 					}
@@ -615,8 +657,10 @@ FileTransfer::FileTransferDlgProc(HWND hwnd,
 #ifdef LVN_ITEMACTIVATE
 				case LVN_ITEMACTIVATE:
 					{
-						LPNMITEMACTIVATE lpnmia = (LPNMITEMACTIVATE)lParam;
-						_this->ProcessListViewDBLCLK(_this->m_hwndFTServerList, _this->m_ServerPath, _this->m_ServerPathTmp, lpnmia->iItem);
+						// See the client list: bare NMHDR on COMCTL32 4.70.
+						int iItem = _this->FTGetClickedItem(_this->m_hwndFTServerList);
+						if (iItem != -1 && !FTIsDuplicateActivation(_this->m_hwndFTServerList, iItem))
+							_this->ProcessListViewDBLCLK(_this->m_hwndFTServerList, _this->m_ServerPath, _this->m_ServerPathTmp, iItem);
 					}
 					return TRUE;
 #endif
@@ -1591,7 +1635,9 @@ FileTransfer::GetTVPath(HWND hwnd, HTREEITEM hTItem, char *path)
 			ii++;
 		}
 	}
-	if (path_out[strlen(path_out)-1] == '\\') path_out[strlen(path_out)-1] = '\0';
+	// (Guarded: for an empty result this indexed path_out[-1].)
+	len = strlen(path_out);
+	if (len > 0 && path_out[len-1] == '\\') path_out[len-1] = '\0';
 	strcpy(path, path_out);
 }
 
@@ -1803,13 +1849,35 @@ FileTransfer::ShowServerItems()
 		// Browse-tree reply: wakes WaitForBrowseReply() in the modal dialog.
 		// m_hTreeItem is NULL for the initial "" listing, whose entries are
 		// top-level roots - insert under TVI_ROOT in that case.
+		//
+		// VC2: only a reply the browse dialog is actually waiting for.  A late
+		// reply to a main-pane request (see FTIsDuplicateActivation) arriving
+		// here would otherwise be inserted into the tree under whatever
+		// m_hTreeItem happens to be.  The payload has been consumed above, so
+		// dropping it keeps the stream in step.
+		if (!m_bBrowseReplyPending) {
+			vnclog.Print(1, _T("Ignoring unrequested file list during browse\n"));
+			if (pftSD != NULL) delete [] pftSD;
+			if (pFilenames != NULL) delete [] pFilenames;
+			BlockingFileTransferDialog(TRUE);
+			return;
+		}
 		HWND hTree = (m_hwndFTBrowse != NULL) ?
 			GetDlgItem(m_hwndFTBrowse, IDC_FTBROWSETREE) : NULL;
 		m_bBrowseReplyPending = FALSE;
 		if (hTree != NULL) {
 			HTREEITEM hParent = (m_hTreeItem != NULL) ? m_hTreeItem : TVI_ROOT;
-			while (TreeView_GetChild(hTree, hParent) != NULL) {
-				TreeView_DeleteItem(hTree, TreeView_GetChild(hTree, hParent));
+			// VC2: TVI_ROOT is only valid as an insertion parent.  Passed to
+			// TVM_GETNEXTITEM, COMCTL32 treats it as an item and reads through
+			// it (NT 4: access violation at 0xFFFF0008); the built-in tree view
+			// tolerated it.  The root level's first item is TreeView_GetRoot.
+			HTREEITEM hChild;
+			for (;;) {
+				hChild = (hParent == TVI_ROOT) ? TreeView_GetRoot(hTree)
+											   : TreeView_GetChild(hTree, hParent);
+				if (hChild == NULL)
+					break;
+				TreeView_DeleteItem(hTree, hChild);
 			}
 			// WIN32S: the old code inserted every directory twice (two InsertItem
 			// calls per pass, the second nested under the first via hParent being
@@ -1899,9 +1967,12 @@ FileTransfer::ProcessListViewDBLCLK(HWND hwnd, char *Path, char *PathTmp, int iI
 	if (hwnd == NULL || Path == NULL || PathTmp == NULL || iItem < 0)
 		return;
 
-	SendMessage(m_hwndFTProgress, PBM_SETPOS, 0, 0);
-	SetWindowText(m_hwndFTStatus, "");
-	strcpy(PathTmp, Path);
+	// VC2: PathTmp is not touched until the row has been validated.  It used
+	// to be reset to Path first, so an activation that then bailed out (a bad
+	// row index, a file rather than a folder) still overwrote the path that a
+	// request already in flight would commit - the reply then showed the new
+	// directory with an empty path ("Cannot transfer files: illegal
+	// directory").
 
 	// ======================================================================
 	// This was the other half of "I can't double-click into the server
@@ -1936,6 +2007,10 @@ FileTransfer::ProcessListViewDBLCLK(HWND hwnd, char *Path, char *PathTmp, int iI
 	// Only directories are navigable.
 	if (strcmp(pSize, FileTransferItemInfo::folderText) != 0)
 		return;
+
+	SendMessage(m_hwndFTProgress, PBM_SETPOS, 0, 0);
+	SetWindowText(m_hwndFTStatus, "");
+	strcpy(PathTmp, Path);
 
 	BlockingFileTransferDialog(FALSE);
 

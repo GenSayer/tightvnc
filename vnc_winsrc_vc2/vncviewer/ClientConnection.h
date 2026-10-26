@@ -568,9 +568,9 @@ public:
                 (int) (((*(CARD8 *)(p) >> bs) & bm) * 255 / bm) ))
 
 #define COLOR_FROM_PIXEL16_ADDRESS(p) (PALETTERGB( \
-                (int) ((( *(CARD16 *)(p) >> rs) & rm) * 255 / rm), \
-                (int) ((( *(CARD16 *)(p) >> gs) & gm) * 255 / gm), \
-                (int) ((( *(CARD16 *)(p) >> bs) & bm) * 255 / bm) ))
+                (int) ((( *(CARD16 __unaligned *)(p) >> rs) & rm) * 255 / rm), \
+                (int) ((( *(CARD16 __unaligned *)(p) >> gs) & gm) * 255 / gm), \
+                (int) ((( *(CARD16 __unaligned *)(p) >> bs) & bm) * 255 / bm) ))
 
 #define COLOR_FROM_PIXEL24_ADDRESS(p) (PALETTERGB( \
                 (int) (((CARD8 *)(p))[0]), \
@@ -578,9 +578,9 @@ public:
                 (int) (((CARD8 *)(p))[2]) ))
 
 #define COLOR_FROM_PIXEL32_ADDRESS(p) (PALETTERGB( \
-                (int) ((( *(CARD32 *)(p) >> rs) & rm) * 255 / rm), \
-                (int) ((( *(CARD32 *)(p) >> gs) & gm) * 255 / gm), \
-                (int) ((( *(CARD32 *)(p) >> bs) & bm) * 255 / bm) ))
+                (int) ((( *(CARD32 __unaligned *)(p) >> rs) & rm) * 255 / rm), \
+                (int) ((( *(CARD32 __unaligned *)(p) >> gs) & gm) * 255 / gm), \
+                (int) ((( *(CARD32 __unaligned *)(p) >> bs) & bm) * 255 / bm) ))
 
 // The following may be faster if you already have a pixel value of the appropriate size
 #define COLOR_FROM_PIXEL8(p) (PALETTERGB( \

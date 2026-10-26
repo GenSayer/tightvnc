@@ -71,6 +71,15 @@
 
 
  
+// RISC NT (MIPS, Alpha): the __unaligned qualifiers on the pixel and
+// rectangle-header pointers in the encoders, the pixel translator and the
+// viewer's colour macros make the compiler emit unaligned-safe loads and
+// stores.  The x86 compiler does not know the keyword and does not need it
+// (as in the msvc4 tree).
+#if defined(_M_IX86)
+#define __unaligned
+#endif
+
 #include "rfb.h"
 
 extern const char* g_buildTime;

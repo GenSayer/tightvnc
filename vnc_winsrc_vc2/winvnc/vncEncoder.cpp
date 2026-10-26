@@ -145,8 +145,8 @@ vncEncoder::EncodeRect(BYTE *source, BYTE *dest, const RECT &rect, int offsetx, 
 	const int rectH = rect.bottom - rect.top;
 	
 	// Create the header for the update in the destination area
-	// (Was: __unaligned qualifiers, a MIPS NT 4 workaround - removed for x86.)
-	rfbFramebufferUpdateRectHeader *surh = (rfbFramebufferUpdateRectHeader *)dest;
+	// VC2: __unaligned restored from the msvc4 tree (MIPS / Alpha NT; see stdhdrs.h).
+	rfbFramebufferUpdateRectHeader __unaligned *surh = (rfbFramebufferUpdateRectHeader __unaligned *)dest;
 	surh->r.x = (CARD16) (rect.left - offsetx);
 	surh->r.y = (CARD16) (rect.top - offsety);
 	surh->r.w = (CARD16) (rectW);
@@ -445,7 +445,7 @@ vncEncoder::SetQualityLevel(int level)
 BOOL
 vncEncoder::SendEmptyCursorShape(VSocket *outConn)
 {
-	rfbFramebufferUpdateRectHeader hdr;
+	rfbFramebufferUpdateRectHeader __unaligned hdr;
 	hdr.r.x = Swap16IfLE(0);
 	hdr.r.y = Swap16IfLE(0);
 	hdr.r.w = Swap16IfLE(0);
@@ -562,7 +562,7 @@ BOOL
 vncEncoder::SendXCursorShape(VSocket *outConn, BYTE *mask,
 							 int xhot, int yhot, int width, int height)
 {
-	rfbFramebufferUpdateRectHeader hdr;
+	rfbFramebufferUpdateRectHeader __unaligned hdr;
 	hdr.r.x = Swap16IfLE(xhot);
 	hdr.r.y = Swap16IfLE(yhot);
 	hdr.r.w = Swap16IfLE(width);
@@ -586,7 +586,7 @@ BOOL
 vncEncoder::SendRichCursorShape(VSocket *outConn, BYTE *mbits, BYTE *cbits,
 								int xhot, int yhot, int width, int height)
 {
-	rfbFramebufferUpdateRectHeader hdr;
+	rfbFramebufferUpdateRectHeader __unaligned hdr;
 	hdr.r.x = Swap16IfLE(xhot);
 	hdr.r.y = Swap16IfLE(yhot);
 	hdr.r.w = Swap16IfLE(width);
