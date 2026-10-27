@@ -12,19 +12,18 @@ This project provides native binaries compiled explicitly for the following targ
 |---|---|---|
 | x64 / amd64 | All 64-bit Windows versions | Mainstream desktops, laptops, and servers. |
 | ARM64 | Windows 10+ on ARM64 devices | Qualcomm Snapdragon-powered laptops and tablets. |
-| ARM32 | Windows RT 8.1 / Windows 10 ARM Build 15035 / ARM64 Windows versions with the ARM32 compatibility layer | Older ARM hardware and ARM32 boards. |
-
+| ARM32 | Windows RT 8 / Windows RT 8.1 / Windows 10 ARM Build 15035 | ARM64 Windows versions with the ARM32 compatibility layer and older ARM hardware and ARM32 boards. |
 
 ## Legacy & Vintage Windows Platforms
 
 | Architecture | Platform Target | Common Use Cases / Operating Systems |
 |---|---|---|
 | AXP64 (Alpha64) | DEC Alpha 64-bit Windows NT | Pre-beta Windows Whistler 64-bit builds for Alpha. |
-| AXP (Alpha 32-bit) | DEC Alpha Windows NT Systems | Windows NT 3.51 / 4.0 / 2000 betas on Digital workstations. |
-| IA64 (Itanium) | Intel Itanium Systems | Windows XP 64-Bit Edition / Windows Server 2003/2008 (may be broken on the latter 2). |
-| PowerPC | IBM / Motorola / Mac & Wii Systems | Legacy Windows NT 3.51 / 4.0 PowerPC editions. |
-| MIPS | MIPS R4000 and higher | Legacy Windows NT 3.51 / 4.0 MIPS editions. |
-| win32s | Intel 386+ | Windows 3.1x with Win32s (1.30 recommended, prior versions untested) |
+| AXP (Alpha 32-bit) | DEC Alpha Windows NT Systems | Windows NT 3.5 / 3.51 / 4.0 / 2000 betas on Digital workstations. |
+| IA64 (Itanium) | Intel Itanium Systems | Windows XP 64-Bit Edition / Windows Server 2003/2008/2008 R2. |
+| PowerPC | IBM / Motorola / Mac & Wii Systems | Legacy Windows NT 3.5 / 3.51 / 4.0 PowerPC editions. |
+| MIPS | MIPS R4000 and higher | Legacy Windows NT 3.5 / 3.51 / 4.0 MIPS editions. |
+| win32s | Intel 386+ | Windows 3.1x with Win32s (1.30 recommended) |
 | x86 / MIPS / AXP (VC++ 2.x) | Windows NT 3.1+ and Win32s 1.15a+ | Work in progress in `vnc_winsrc_vc2`: one binary per CPU for NT 3.1 and early Win32s (see its BUILDING.txt). |
 
 ## Features & Enhancements
@@ -42,15 +41,15 @@ This project provides native binaries compiled explicitly for the following targ
 I have every port separated into separate branches because that is how I originally started it and to track changes on each port. I do eventually intend on merging most of the branches, while more than likely keeping the x64 (haven't decided on that yet) and PPC/MIPS branches separated from the main branch, making it either an eventual total of 2 or 3 branches, and I may eventually come up with a name of this fork that isn't TightVNC.
 
 ### Toolchains used:
-* PowerPC/MIPS/win32s: MSVC 4.1 with the Windows NT 4.0 SDK and the Microsoft Internet Explorer 3.01 Internet Client SDK for wininet.h for the OS architecture corresponding versions
-* NT 3.1 / early Win32s (x86, MIPS, AXP): Visual C++ 2.x (`vnc_winsrc_vc2`, work in progress)
+* NT 3.1 / early Win32s (x86, MIPS, AXP): Visual C++ 2.x
+* PowerPC/MIPS/win32s/(AXP/x86 MSVC4): MSVC 4.1 with the Windows NT 4.0 SDK and the Microsoft Internet Explorer 3.01 Internet Client SDK for wininet.h for the OS architecture corresponding versions
+* x86: Visual Studio 6.0
 * AXP: Visual Studio 6.0 for DEC Alpha Platforms with the October 1999 Microsoft Platform SDK
-* AXP64: The AXP64 cross-compiler from the October 1999 Platform SDK, which is a very early version of the MSVC 7.0 compiler
+* AXP64: AXP64 cross-compiler from the October 1999 Platform SDK, which is a very early version of the MSVC 7.0 compiler
 * IA64: MSVC 7.1 cross-compiler from the February 2003 Platform SDK
 * AMD64: Visual Studio 2005 to target as many 64-Bit Windows versions as possible
-* ARM: Visual Studio 2015 (I'm considering on moving to VS 2017 or 2022 for the ARM port)
+* ARM: Visual Studio 2015
 * ARM64: Visual Studio 2022
-* Future x86 builds when I make separate code changes from the official source code that affects x86 will be done in Visual Studio 6.0
 
 ## Feedback & Issue Reporting
 Since this is an initial port adapting legacy code for multiple architectures, you may run into edge cases. If you encounter bugs, architecture-specific crashes, or display quirks:
