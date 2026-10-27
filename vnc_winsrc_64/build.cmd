@@ -1,5 +1,5 @@
 @echo off
-rem build.cmd [X64|ARM64|ARM64EC|AXP64|IA64] [debug] [htmlhelp] [dllcrt]
+rem build.cmd [X64|ARM64|ARM64EC|AXP64|IA64] [debug] [htmlhelp] [dllcrt] [visualstyles] [comctl4|5|6]
 rem
 rem Builds vncviewer and WinVNC (plus VNCHooks.dll) from the command line.
 rem Run from the vnc_winsrc_64 directory with the compiler environment for the
@@ -17,6 +17,11 @@ rem "dllcrt" builds VNCHooks.dll with the DLL CRT (/MD) instead of the static
 rem CRT; the target then needs the compiler's CRT DLL (msvcr80.dll etc.).
 rem "htmlhelp" links htmlhelp.lib (the calls into it are commented out in the
 rem sources; see nt.inc).  Warns for IA64 and AXP64.
+rem
+rem "comctl4", "comctl5" or "comctl6" compiles for that Common Controls level
+rem (_WIN32_IE; "comctl6" implies "visualstyles", see nt.inc).
+rem "visualstyles" embeds a Common Controls 6 manifest, so the programs use the
+rem current theme on Windows XP and later (see nt.inc).
 rem
 rem The Developer Studio files (WinVNC.mak, vncviewer.mak, *-axp64.mak,
 rem *-ia64.mak, *.dsp, *.vcproj) still work as before; this script uses the
@@ -70,6 +75,8 @@ set NTHH=
 
 rem Options after the CPU: "debug", "htmlhelp" and "dllcrt", in any order.
 set NTDBG=
+set NTVS=
+set NTCC=
 set NTHH=
 set NTDLL=
 :opts
@@ -84,12 +91,23 @@ if "%1"=="Htmlhelp" set NTHH=1
 if "%1"=="dllcrt" set NTDLL=1
 if "%1"=="DLLCRT" set NTDLL=1
 if "%1"=="Dllcrt" set NTDLL=1
+if "%1"=="visualstyles" set NTVS=1
+if "%1"=="VISUALSTYLES" set NTVS=1
+if "%1"=="Visualstyles" set NTVS=1
+if "%1"=="comctl4" set NTCC=4
+if "%1"=="comctl5" set NTCC=5
+if "%1"=="comctl6" set NTCC=6
+if "%1"=="COMCTL4" set NTCC=4
+if "%1"=="COMCTL5" set NTCC=5
+if "%1"=="COMCTL6" set NTCC=6
 goto opts
 :optsdone
 if "%NTDBG%"=="1" set NTARGS=%NTARGS% DEBUG=1
 if "%NTDBG%"=="1" set NTOUT=Dbg_%NTCPU%
 if "%NTHH%"=="1" set NTARGS=%NTARGS% HTMLHELP=1
 if "%NTDLL%"=="1" set NTARGS=%NTARGS% DLLCRT=1
+if "%NTVS%"=="1" set NTARGS=%NTARGS% VISUALSTYLES=1
+if not "%NTCC%"=="" set NTARGS=%NTARGS% COMCTL=%NTCC%
 
 echo === Building for %NTCPU% into %NTOUT%
 if "%NTDLL%"=="1" echo === VNCHooks.dll uses the DLL CRT: the target needs the compiler's CRT DLL installed.
@@ -157,3 +175,5 @@ set NTOUT=
 set NTHH=
 set NTDBG=
 set NTDLL=
+set NTVS=
+set NTCC=

@@ -64,17 +64,21 @@ all: $(OUTDIR) $(OUTDIR)\vncviewer.exe
 $(OUTDIR):
 	if not exist $(OUTDIR)\nul mkdir $(OUTDIR)
 
-$(OUTDIR)\vncviewer.exe: $(OBJS) $(OUTDIR)\vncviewer.res $(SUBLIBS)
+$(OUTDIR)\vncviewer.exe: $(OBJS) $(OUTDIR)\vncviewer.res $(VSRES) $(SUBLIBS)
 	$(LINK) @<<
 $(LBASE) /out:$@
 $(OBJS)
 $(OUTDIR)\vncviewer.res
+$(VSRES)
 $(SUBLIBS)
 $(LIBS)
 <<
 
 $(OUTDIR)\vncviewer.res: res\vncviewer.rc res\resource.h
 	$(RC) $(RCBASE) /l 0x409 /i res /fo$@ res\vncviewer.rc
+
+$(OUTDIR)\visualstyles.res: ..\visualstyles.rc ..\visualstyles.manifest
+	$(RC) $(RCBASE) /i .. /fo$@ ..\visualstyles.rc
 
 .SUFFIXES: .c .cpp
 

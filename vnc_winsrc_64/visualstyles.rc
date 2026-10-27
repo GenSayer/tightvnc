@@ -1,0 +1,5 @@
+/* visualstyles.rc - embeds visualstyles.manifest as the application manifest
+   (RT_MANIFEST = 24, resource ID 1).  Compiled into its own .res by the nt.mak
+   files when VISUALSTYLES=1 is given.  The numeric type is used so that the
+   old resource compilers (before the one in Visual C++ 2005) accept it. */
+1 24 "visualstyles.manifest"

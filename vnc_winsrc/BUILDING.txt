@@ -16,6 +16,7 @@ target CPU set up (PATH, INCLUDE, LIB):
                               for example after "vcvarsall.bat x86_arm")
     build.cmd i386 debug      unoptimised build with debug info
     build.cmd i386 staticcrt  VNCHooks.dll with the static CRT (see below)
+    build.cmd i386 visualstyles  themed controls on XP and later (see below)
 
 With no CPU argument PROCESSOR_ARCHITECTURE picks one.  Each directory
 gets its output in Rel_<CPU> (or Dbg_<CPU>), so builds for different
@@ -26,7 +27,7 @@ CPUs can live side by side.  The results are:
     winvnc\Rel_<CPU>\VNCHooks.dll       (copied there by build.cmd)
 
 Each directory can also be built on its own with
-"nmake /f nt.mak CPU=<CPU> [DEBUG=1] [STATICCRT=1]" (build omnithread,
+"nmake /f nt.mak CPU=<CPU> [DEBUG=1] [STATICCRT=1] [VISUALSTYLES=1] [COMCTL=4|5|6]" (build omnithread,
 zlib, libjpeg and VNCHooks first).  Shared settings are in nt.inc.  The compiler
 switches, defines and libraries are the same as in the Developer Studio
 makefiles described below, which still work as before.
@@ -37,6 +38,19 @@ msvcr80.dll or its successor, which has to be installed where WinVNC runs.
 "staticcrt" (STATICCRT=1) builds it with the static CRT (/MT) instead, so
 nothing has to be installed.  The executables and libraries always use the
 static CRT.
+
+"visualstyles" (VISUALSTYLES=1) embeds a manifest that selects Common Controls
+6.0 (visualstyles.rc and visualstyles.manifest, next to build.cmd).  On
+Windows XP and later the programs then use the current theme instead of the
+flat Windows 95 look; older systems ignore it.  Without it nothing changes.
+It can be combined with the other options.
+
+"comctl4", "comctl5" and "comctl6" (COMCTL=4, 5 or 6, experimental) compile the
+programs for Common Controls 4.71, 5.80 or 6.0 by defining _WIN32_IE as
+0x0400, 0x0500 or 0x0600.  This only fixes which control structures and flags
+the code uses; the comctl32.dll that runs is whatever the target has (5.80
+comes with IE 5, 5.81 with Windows 2000 and ME).  "comctl6" implies
+"visualstyles".  Without them the SDK default applies.
 
 htmlhelp.lib is linked for every CPU.  The one in the tree is for x86;
 for Alpha and ARM put a matching HtmlHelp.lib in vncviewer\ and winvnc\

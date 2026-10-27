@@ -78,11 +78,12 @@ all: $(OUTDIR) $(OUTDIR)\WinVNC.exe
 $(OUTDIR):
 	if not exist $(OUTDIR)\nul mkdir $(OUTDIR)
 
-$(OUTDIR)\WinVNC.exe: $(OBJS) $(OUTDIR)\WinVNC.res $(SUBLIBS)
+$(OUTDIR)\WinVNC.exe: $(OBJS) $(OUTDIR)\WinVNC.res $(VSRES) $(SUBLIBS)
 	$(LINK) @<<
 $(LBASE) /out:$@
 $(OBJS)
 $(OUTDIR)\WinVNC.res
+$(VSRES)
 $(SUBLIBS)
 $(LIBS)
 <<
@@ -100,6 +101,9 @@ RCJAVA=
 
 $(OUTDIR)\WinVNC.res: WinVNC.rc resource.h
 	$(RC) $(RCBASE) /l 0x809 $(RCJAVA) /fo$@ WinVNC.rc
+
+$(OUTDIR)\visualstyles.res: ..\visualstyles.rc ..\visualstyles.manifest
+	$(RC) $(RCBASE) /i .. /fo$@ ..\visualstyles.rc
 
 .SUFFIXES: .c .cpp
 

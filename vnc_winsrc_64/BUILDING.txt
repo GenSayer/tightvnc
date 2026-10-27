@@ -22,8 +22,9 @@ target CPU set up (PATH, INCLUDE, LIB):
     build.cmd X64 debug       unoptimised build with debug info
     build.cmd X64 htmlhelp    link htmlhelp.lib (see below)
     build.cmd X64 dllcrt      VNCHooks.dll with the DLL CRT (see below)
+    build.cmd X64 visualstyles  themed controls (see below)
 
-"debug", "htmlhelp" and "dllcrt" may be given in any order after the CPU.  With no
+"debug", "htmlhelp", "dllcrt" and "visualstyles" may be given in any order after the CPU.  With no
 CPU argument PROCESSOR_ARCHITECTURE picks one; it cannot pick ARM64EC, so
 ask for that by name.  Each directory gets its output in Rel_<CPU> (or
 Dbg_<CPU>), so builds for different CPUs can live side by side.  The
@@ -38,7 +39,7 @@ same settings as in the vnc_winsrc tree.  They are there for testing only and
 are not supported in this tree.
 
 Each directory can also be built on its own with
-"nmake /f nt.mak CPU=<CPU> [DEBUG=1] [HTMLHELP=1] [DLLCRT=1]" (build omnithread, zlib,
+"nmake /f nt.mak CPU=<CPU> [DEBUG=1] [HTMLHELP=1] [DLLCRT=1] [VISUALSTYLES=1] [COMCTL=4|5|6]" (build omnithread, zlib,
 libjpeg and VNCHooks first).  Shared settings are in nt.inc.  The compiler
 switches, defines and libraries are the same as in the Developer Studio
 makefiles (WinVNC.mak, vncviewer.mak, WinVNC-axp64.mak, vncviewer-axp64.mak,
@@ -49,6 +50,19 @@ VNCHooks.dll is linked with the static CRT by default, so that no CRT DLL
 "dllcrt" (DLLCRT=1) builds it with the DLL CRT (/MD) as the original makefiles
 do; the compiler's CRT DLL must then be present where WinVNC runs.  The
 executables and libraries always use the static CRT.
+
+"visualstyles" (VISUALSTYLES=1) embeds a manifest that selects Common Controls
+6.0 (visualstyles.rc and visualstyles.manifest, next to build.cmd).  On
+Windows XP and later the programs then use the current theme instead of the
+flat Windows 95 look; older systems ignore it.  Without it nothing changes.
+It can be combined with the other options.
+
+"comctl4", "comctl5" and "comctl6" (COMCTL=4, 5 or 6, experimental) compile the
+programs for Common Controls 4.71, 5.80 or 6.0 by defining _WIN32_IE as
+0x0400, 0x0500 or 0x0600.  This only fixes which control structures and flags
+the code uses; the comctl32.dll that runs is whatever the target has (5.80
+comes with IE 5, 5.81 with Windows 2000 and ME).  "comctl6" implies
+"visualstyles".  Without them the SDK default applies.
 
 htmlhelp.lib is not linked by default: the calls into it are commented out in
 the sources, because HtmlHelp crashed the programs on IA64 before Windows

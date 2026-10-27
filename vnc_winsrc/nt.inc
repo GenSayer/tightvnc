@@ -16,6 +16,11 @@
 #     DEBUG=1                         unoptimised build with /Zi + /debug
 #     STATICCRT=1                     VNCHooks.dll uses the static CRT (/MT)
 #                                     instead of the DLL CRT (see below)
+#     COMCTL=4 | 5 | 6                compile for Common Controls 4.71, 5.80
+#                                     or 6.0 (_WIN32_IE); 6 implies
+#                                     VISUALSTYLES=1 (see below)
+#     VISUALSTYLES=1                  link a manifest that selects Common
+#                                     Controls 6 (see below)
 #
 # Output goes to Rel_<CPU> or Dbg_<CPU> next to each nt.mak, so builds for
 # different CPUs can live side by side.
@@ -33,6 +38,28 @@ CPU=ARM
 !ELSE
 CPU=i386
 !ENDIF
+!ENDIF
+
+# COMCTL=4 | 5 | 6 chooses the Common Controls level the programs are compiled
+# for, by defining _WIN32_IE (0x0400 = comctl32 4.71 / IE 4, 0x0500 = 5.80 /
+# IE 5, 0x0600 = 6.0 / XP).  That fixes the control structure sizes and flags
+# the code uses; which comctl32.dll actually runs is still up to the target
+# system.  COMCTL=6 also implies VISUALSTYLES=1 (below).  Without COMCTL the
+# SDK's own default applies, except where this file sets 0x0600 for the CPU.
+!IF "$(COMCTL)" == ""
+IEDEF600=/D_WIN32_IE=0x0600
+!ELSEIF "$(COMCTL)" == "4"
+IEDEF600=
+COMIE=0x0400
+!ELSEIF "$(COMCTL)" == "5"
+IEDEF600=
+COMIE=0x0500
+!ELSEIF "$(COMCTL)" == "6"
+IEDEF600=
+COMIE=0x0600
+VISUALSTYLES=1
+!ELSE
+!ERROR COMCTL must be 4, 5 or 6 (got "$(COMCTL)")
 !ENDIF
 
 # No CPU define is passed: the compiler sets _M_IX86 / _M_ALPHA / _M_ARM and
@@ -68,13 +95,19 @@ MACHINE=/machine:ARM
 EHFLAG=/EHsc
 HHLIB=htmlhelp.lib
 WINVER=0x0500
-CEXTRA=/D_WIN32_IE=0x600 /D_ARM_WINAPI_PARTITION_DESKTOP_SDK_AVAILABLE=1
+CEXTRA=$(IEDEF600) /D_ARM_WINAPI_PARTITION_DESKTOP_SDK_AVAILABLE=1
 !ELSE
 !ERROR CPU must be i386, ALPHA or ARM (got "$(CPU)")
 !ENDIF
 
 # CRTST is the static multithreaded CRT the programs and libraries use; CRTDLL
 # is the DLL CRT that VNCHooks.dll uses.  Both as in the original makefiles.
+# Applied to every directory (the per-CPU values above only carry the 0x0600
+# default that COMCTL replaces).
+!IF "$(COMCTL)" != ""
+CEXTRA=$(CEXTRA) /D_WIN32_IE=$(COMIE)
+!ENDIF
+
 !IF "$(DEBUG)" == "1"
 CDBG=/Zi /Od /D_DEBUG
 LDBG=/debug
@@ -116,4 +149,17 @@ LBASE=/nologo /subsystem:windows /incremental:no $(MACHINE) $(LDBG)
 RCBASE=/r /d_DEBUG
 !ELSE
 RCBASE=/r /dNDEBUG
+!ENDIF
+
+# VISUALSTYLES=1 adds visualstyles.res (the manifest in visualstyles.manifest,
+# compiled by visualstyles.rc) to WinVNC.exe and vncviewer.exe.  The manifest
+# asks for Microsoft.Windows.Common-Controls 6.0, so on Windows XP and later
+# the buttons, tabs, trackbars and so on take the current theme instead of the
+# flat Windows 95 look.  Older systems ignore it.  The manifest is added as a
+# resource, so it works with every resource compiler and linker used here and
+# no manifest tool is needed.  Without the switch nothing changes.
+!IF "$(VISUALSTYLES)" == "1"
+VSRES=$(OUTDIR)\visualstyles.res
+!ELSE
+VSRES=
 !ENDIF

@@ -1,5 +1,5 @@
 @echo off
-rem build.cmd [i386|ALPHA|ARM] [debug] [staticcrt]
+rem build.cmd [i386|ALPHA|ARM] [debug] [staticcrt] [visualstyles] [comctl4|5|6]
 rem
 rem Builds vncviewer and WinVNC (plus VNCHooks.dll) from the command line.
 rem Run from the vnc_winsrc directory with the compiler environment for the
@@ -8,6 +8,11 @@ rem Alpha, a Visual Studio 2015 ARM environment (for example vcvarsall.bat
 rem x86_arm) for ARM.  With no CPU argument, PROCESSOR_ARCHITECTURE picks it.
 rem "staticcrt" links the static CRT into VNCHooks.dll instead of the DLL CRT.
 rem Output: <dir>\Rel_<CPU> or <dir>\Dbg_<CPU>.
+rem
+rem "comctl4", "comctl5" or "comctl6" compiles for that Common Controls level
+rem (_WIN32_IE; "comctl6" implies "visualstyles", see nt.inc).
+rem "visualstyles" embeds a Common Controls 6 manifest, so the programs use the
+rem current theme on Windows XP and later (see nt.inc).
 rem
 rem The Developer Studio files (WinVNC.mak, vncviewer.mak, *.dsp, *.vcproj)
 rem still work as before; this script uses the nt.mak files instead.
@@ -35,6 +40,8 @@ goto end
 set NTARGS=CPU=%NTCPU%
 set NTOUT=Rel_%NTCPU%
 set NTDBG=
+set NTVS=
+set NTCC=
 set NTSTAT=
 
 rem Options after the CPU: "debug" and "staticcrt", in either order.
@@ -47,11 +54,22 @@ if "%1"=="Debug" set NTDBG=1
 if "%1"=="staticcrt" set NTSTAT=1
 if "%1"=="STATICCRT" set NTSTAT=1
 if "%1"=="Staticcrt" set NTSTAT=1
+if "%1"=="visualstyles" set NTVS=1
+if "%1"=="VISUALSTYLES" set NTVS=1
+if "%1"=="Visualstyles" set NTVS=1
+if "%1"=="comctl4" set NTCC=4
+if "%1"=="comctl5" set NTCC=5
+if "%1"=="comctl6" set NTCC=6
+if "%1"=="COMCTL4" set NTCC=4
+if "%1"=="COMCTL5" set NTCC=5
+if "%1"=="COMCTL6" set NTCC=6
 goto opts
 :optsdone
 if "%NTDBG%"=="1" set NTARGS=%NTARGS% DEBUG=1
 if "%NTDBG%"=="1" set NTOUT=Dbg_%NTCPU%
 if "%NTSTAT%"=="1" set NTARGS=%NTARGS% STATICCRT=1
+if "%NTVS%"=="1" set NTARGS=%NTARGS% VISUALSTYLES=1
+if not "%NTCC%"=="" set NTARGS=%NTARGS% COMCTL=%NTCC%
 
 echo === Building for %NTCPU% into %NTOUT%
 if "%NTSTAT%"=="1" echo === VNCHooks.dll uses the static CRT.
@@ -112,3 +130,5 @@ set NTARGS=
 set NTOUT=
 set NTDBG=
 set NTSTAT=
+set NTVS=
+set NTCC=
