@@ -43,7 +43,7 @@ I have every port separated into separate branches because that is how I origina
 ### Toolchains used:
 * NT 3.1 / early Win32s (x86, MIPS, AXP): Visual C++ 2.x
 * PowerPC/MIPS/win32s/(AXP/x86 MSVC4): MSVC 4.1 with the Windows NT 4.0 SDK and the Microsoft Internet Explorer 3.01 Internet Client SDK for wininet.h for the OS architecture corresponding versions
-* x86: Visual Studio 6.0
+* x86: Visual Studio 6.0 & Visual Studio 2005
 * AXP: Visual Studio 6.0 for DEC Alpha Platforms with the October 1999 Microsoft Platform SDK
 * AXP64: AXP64 cross-compiler from the October 1999 Platform SDK, which is a very early version of the MSVC 7.0 compiler
 * IA64: MSVC 7.1 cross-compiler from the February 2003 Platform SDK
