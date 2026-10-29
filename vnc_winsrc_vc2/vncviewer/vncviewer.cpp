@@ -38,6 +38,7 @@
 
 // All logging is done via the log object
 Log vnclog;
+VNCHelp help;
 HotKeys hotkeys;
 
 #ifdef UNDER_CE
@@ -134,6 +135,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 					break;
 				}
 				if ( !hotkeys.TranslateAccel(&msg) &&
+					 !help.TranslateMsg(&msg) &&
 					 !app.ProcessDialogMessage(&msg) ) {
 					TranslateMessage(&msg);
 					DispatchMessage(&msg);

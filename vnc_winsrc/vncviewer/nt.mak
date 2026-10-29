@@ -7,7 +7,7 @@
 !INCLUDE ..\nt.inc
 
 # /Ob0 as in the original release build.
-CFLAGS=$(CBASE) $(CRTST) /Ob0 /I omnithread /I .. /D__NT__ /D_WINSTATIC /D__WIN32__ /DXMD_H /DNEED_FAR_POINTERS
+CFLAGS=$(CBASE) $(CRTST) /Ob0 /I omnithread /I .. /D__NT__ /D_WINSTATIC /D__WIN32__ /DXMD_H /DNEED_FAR_POINTERS $(HELPDEF)
 
 LIBS=winmm.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib uuid.lib wsock32.lib comctl32.lib $(HHLIB)
 

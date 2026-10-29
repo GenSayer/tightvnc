@@ -58,6 +58,23 @@ typedef HWND   (WINAPI *PFNCREATETOOLBAREX)(HWND, DWORD, UINT, int, HINSTANCE,
                                             int, UINT);
 typedef HANDLE (WINAPI *PFNLOADIMAGE)(HINSTANCE, LPCSTR, UINT, int, int, UINT);
 
+// The layout of WNDCLASSEXA, which not every SDK of this era declares.
+typedef struct {
+    UINT        cbSize;
+    UINT        style;
+    WNDPROC     lpfnWndProc;
+    int         cbClsExtra;
+    int         cbWndExtra;
+    HINSTANCE   hInstance;
+    HICON       hIcon;
+    HCURSOR     hCursor;
+    HBRUSH      hbrBackground;
+    LPCSTR      lpszMenuName;
+    LPCSTR      lpszClassName;
+    HICON       hIconSm;
+} WIN32S_WNDCLASSEX;
+typedef ATOM   (WINAPI *PFNREGISTERCLASSEX)(const WIN32S_WNDCLASSEX *);
+
 #ifndef IMAGE_ICON
 #define IMAGE_ICON 1
 #endif
@@ -91,6 +108,7 @@ static PFNSHELLNOTIFYICON       g_pShellNotifyIcon       = NULL;
 static PFNINITCOMMONCONTROLS    g_pInitCommonControls    = NULL;
 static PFNCREATETOOLBAREX       g_pCreateToolbarEx       = NULL;
 static PFNLOADIMAGE             g_pLoadImage             = NULL;
+static PFNREGISTERCLASSEX       g_pRegisterClassEx       = NULL;
 
 // Cached fallback brushes for Win32sGetSysColorBrush.  COLOR_* indices used by
 // the viewer are small; 32 covers every documented 3.1/95 index.
@@ -181,6 +199,8 @@ void Win32sApiInit(void)
             (PFNGETFOREGROUNDWINDOW)GetProcAddress(g_hUser, "GetForegroundWindow");
         g_pLoadImage =
             (PFNLOADIMAGE)GetProcAddress(g_hUser, "LoadImageA");
+        g_pRegisterClassEx =
+            (PFNREGISTERCLASSEX)GetProcAddress(g_hUser, "RegisterClassExA");
     }
 
     if (g_hGdi != NULL) {
@@ -480,6 +500,63 @@ HANDLE Win32sLoadImageIcon(HINSTANCE hInst, LPCSTR name, int cx, int cy)
 
     // Windows 3.1: LoadIcon only, at whatever size the resource happens to be.
     return (HANDLE)LoadIcon(hInst, name);
+}
+
+#ifndef SM_CXSMICON
+#define SM_CXSMICON 49
+#define SM_CYSMICON 50
+#endif
+
+// RegisterClassEx and the small icons only from NT 3.51 on: the USER32 of
+// NT 3.5 can export the names without supporting them.
+static BOOL Win32sHasSmallIcons()
+{
+    DWORD ver = GetVersion();
+    BYTE major = LOBYTE(LOWORD(ver));
+    BYTE minor = HIBYTE(LOWORD(ver));
+
+    return major > 3 || (major == 3 && minor >= 51);
+}
+
+HICON Win32sLoadSmallIcon(HINSTANCE hInst, LPCSTR name)
+{
+    if (!g_inited)
+        Win32sApiInit();
+
+    if (g_pLoadImage == NULL || !Win32sHasSmallIcons())
+        return NULL;
+    return (HICON)g_pLoadImage(hInst, name, IMAGE_ICON,
+                               GetSystemMetrics(SM_CXSMICON),
+                               GetSystemMetrics(SM_CYSMICON), LR_SHARED);
+}
+
+ATOM Win32sRegisterClassSm(const WNDCLASS *wc, HICON hIconSm)
+{
+    WIN32S_WNDCLASSEX wcx;
+    ATOM atom;
+
+    if (!g_inited)
+        Win32sApiInit();
+
+    if (g_pRegisterClassEx == NULL || !Win32sHasSmallIcons())
+        return RegisterClass(wc);
+
+    wcx.cbSize        = sizeof(wcx);
+    wcx.style         = wc->style;
+    wcx.lpfnWndProc   = wc->lpfnWndProc;
+    wcx.cbClsExtra    = wc->cbClsExtra;
+    wcx.cbWndExtra    = wc->cbWndExtra;
+    wcx.hInstance     = wc->hInstance;
+    wcx.hIcon         = wc->hIcon;
+    wcx.hCursor       = wc->hCursor;
+    wcx.hbrBackground = wc->hbrBackground;
+    wcx.lpszMenuName  = wc->lpszMenuName;
+    wcx.lpszClassName = wc->lpszClassName;
+    wcx.hIconSm       = hIconSm;
+    atom = g_pRegisterClassEx(&wcx);
+    if (atom == 0)
+        atom = RegisterClass(wc);
+    return atom;
 }
 
 // ---------------------------------------------------------------------------

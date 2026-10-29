@@ -857,6 +857,7 @@ BOOL CALLBACK VNCOptions::DlgProc(HWND hwndDlg, UINT uMsg,
 			// Resolved at run time: COMCTL32 may be absent on Win32s.
 			Win32sInitCommonControls();
 			CentreWindow(hwndDlg);
+			VNCHelp::InitDialog(hwndDlg);
 
 			_this->m_hParent = hwndDlg;
 			_this->m_hTab = GetDlgItem(hwndDlg, IDC_TAB);
@@ -936,6 +937,9 @@ BOOL CALLBACK VNCOptions::DlgProc(HWND hwndDlg, UINT uMsg,
 			return TRUE;
 		}
 
+	case WM_HELP:	
+		help.Popup(lParam);
+		return 0;
 	case WM_DESTROY:
 		Vc2CtlEndPagedDialog(hwndDlg);
 		return FALSE;
@@ -1359,6 +1363,9 @@ BOOL CALLBACK VNCOptions::DlgProcConnOptions(HWND hwnd, UINT uMsg,
 			}
 			return 0;
 		}
+	case WM_HELP:	
+		help.Popup(lParam);
+		return 0;
 	}
 	return 0;
 }
@@ -1451,6 +1458,9 @@ BOOL CALLBACK VNCOptions::DlgProcGlobalOptions(HWND hwnd, UINT uMsg,
 			SetDlgItemText( hwnd, IDC_EDIT_LOG_FILE, pApp->m_options.m_logFilename);
 			return TRUE;
 		}
+	case WM_HELP:	
+		help.Popup(lParam);
+		return 0;
 	case WM_COMMAND: 
 		switch (LOWORD(wParam)) {
 		case IDC_LISTEN_PORT:

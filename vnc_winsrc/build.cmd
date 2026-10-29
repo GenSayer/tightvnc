@@ -1,5 +1,6 @@
 @echo off
 rem build.cmd [i386|ALPHA|ARM] [debug] [staticcrt] [visualstyles] [comctl4|5|6]
+rem           [minihelp|htmlhelp|nohelp]
 rem
 rem Builds vncviewer and WinVNC (plus VNCHooks.dll) from the command line.
 rem Run from the vnc_winsrc directory with the compiler environment for the
@@ -13,6 +14,10 @@ rem "comctl4", "comctl5" or "comctl6" compiles for that Common Controls level
 rem (_WIN32_IE; "comctl6" implies "visualstyles", see nt.inc).
 rem "visualstyles" embeds a Common Controls 6 manifest, so the programs use the
 rem current theme on Windows XP and later (see nt.inc).
+rem
+rem "minihelp" (the default), "htmlhelp" or "nohelp" picks the context help
+rem of the dialogs: the built-in text popups, the original HtmlHelp popups
+rem (links htmlhelp.lib, which must match the CPU), or none (see nt.inc).
 rem
 rem The Developer Studio files (WinVNC.mak, vncviewer.mak, *.dsp, *.vcproj)
 rem still work as before; this script uses the nt.mak files instead.
@@ -43,8 +48,9 @@ set NTDBG=
 set NTVS=
 set NTCC=
 set NTSTAT=
+set NTHELP=
 
-rem Options after the CPU: "debug" and "staticcrt", in either order.
+rem Options after the CPU, in any order.
 :opts
 shift
 if "%1"=="" goto optsdone
@@ -63,6 +69,15 @@ if "%1"=="comctl6" set NTCC=6
 if "%1"=="COMCTL4" set NTCC=4
 if "%1"=="COMCTL5" set NTCC=5
 if "%1"=="COMCTL6" set NTCC=6
+if "%1"=="minihelp" set NTHELP=mini
+if "%1"=="MINIHELP" set NTHELP=mini
+if "%1"=="Minihelp" set NTHELP=mini
+if "%1"=="htmlhelp" set NTHELP=html
+if "%1"=="HTMLHELP" set NTHELP=html
+if "%1"=="Htmlhelp" set NTHELP=html
+if "%1"=="nohelp" set NTHELP=none
+if "%1"=="NOHELP" set NTHELP=none
+if "%1"=="Nohelp" set NTHELP=none
 goto opts
 :optsdone
 if "%NTDBG%"=="1" set NTARGS=%NTARGS% DEBUG=1
@@ -70,9 +85,13 @@ if "%NTDBG%"=="1" set NTOUT=Dbg_%NTCPU%
 if "%NTSTAT%"=="1" set NTARGS=%NTARGS% STATICCRT=1
 if "%NTVS%"=="1" set NTARGS=%NTARGS% VISUALSTYLES=1
 if not "%NTCC%"=="" set NTARGS=%NTARGS% COMCTL=%NTCC%
+if "%NTHELP%"=="" set NTHELP=mini
+set NTARGS=%NTARGS% HELP=%NTHELP%
 
 echo === Building for %NTCPU% into %NTOUT%
 if "%NTSTAT%"=="1" echo === VNCHooks.dll uses the static CRT.
+if "%NTHELP%"=="html" echo === HtmlHelp: htmlhelp.lib will be linked, it must be a %NTCPU% library.
+if "%NTHELP%"=="none" echo === No context help.
 
 echo === vncviewer\omnithread
 cd vncviewer\omnithread
@@ -132,3 +151,4 @@ set NTDBG=
 set NTSTAT=
 set NTVS=
 set NTCC=
+set NTHELP=

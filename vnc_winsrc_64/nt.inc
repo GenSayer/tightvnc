@@ -18,7 +18,9 @@
 #                                                  default: from
 #                                                  PROCESSOR_ARCHITECTURE
 #     DEBUG=1                         unoptimised build with /Zi + /debug
-#     HTMLHELP=1                      link htmlhelp.lib (see below)
+#     HELP=mini | html | none         context help system (see below);
+#                                     default mini.  HTMLHELP=1 is the old
+#                                     spelling of HELP=html
 #     DLLCRT=1                        VNCHooks.dll uses the DLL CRT (/MD)
 #                                     instead of the static one (see below)
 #     COMCTL=4 | 5 | 6                compile for Common Controls 4.71, 5.80
@@ -86,10 +88,8 @@ VISUALSTYLES=1
 #   EHFLAG   exception handling switch.  /GX is the spelling of the old
 #            compilers; Visual C++ 2005 and later still take it but warn, so
 #            the CPUs that only ever see those use /EHsc (which VC6 knows too).
-#   HHLIB    HtmlHelp import library; empty unless HTMLHELP=1 is given, see
-#            below.
-#   HHWARN   1 for the CPUs where linking HtmlHelp is known to be a problem;
-#            the application nt.mak files print a warning then.
+#   HHWARN   1 for the CPUs where HtmlHelp is known to be a problem; the
+#            application nt.mak files print a warning for HELP=html then.
 #   WINVER   value for the WinVNC WINVER define.
 #   CEXTRA   extra switches and defines for every directory.
 #   VEXTRA   extra defines for the vncviewer directory only.
@@ -165,16 +165,38 @@ VEXTRA=
 !ERROR CPU must be X64, ARM64, ARM64EC, AXP64, IA64 (or, unsupported, i386, ALPHA, ARM); got "$(CPU)"
 !ENDIF
 
-# htmlhelp.lib.  The HtmlHelp() calls in both programs are commented out (any
-# HtmlHelp call crashed the programs on IA64 before Windows Server 2003 SP1),
-# so by default nothing is linked.  HTMLHELP=1 links $(HHLIB) for the CPU being
-# built; put a matching htmlhelp.lib for that CPU in vncviewer\ and winvnc\
-# (or on LIB) first: the one in the tree is for x64 only.  Expect a warning
-# for IA64 and AXP64 builds.
-!IF "$(HTMLHELP)" == "1"
-HHLIB=htmlhelp.lib
+# HELP chooses the context help of the dialogs (F1 and the caption "?"
+# button), by defining one of the VNCHELP_ macros of VNCHelp.h:
+#
+#   mini   VNCHELP_MINI: the built-in text popups of VNCHelp.cpp.  Nothing
+#          extra is linked and hhctrl.ocx is not needed.  The default.
+#   html   VNCHELP_HTML: the original HtmlHelp popups.  Links htmlhelp.lib;
+#          put a matching htmlhelp.lib for the CPU in vncviewer\ and winvnc\
+#          (or on LIB) first: the one in the tree is for x64 only.  HtmlHelp
+#          calls crashed the programs on IA64 before Windows Server 2003 SP1,
+#          so expect a warning for IA64 and AXP64 builds.
+#   none   VNCHELP_NONE: no context help; the "?" buttons are removed.
+#
+# HHLIB is the HtmlHelp import library, empty unless HELP=html.  HELPSEL holds
+# the choice, because a makefile cannot override a command-line HELP=.
+!IF "$(HELP)" != ""
+HELPSEL=$(HELP)
+!ELSEIF "$(HTMLHELP)" == "1"
+HELPSEL=html
 !ELSE
+HELPSEL=mini
+!ENDIF
+!IF "$(HELPSEL)" == "mini"
+HELPDEF=/DVNCHELP_MINI
 HHLIB=
+!ELSEIF "$(HELPSEL)" == "html"
+HELPDEF=/DVNCHELP_HTML
+HHLIB=htmlhelp.lib
+!ELSEIF "$(HELPSEL)" == "none"
+HELPDEF=/DVNCHELP_NONE
+HHLIB=
+!ELSE
+!ERROR HELP must be mini, html or none (got "$(HELP)")
 !ENDIF
 
 # CRTST is the static multithreaded CRT the programs and libraries use.  CRTDLL

@@ -30,7 +30,6 @@
 #include "vncviewer.h"
 #include "VNCOptions.h"
 #include "Exception.h"
-// #include "Htmlhelp.h"
 #include "commctrl.h"
 #include "AboutBox.h"
 VNCOptions::VNCOptions()
@@ -648,6 +647,7 @@ BOOL CALLBACK VNCOptions::DlgProc(HWND hwndDlg, UINT uMsg,
 			VNCOptions *_this = (VNCOptions *) lParam;
 			InitCommonControls();
 			CentreWindow(hwndDlg);
+			VNCHelp::InitDialog(hwndDlg);
 
 			_this->m_hParent = hwndDlg;
 			_this->m_hTab = GetDlgItem(hwndDlg, IDC_TAB);

@@ -34,6 +34,7 @@
 #include "res/resource.h"
 #include "VNCviewerApp.h"
 #include "Log.h"
+#include "VNCHelp.h"
 #include "HotKeys.h"
 
 #define WM_SOCKEVENT WM_USER+1
@@ -45,6 +46,7 @@ extern VNCviewerApp *pApp;
 
 // Global logger - may be used by anything
 extern Log vnclog;
+extern VNCHelp help;
 extern HotKeys hotkeys;
 
 // Display given window in centre of screen

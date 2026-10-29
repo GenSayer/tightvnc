@@ -372,6 +372,7 @@ FileTransfer::FileTransferDlgProc(HWND hwnd,
 		{
 			Win32sSetForegroundWindow(hwnd);
 			CentreWindow(hwnd);
+			VNCHelp::InitDialog(hwnd);
 			return TRUE;
 		}
 	break;

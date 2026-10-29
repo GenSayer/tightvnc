@@ -120,6 +120,7 @@ FileTransfer::FileTransferDlgProc(HWND hwnd,
 		{
 			SetForegroundWindow(hwnd);
 			CentreWindow(hwnd);
+			VNCHelp::InitDialog(hwnd);
 			return TRUE;
 		}
 	break;

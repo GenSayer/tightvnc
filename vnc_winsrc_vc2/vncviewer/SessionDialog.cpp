@@ -81,6 +81,7 @@ BOOL CALLBACK SessionDialog::SessDlgProc(  HWND hwnd,  UINT uMsg,  WPARAM wParam
             SetWindowLong(hwnd, GWL_USERDATA, lParam);
             SessionDialog *_this = (SessionDialog *) lParam;
             CentreWindow(hwnd);
+			VNCHelp::InitDialog(hwnd);
 			_this->m_cc->m_hSess = hwnd;
 
 			// Load connection history to the combo box, from the [History]
@@ -115,6 +116,9 @@ BOOL CALLBACK SessionDialog::SessDlgProc(  HWND hwnd,  UINT uMsg,  WPARAM wParam
 			SetFocus(hcombo);
             return TRUE;
 		}
+	case WM_HELP:	
+		help.Popup(lParam);
+		return 0;
 	case WM_ACTIVATE:
 	case WM_ACTIVATEAPP:
 		if ((pApp->m_options.m_listening) || 

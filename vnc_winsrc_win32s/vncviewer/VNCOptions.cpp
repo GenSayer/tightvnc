@@ -30,7 +30,6 @@
 #include "vncviewer.h"
 #include "VNCOptions.h"
 #include "Exception.h"
-//#include "Htmlhelp.h"
 #include "commctrl.h"
 #include "AboutBox.h"
 #include "Win32sApi.h"
@@ -855,6 +854,7 @@ BOOL CALLBACK VNCOptions::DlgProc(HWND hwndDlg, UINT uMsg,
 			// Resolved at run time: COMCTL32 may be absent on Win32s.
 			Win32sInitCommonControls();
 			CentreWindow(hwndDlg);
+			VNCHelp::InitDialog(hwndDlg);
 
 			_this->m_hParent = hwndDlg;
 			_this->m_hTab = GetDlgItem(hwndDlg, IDC_TAB);

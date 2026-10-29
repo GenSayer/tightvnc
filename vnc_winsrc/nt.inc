@@ -21,6 +21,8 @@
 #                                     VISUALSTYLES=1 (see below)
 #     VISUALSTYLES=1                  link a manifest that selects Common
 #                                     Controls 6 (see below)
+#     HELP=mini | html | none         context help system (see below);
+#                                     default mini
 #
 # Output goes to Rel_<CPU> or Dbg_<CPU> next to each nt.mak, so builds for
 # different CPUs can live side by side.
@@ -69,9 +71,6 @@ VISUALSTYLES=1
 #   EHFLAG   exception handling switch.  /GX is the spelling of Visual C++ 4.x
 #            to 6.0; Visual Studio 2015 still takes it but warns, so ARM uses
 #            /EHsc (which VC6 also knows).
-#   HHLIB    HtmlHelp import library, linked for every CPU.  The HtmlHelp.lib
-#            in the source tree is for x86; put the Alpha or ARM version in
-#            the tree or on LIB before building for those CPUs.
 #   WINVER   value for the WinVNC WINVER define.
 #   CEXTRA   extra defines for every directory.  On ARM,
 #            _ARM_WINAPI_PARTITION_DESKTOP_SDK_AVAILABLE=1 switches off the
@@ -81,23 +80,51 @@ VISUALSTYLES=1
 !IF "$(CPU)" == "i386"
 MACHINE=/machine:I386
 EHFLAG=/GX
-HHLIB=htmlhelp.lib
 WINVER=0x0400
 CEXTRA=
 !ELSEIF "$(CPU)" == "ALPHA"
 MACHINE=/machine:ALPHA
 EHFLAG=/GX
-HHLIB=htmlhelp.lib
 WINVER=0x0400
 CEXTRA=
 !ELSEIF "$(CPU)" == "ARM"
 MACHINE=/machine:ARM
 EHFLAG=/EHsc
-HHLIB=htmlhelp.lib
 WINVER=0x0500
 CEXTRA=$(IEDEF600) /D_ARM_WINAPI_PARTITION_DESKTOP_SDK_AVAILABLE=1
 !ELSE
 !ERROR CPU must be i386, ALPHA or ARM (got "$(CPU)")
+!ENDIF
+
+# HELP chooses the context help of the dialogs (F1 and the caption "?"
+# button), by defining one of the VNCHELP_ macros of VNCHelp.h:
+#
+#   mini   VNCHELP_MINI: the built-in text popups of VNCHelp.cpp.  Nothing
+#          extra is linked and hhctrl.ocx is not needed.  The default.
+#   html   VNCHELP_HTML: the original HtmlHelp popups.  Links htmlhelp.lib;
+#          the HtmlHelp.lib in the source tree is for x86, so put the Alpha
+#          or ARM version in the tree or on LIB before building for those
+#          CPUs.  The target needs HTML Help (hhctrl.ocx) installed.
+#   none   VNCHELP_NONE: no context help; the "?" buttons are removed.
+#
+# HHLIB is the HtmlHelp import library, empty unless HELP=html.
+# (HELPSEL, because a makefile cannot override a command-line HELP=.)
+!IF "$(HELP)" == ""
+HELPSEL=mini
+!ELSE
+HELPSEL=$(HELP)
+!ENDIF
+!IF "$(HELPSEL)" == "mini"
+HELPDEF=/DVNCHELP_MINI
+HHLIB=
+!ELSEIF "$(HELPSEL)" == "html"
+HELPDEF=/DVNCHELP_HTML
+HHLIB=htmlhelp.lib
+!ELSEIF "$(HELPSEL)" == "none"
+HELPDEF=/DVNCHELP_NONE
+HHLIB=
+!ELSE
+!ERROR HELP must be mini, html or none (got "$(HELP)")
 !ENDIF
 
 # CRTST is the static multithreaded CRT the programs and libraries use; CRTDLL

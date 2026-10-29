@@ -57,6 +57,7 @@
 extern "C" {
 #include "vncauth.h"
 #include "d3des.h"
+#include "WndClassSm.h"
 }
 
 #ifndef TBSTYLE_FLAT
@@ -388,7 +389,10 @@ void ClientConnection::CreateDisplay()
     wndclass.lpszMenuName	= (LPCTSTR)NULL;
 	wndclass.lpszClassName	= VWR_WND_CLASS_NAME;
 
-	RegisterClass(&wndclass);
+	// With the icon's own 16x16 image where the system has small icons.
+	RegisterClassSm(&wndclass,
+					LoadSmallIcon(m_pApp->m_instance,
+								  MAKEINTRESOURCE(IDI_MAINICON)));
 
 	wndclass.style			= 0;
 	wndclass.lpfnWndProc	= ClientConnection::ScrollProc;

@@ -308,6 +308,7 @@ vncProperties::ParentDlgProc(HWND hwnd,
 			// control and trackbars on these property pages DO need COMCTL32 -
 			// see the dialog-creation check below.
 			Win32sInitCommonControls();
+			VNCHelp::InitDialog(hwnd);
 
 			// WIN32S: restore WS_EX_CONTROLPARENT at run time.
 			//
@@ -480,6 +481,9 @@ vncProperties::ParentDlgProc(HWND hwnd,
 			// we set the keyboard focus explicitly (on the password field).
 			return (tab_id != 0);
 		}
+	case WM_HELP:	
+		VNCHelp::Popup(lParam);
+		return 0;
 	case WM_DESTROY:
 		Vc2CtlEndPagedDialog(hwnd);
 		return FALSE;
@@ -592,6 +596,9 @@ BOOL CALLBACK vncProperties::IncomingDlgProc(HWND hwnd, UINT uMsg,
 			SendMessage(hLockSetting, BM_SETCHECK, TRUE, 0);
 			return 0;
 		}
+	case WM_HELP:	
+		VNCHelp::Popup(lParam);
+		return 0;
     case WM_COMMAND:		
 		switch (LOWORD(wParam))
 		{
@@ -654,6 +661,9 @@ BOOL CALLBACK vncProperties::PollDlgProc(HWND hwnd, UINT uMsg,
 			_this->m_pollcontrols = new PollControls(hwnd, _this->m_server); 
 			return 0;
 		}
+	case WM_HELP:	
+		VNCHelp::Popup(lParam);
+		return 0;
 	case WM_COMMAND:	
 		switch (LOWORD(wParam))
 		{
@@ -699,6 +709,9 @@ BOOL CALLBACK vncProperties::SharedDlgProc(HWND hwnd, UINT uMsg,
 
 			return 0;
 		}
+	case WM_HELP:	
+		VNCHelp::Popup(lParam);
+		return 0;
 	case WM_COMMAND:	
 		switch (LOWORD(wParam))
 		{
@@ -744,6 +757,9 @@ BOOL CALLBACK vncProperties::AdministrationDlgProc(HWND hwnd, UINT uMsg,
 			_this->m_AdminControls = new AdministrationControls(hwnd, _this->m_server);
 			return 0;
 		}
+	case WM_HELP:	
+		VNCHelp::Popup(lParam);
+		return 0;
     case WM_COMMAND:		
 		switch (LOWORD(wParam))
 		{
@@ -784,6 +800,9 @@ BOOL CALLBACK vncProperties::QuerySettingsDlgProc(HWND hwnd, UINT uMsg,
 			_this->m_QSControls = new QuerySettingsControls(hwnd, _this->m_server);
 			return 0;
 		}
+	case WM_HELP:	
+		VNCHelp::Popup(lParam);
+		return 0;
     case WM_COMMAND:		
 		switch (LOWORD(wParam))
 		{

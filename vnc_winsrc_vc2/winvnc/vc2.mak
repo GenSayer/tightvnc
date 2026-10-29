@@ -10,7 +10,7 @@
 
 !INCLUDE ..\vc2.inc
 
-CFLAGS=$(CBASE) $(FORCEINC) /I omnithread /I zlib /I .. /I ..\vc2ctl /D__WIN32__ /D__NT__ /D_WINSTATIC /DNCORBA
+CFLAGS=$(CBASE) $(FORCEINC) /I omnithread /I zlib /I .. /I ..\vc2ctl /D__WIN32__ /D__NT__ /D_WINSTATIC /DNCORBA $(HELPDEF)
 
 LIBS=wsock32.lib kernel32.lib user32.lib gdi32.lib comdlg32.lib advapi32.lib
 
@@ -61,6 +61,7 @@ OBJS= \
 	$(OUTDIR)\vncEncodeZlib.obj \
 	$(OUTDIR)\vncEncodeZlibHex.obj \
 	$(OUTDIR)\vncEncoder.obj \
+	$(OUTDIR)\VNCHelp.obj \
 	$(OUTDIR)\vncHTTPConnect.obj \
 	$(OUTDIR)\vncInstHandler.obj \
 	$(OUTDIR)\vncKeymap.obj \

@@ -1,5 +1,6 @@
 @echo off
-rem build.cmd [X64|ARM64|ARM64EC|AXP64|IA64] [debug] [htmlhelp] [dllcrt] [visualstyles] [comctl4|5|6]
+rem build.cmd [X64|ARM64|ARM64EC|AXP64|IA64] [debug] [dllcrt] [visualstyles] [comctl4|5|6]
+rem           [minihelp|htmlhelp|nohelp]
 rem
 rem Builds vncviewer and WinVNC (plus VNCHooks.dll) from the command line.
 rem Run from the vnc_winsrc_64 directory with the compiler environment for the
@@ -15,8 +16,10 @@ rem testing; they are not supported in this tree.
 rem
 rem "dllcrt" builds VNCHooks.dll with the DLL CRT (/MD) instead of the static
 rem CRT; the target then needs the compiler's CRT DLL (msvcr80.dll etc.).
-rem "htmlhelp" links htmlhelp.lib (the calls into it are commented out in the
-rem sources; see nt.inc).  Warns for IA64 and AXP64.
+rem "minihelp" (the default), "htmlhelp" or "nohelp" picks the context help
+rem of the dialogs: the built-in text popups, the original HtmlHelp popups
+rem (links htmlhelp.lib, which must match the CPU; warns for IA64 and AXP64),
+rem or none (see nt.inc).
 rem
 rem "comctl4", "comctl5" or "comctl6" compiles for that Common Controls level
 rem (_WIN32_IE; "comctl6" implies "visualstyles", see nt.inc).
@@ -71,13 +74,12 @@ goto end
 
 set NTARGS=CPU=%NTCPU%
 set NTOUT=Rel_%NTCPU%
-set NTHH=
 
-rem Options after the CPU: "debug", "htmlhelp" and "dllcrt", in any order.
+rem Options after the CPU, in any order.
 set NTDBG=
 set NTVS=
 set NTCC=
-set NTHH=
+set NTHELP=
 set NTDLL=
 :opts
 shift
@@ -85,9 +87,15 @@ if "%1"=="" goto optsdone
 if "%1"=="debug" set NTDBG=1
 if "%1"=="DEBUG" set NTDBG=1
 if "%1"=="Debug" set NTDBG=1
-if "%1"=="htmlhelp" set NTHH=1
-if "%1"=="HTMLHELP" set NTHH=1
-if "%1"=="Htmlhelp" set NTHH=1
+if "%1"=="minihelp" set NTHELP=mini
+if "%1"=="MINIHELP" set NTHELP=mini
+if "%1"=="Minihelp" set NTHELP=mini
+if "%1"=="htmlhelp" set NTHELP=html
+if "%1"=="HTMLHELP" set NTHELP=html
+if "%1"=="Htmlhelp" set NTHELP=html
+if "%1"=="nohelp" set NTHELP=none
+if "%1"=="NOHELP" set NTHELP=none
+if "%1"=="Nohelp" set NTHELP=none
 if "%1"=="dllcrt" set NTDLL=1
 if "%1"=="DLLCRT" set NTDLL=1
 if "%1"=="Dllcrt" set NTDLL=1
@@ -104,16 +112,18 @@ goto opts
 :optsdone
 if "%NTDBG%"=="1" set NTARGS=%NTARGS% DEBUG=1
 if "%NTDBG%"=="1" set NTOUT=Dbg_%NTCPU%
-if "%NTHH%"=="1" set NTARGS=%NTARGS% HTMLHELP=1
 if "%NTDLL%"=="1" set NTARGS=%NTARGS% DLLCRT=1
 if "%NTVS%"=="1" set NTARGS=%NTARGS% VISUALSTYLES=1
 if not "%NTCC%"=="" set NTARGS=%NTARGS% COMCTL=%NTCC%
+if "%NTHELP%"=="" set NTHELP=mini
+set NTARGS=%NTARGS% HELP=%NTHELP%
 
 echo === Building for %NTCPU% into %NTOUT%
 if "%NTDLL%"=="1" echo === VNCHooks.dll uses the DLL CRT: the target needs the compiler's CRT DLL installed.
 
-if not "%NTHH%"=="1" goto hhdone
-echo === htmlhelp.lib will be linked: it must be a %NTCPU% library.
+if "%NTHELP%"=="none" echo === No context help.
+if not "%NTHELP%"=="html" goto hhdone
+echo === HtmlHelp: htmlhelp.lib will be linked, it must be a %NTCPU% library.
 if "%NTCPU%"=="IA64" echo === WARNING: HtmlHelp calls crash on IA64 before Windows Server 2003 SP1.
 if "%NTCPU%"=="AXP64" echo === WARNING: AXP64 is an Alpha-only Windows build and may be unstable.
 :hhdone
@@ -172,7 +182,7 @@ echo === Build FAILED.
 set NTCPU=
 set NTARGS=
 set NTOUT=
-set NTHH=
+set NTHELP=
 set NTDBG=
 set NTDLL=
 set NTVS=

@@ -12,6 +12,8 @@
 #
 #     DEBUG=1                   unoptimised build with /Zi + /debug
 #     FORCEINC=                 set empty if your cl has no /FI switch
+#     HELP=mini | none          context help system (see below);
+#                               default mini
 #
 # Output goes to Rel_i386 or Dbg_i386 next to each win32s.mak.
 
@@ -35,6 +37,30 @@ OUTDIR=Rel_$(CPU)
 
 !IFNDEF FORCEINC
 FORCEINC=/FIwin32s_fix.h
+!ENDIF
+
+# HELP chooses the context help of the dialogs (F1 and the caption "?"
+# button), by defining one of the VNCHELP_ macros of VNCHelp.h:
+#
+#   mini   VNCHELP_MINI: the built-in text popups of VNCHelp.cpp, with F1 and
+#          a "What's This?" system menu command on Win32s and NT 3.x.  The
+#          default.
+#   none   VNCHELP_NONE: no context help; the "?" buttons are removed.
+#
+# The HtmlHelp popups of vnc_winsrc are not offered: an import of
+# htmlhelp.lib would stop the programs loading on Win32s and NT 3.x.  HELPSEL
+# holds the choice, because a makefile cannot override a command-line HELP=.
+!IF "$(HELP)" == ""
+HELPSEL=mini
+!ELSE
+HELPSEL=$(HELP)
+!ENDIF
+!IF "$(HELPSEL)" == "mini"
+HELPDEF=/DVNCHELP_MINI
+!ELSEIF "$(HELPSEL)" == "none"
+HELPDEF=/DVNCHELP_NONE
+!ELSE
+!ERROR HELP must be mini or none (got "$(HELP)")
 !ENDIF
 
 CC=cl

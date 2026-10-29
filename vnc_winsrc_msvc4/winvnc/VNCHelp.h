@@ -24,10 +24,36 @@
 
 #pragma once
 
-class VNCHelp  
+// The help system is chosen at compile time (build.cmd defines one of these):
+//
+//   VNCHELP_MINI   built-in text popups (VNCHelp.cpp); needs neither
+//                  htmlhelp.lib nor HtmlHelp.h nor hhctrl.ocx
+//   VNCHELP_NONE   no context help at all
+//
+// With neither defined (the Developer Studio projects), VNCHELP_MINI.  The
+// HtmlHelp popups (VNCHELP_HTML) are only in vnc_winsrc and vnc_winsrc_64:
+// an import of htmlhelp.lib would stop the programs loading on NT 3.x.
+#ifdef VNCHELP_HTML
+#error VNCHELP_HTML is not supported in this tree; use VNCHELP_MINI
+#endif
+#if !defined(VNCHELP_MINI) && !defined(VNCHELP_NONE)
+#define VNCHELP_MINI
+#endif
+#if defined(VNCHELP_MINI) && defined(VNCHELP_NONE)
+#error Define only one of VNCHELP_MINI and VNCHELP_NONE
+#endif
+
+class VNCHelp
 {
 public:
+	// Shows the help for the control in a WM_HELP HELPINFO (lParam).
 	static void Popup(LPARAM lParam);
+
+	// Called from WM_INITDIALOG of a top-level dialog that has context help.
+	// Gives it the caption "?" button: the system's from NT 3.51 on, and one
+	// drawn by VNCHelp on NT 3.1, NT 3.5 and Win32s, which also get F1; with
+	// VNCHELP_NONE it removes the "?" button instead.
+	static void InitDialog(HWND hwnd);
 };
 
-#endif 
+#endif

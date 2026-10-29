@@ -12,7 +12,7 @@
 
 !INCLUDE ..\msvc4.inc
 
-CFLAGS=$(CBASE) $(CRTST) /I omnithread /I zlib /I .. /I ..\vc2ctl /D__WIN32__ /D__NT__ /D_WINSTATIC /DNCORBA /DWINVER=0x0400 /DUSE_VC2CTL
+CFLAGS=$(CBASE) $(CRTST) /I omnithread /I zlib /I .. /I ..\vc2ctl /D__WIN32__ /D__NT__ /D_WINSTATIC /DNCORBA /DWINVER=0x0400 /DUSE_VC2CTL $(HELPDEF)
 
 LIBS=wsock32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib
 

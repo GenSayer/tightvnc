@@ -7,7 +7,7 @@
 !INCLUDE ..\win32s.inc
 
 # /Ob0 as in the original release build.
-CFLAGS=$(CBASE) /Ob0 $(FORCEINC) /I omnithread /I .. /D_WINSTATIC /D__WIN32__ /DXMD_H /DNEED_FAR_POINTERS
+CFLAGS=$(CBASE) /Ob0 $(FORCEINC) /I omnithread /I .. /D_WINSTATIC /D__WIN32__ /DXMD_H /DNEED_FAR_POINTERS $(HELPDEF)
 
 LIBS=kernel32.lib user32.lib gdi32.lib comdlg32.lib advapi32.lib wsock32.lib
 

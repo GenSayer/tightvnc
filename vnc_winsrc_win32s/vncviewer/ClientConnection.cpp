@@ -498,7 +498,10 @@ void ClientConnection::CreateDisplay()
     wndclass.lpszMenuName	= (LPCTSTR)NULL;
 	wndclass.lpszClassName	= VWR_WND_CLASS_NAME;
 
-	RegisterClass(&wndclass);
+	// With the icon's own 16x16 image where the system has small icons.
+	Win32sRegisterClassSm(&wndclass,
+						  Win32sLoadSmallIcon(m_pApp->m_instance,
+											  MAKEINTRESOURCE(IDI_MAINICON)));
 
 	wndclass.style			= 0;
 	wndclass.lpfnWndProc	= ClientConnection::ScrollProc;

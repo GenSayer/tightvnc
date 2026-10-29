@@ -893,6 +893,7 @@ IDB_BITMAP3             BITMAP  DISCARDABLE     "res\\bitmap3.bmp"
 //
 
 IDC_CURSOR1             CURSOR  DISCARDABLE     "res\\cursor1.cur"
+IDC_HELPARROW           CURSOR  DISCARDABLE     "res\\helparrow.cur"
 
 /////////////////////////////////////////////////////////////////////////////
 //

@@ -30,6 +30,7 @@
 #define IDT_EMULATE3BUTTONSTIMER        152
 #define ID_CONN_SAVE_AS                 153
 #define IDC_NOCURSOR                    153
+#define IDC_HELPARROW                   246
 #define IDR_VERSION2                    154
 #define IDB_BITMAP1                     158
 #define ID_TOOLBAR                      159
@@ -183,7 +184,7 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        246
+#define _APS_NEXT_RESOURCE_VALUE        247
 #define _APS_NEXT_COMMAND_VALUE         40011
 #define _APS_NEXT_CONTROL_VALUE         1154
 #define _APS_NEXT_SYMED_VALUE           244

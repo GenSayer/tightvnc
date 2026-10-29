@@ -13,6 +13,8 @@
 #     CPU=i386 | MIPS | ALPHA | PPC   target CPU; default from
 #                                     PROCESSOR_ARCHITECTURE
 #     DEBUG=1                         unoptimised build with /Zi + /debug
+#     HELP=mini | none                context help system (see below);
+#                                     default mini
 #
 # Output goes to Rel_<CPU> or Dbg_<CPU> next to each msvc4.mak, so builds for
 # different CPUs can live side by side.
@@ -47,6 +49,29 @@ MACHINE=/machine:ALPHA
 MACHINE=/machine:PPC
 !ELSE
 !ERROR CPU must be i386, MIPS, ALPHA or PPC (got "$(CPU)")
+!ENDIF
+
+# HELP chooses the context help of the dialogs (F1 and the caption "?"
+# button), by defining one of the VNCHELP_ macros of VNCHelp.h:
+#
+#   mini   VNCHELP_MINI: the built-in text popups of VNCHelp.cpp, with F1 and
+#          a "What's This?" system menu command on NT 3.x.  The default.
+#   none   VNCHELP_NONE: no context help; the "?" buttons are removed.
+#
+# The HtmlHelp popups of vnc_winsrc are not offered: an import of
+# htmlhelp.lib would stop the programs loading on NT 3.x.  HELPSEL holds the
+# choice, because a makefile cannot override a command-line HELP=.
+!IF "$(HELP)" == ""
+HELPSEL=mini
+!ELSE
+HELPSEL=$(HELP)
+!ENDIF
+!IF "$(HELPSEL)" == "mini"
+HELPDEF=/DVNCHELP_MINI
+!ELSEIF "$(HELPSEL)" == "none"
+HELPDEF=/DVNCHELP_NONE
+!ELSE
+!ERROR HELP must be mini or none (got "$(HELP)")
 !ENDIF
 
 # CRTST is the static multithreaded CRT the programs and libraries use; CRTDLL

@@ -35,6 +35,7 @@
 
 #include "stdhdrs.h"
 #include "resource.h"
+#include "VNCHelp.h"
 
 // Application specific messages
 

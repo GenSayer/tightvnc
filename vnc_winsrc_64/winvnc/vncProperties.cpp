@@ -241,6 +241,7 @@ vncProperties::ParentDlgProc(HWND hwnd,
 			_this->m_dlgvisible = TRUE;
 
 			InitCommonControls();
+			VNCHelp::InitDialog(hwnd);
 
 			_this->m_hTab = GetDlgItem(hwnd, IDC_TAB);
 

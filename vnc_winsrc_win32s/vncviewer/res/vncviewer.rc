@@ -676,6 +676,7 @@ END
 IDC_DOTCURSOR           CURSOR  DISCARDABLE     "cursor1.cur"
 IDC_NOCURSOR            CURSOR  DISCARDABLE     "nocursor.cur"
 IDC_SMALLDOT            CURSOR  DISCARDABLE     "smalldot.cur"
+IDC_HELPARROW           CURSOR  DISCARDABLE     "helparrow.cur"
 
 /////////////////////////////////////////////////////////////////////////////
 //

@@ -306,6 +306,7 @@ vncProperties::ParentDlgProc(HWND hwnd,
 			// control and trackbars on these property pages DO need COMCTL32 -
 			// see the dialog-creation check below.
 			Win32sInitCommonControls();
+			VNCHelp::InitDialog(hwnd);
 
 			// WIN32S: restore WS_EX_CONTROLPARENT at run time.
 			//

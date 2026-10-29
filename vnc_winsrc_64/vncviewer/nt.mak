@@ -7,14 +7,14 @@
 
 !INCLUDE ..\nt.inc
 
-!IF "$(HTMLHELP)" == "1"
+!IF "$(HELPSEL)" == "html"
 !IF "$(HHWARN)" == "1"
-!MESSAGE Warning: HTMLHELP=1 for CPU=$(CPU).  The HtmlHelp calls crash on IA64 before Windows Server 2003 SP1, and AXP64 is an Alpha-only build that may be unstable.
+!MESSAGE Warning: HELP=html for CPU=$(CPU).  The HtmlHelp calls crash on IA64 before Windows Server 2003 SP1, and AXP64 is an Alpha-only build that may be unstable.
 !ENDIF
 !ENDIF
 
 # /Ob0 as in the original release build.
-CFLAGS=$(CBASE) $(CRTST) $(VEXTRA) /Ob0 /I omnithread /I .. /D__NT__ /D_WINSTATIC /D__WIN32__ /DXMD_H /DNEED_FAR_POINTERS
+CFLAGS=$(CBASE) $(CRTST) $(VEXTRA) /Ob0 /I omnithread /I .. /D__NT__ /D_WINSTATIC /D__WIN32__ /DXMD_H /DNEED_FAR_POINTERS $(HELPDEF)
 
 LIBS=winmm.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib uuid.lib wsock32.lib comctl32.lib $(HHLIB)
 

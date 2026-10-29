@@ -10,7 +10,7 @@
 
 !INCLUDE ..\win32s.inc
 
-CFLAGS=$(CBASE) $(FORCEINC) /I omnithread /I zlib /I .. /D__WIN32__ /D__NT__ /D_WINSTATIC /DNCORBA
+CFLAGS=$(CBASE) $(FORCEINC) /I omnithread /I zlib /I .. /D__WIN32__ /D__NT__ /D_WINSTATIC /DNCORBA $(HELPDEF)
 
 LIBS=wsock32.lib kernel32.lib user32.lib gdi32.lib comdlg32.lib advapi32.lib
 

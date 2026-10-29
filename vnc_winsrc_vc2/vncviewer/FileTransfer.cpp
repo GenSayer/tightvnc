@@ -411,9 +411,13 @@ FileTransfer::FileTransferDlgProc(HWND hwnd,
 		{
 			Win32sSetForegroundWindow(hwnd);
 			CentreWindow(hwnd);
+			VNCHelp::InitDialog(hwnd);
 			return TRUE;
 		}
 	break;
+	case WM_HELP:	
+		help.Popup(lParam);
+		return 0;
 	case WM_COMMAND:
 		{
 		switch (LOWORD(wParam))

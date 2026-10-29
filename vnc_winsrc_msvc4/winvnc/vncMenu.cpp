@@ -41,6 +41,7 @@
 // Header
 
 #include "vncMenu.h"
+#include "WndClassSm.h"
 
 // Constants
 const UINT MENU_PROPERTIES_SHOW = RegisterWindowMessage("WinVNC.Properties.User.Show");
@@ -106,7 +107,7 @@ vncMenu::vncMenu(vncServer *server)
 	wndclass.lpszMenuName	= (const char *) NULL;
 	wndclass.lpszClassName	= MENU_CLASS_NAME;
 
-	RegisterClass(&wndclass);
+	RegisterClassSm(&wndclass, LoadIcon(NULL, IDI_APPLICATION));
 
 	m_hwnd = CreateWindow(MENU_CLASS_NAME,
 				"TightVNC Server",

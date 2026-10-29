@@ -30,7 +30,6 @@
 #include "vncviewer.h"
 #include "SessionDialog.h"
 #include "Exception.h"
-//#include "Htmlhelp.h"
 
 
 
@@ -82,6 +81,7 @@ BOOL CALLBACK SessionDialog::SessDlgProc(  HWND hwnd,  UINT uMsg,  WPARAM wParam
             SetWindowLong(hwnd, GWL_USERDATA, lParam);
             SessionDialog *_this = (SessionDialog *) lParam;
             CentreWindow(hwnd);
+			VNCHelp::InitDialog(hwnd);
 			_this->m_cc->m_hSess = hwnd;
 
 			// Load connection history to the combo box, from the [History]

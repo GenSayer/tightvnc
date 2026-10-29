@@ -1,11 +1,14 @@
 @echo off
-rem build.cmd [i386|MIPS|ALPHA|PPC] [debug]
+rem build.cmd [i386|MIPS|ALPHA|PPC] [debug] [minihelp|nohelp]
 rem
 rem Builds vncviewer and WinVNC (plus VNCHooks.dll) with Visual C++ 4.x.
 rem Run from the vnc_winsrc_msvc4 directory with the VC++ 4.x environment set
 rem (PATH, INCLUDE, LIB) for the target CPU.  With no CPU argument,
 rem PROCESSOR_ARCHITECTURE picks it.  Output: <dir>\Rel_<CPU> or
 rem <dir>\Dbg_<CPU>.
+rem
+rem "minihelp" (the default) or "nohelp" picks the context help of the
+rem dialogs: the built-in text popups, or none (see msvc4.inc).
 rem
 rem The Developer Studio files (WinVNC.mak, vncviewer.mak, *.dsp and the
 rem build.cmd in winvnc\ and vncviewer\) still work as before; this script
@@ -35,16 +38,31 @@ goto end
 
 set M4ARGS=CPU=%M4CPU%
 set M4OUT=Rel_%M4CPU%
-if "%2"=="debug" goto dbg
-if "%2"=="DEBUG" goto dbg
-if "%2"=="Debug" goto dbg
-goto nodbg
-:dbg
-set M4ARGS=%M4ARGS% DEBUG=1
-set M4OUT=Dbg_%M4CPU%
-:nodbg
+set M4DBG=
+set M4HELP=
+
+rem Options after the CPU, in any order.
+:opts
+shift
+if "%1"=="" goto optsdone
+if "%1"=="debug" set M4DBG=1
+if "%1"=="DEBUG" set M4DBG=1
+if "%1"=="Debug" set M4DBG=1
+if "%1"=="minihelp" set M4HELP=mini
+if "%1"=="MINIHELP" set M4HELP=mini
+if "%1"=="Minihelp" set M4HELP=mini
+if "%1"=="nohelp" set M4HELP=none
+if "%1"=="NOHELP" set M4HELP=none
+if "%1"=="Nohelp" set M4HELP=none
+goto opts
+:optsdone
+if "%M4DBG%"=="1" set M4ARGS=%M4ARGS% DEBUG=1
+if "%M4DBG%"=="1" set M4OUT=Dbg_%M4CPU%
+if "%M4HELP%"=="" set M4HELP=mini
+set M4ARGS=%M4ARGS% HELP=%M4HELP%
 
 echo === Building for %M4CPU% into %M4OUT%
+if "%M4HELP%"=="none" echo === No context help.
 
 echo === vc2ctl
 cd vc2ctl
@@ -106,3 +124,5 @@ echo === Build FAILED.
 set M4CPU=
 set M4ARGS=
 set M4OUT=
+set M4DBG=
+set M4HELP=

@@ -213,6 +213,13 @@ HWND Win32sCreateToolbarEx(HWND hwnd, DWORD ws, UINT wID, int nBitmaps,
 // file transfer dialog.  Fallback: LoadIcon (which ignores the requested size).
 HANDLE Win32sLoadImageIcon(HINSTANCE hInst, LPCSTR name, int cx, int cy);
 
+// RegisterClassEx and LoadImage are NT 3.51 / Win95+.  These give a window
+// class the 16x16 image of its icon (instead of the 32x32 one shrunk by the
+// system) on the systems that draw small icons.  Fallbacks: no small icon
+// (NULL), and RegisterClass.
+HICON Win32sLoadSmallIcon(HINSTANCE hInst, LPCSTR name);
+ATOM Win32sRegisterClassSm(const WNDCLASS *wc, HICON hIconSm);
+
 // ---------------------------------------------------------------------------
 // WINMM
 // ---------------------------------------------------------------------------

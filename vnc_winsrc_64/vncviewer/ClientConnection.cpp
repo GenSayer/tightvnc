@@ -329,21 +329,31 @@ void ClientConnection::CreateDisplay()
 {
 	// Create the window
 	
+	WNDCLASSEX wndclassex;
 	WNDCLASS wndclass;
 	
-	wndclass.style			= 0;
-	wndclass.lpfnWndProc	= ClientConnection::Proc;
-	wndclass.cbClsExtra		= 0;
-	wndclass.cbWndExtra		= 0;
-	wndclass.hInstance		= m_pApp->m_instance;
-	wndclass.hIcon			= (HICON)LoadIcon(m_pApp->m_instance,
+	wndclassex.cbSize		= sizeof(wndclassex);
+	wndclassex.style		= 0;
+	wndclassex.lpfnWndProc	= ClientConnection::Proc;
+	wndclassex.cbClsExtra	= 0;
+	wndclassex.cbWndExtra	= 0;
+	wndclassex.hInstance	= m_pApp->m_instance;
+	wndclassex.hIcon		= (HICON)LoadIcon(m_pApp->m_instance,
 												MAKEINTRESOURCE(IDI_MAINICON));
-	wndclass.hCursor		= LoadCursor(NULL, IDC_ARROW);
-	wndclass.hbrBackground	= (HBRUSH) GetSysColorBrush(COLOR_BTNFACE);
-    wndclass.lpszMenuName	= (LPCTSTR)NULL;
-	wndclass.lpszClassName	= VWR_WND_CLASS_NAME;
+	// The icon's own 16x16 image for the caption and the taskbar, instead
+	// of the 32x32 one shrunk by the system.
+	wndclassex.hIconSm		= (HICON)LoadImage(m_pApp->m_instance,
+												MAKEINTRESOURCE(IDI_MAINICON),
+												IMAGE_ICON,
+												GetSystemMetrics(SM_CXSMICON),
+												GetSystemMetrics(SM_CYSMICON),
+												LR_SHARED);
+	wndclassex.hCursor		= LoadCursor(NULL, IDC_ARROW);
+	wndclassex.hbrBackground	= (HBRUSH) GetSysColorBrush(COLOR_BTNFACE);
+    wndclassex.lpszMenuName	= (LPCTSTR)NULL;
+	wndclassex.lpszClassName	= VWR_WND_CLASS_NAME;
 
-	RegisterClass(&wndclass);
+	RegisterClassEx(&wndclassex);
 
 	wndclass.style			= 0;
 	wndclass.lpfnWndProc	= ClientConnection::ScrollProc;
